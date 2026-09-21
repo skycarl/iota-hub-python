@@ -1,0 +1,3369 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "IOTA Hub Public API v1",
+    "description": "The versioned public surface of IOTA Hub, for scripts and agents: create an observation draft, upload its files, run the observer checks, fix or dismiss findings, submit — plus read access to events, observations and their files.\n\nAuthentication is the `X-API-Key` header alone. A key acts as its owner: it can never do or see more than that person can in the web app. There is no CORS on this surface, so keys stay out of browsers — call it from a script, not from a page.\n\nThe quickstart, error table and limits are at /developers.",
+    "contact": {
+      "name": "IOTA Hub Support",
+      "email": "support@iota-hub.org"
+    },
+    "license": {
+      "name": "MIT"
+    },
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/api/public/v1",
+      "description": "The environment serving this document. Until the production release, only the development deployment serves the public API, and that is where third-party developers build: sign up there, create a key, and point your client at this base URL. The production base URL is published at release."
+    }
+  ],
+  "tags": [
+    {
+      "name": "Public API v1",
+      "description": "The versioned public surface at `/public/v1`, for scripts and agents. **Authentication is the `X-API-Key` header alone** — `Authorization` and the mock-auth headers are ignored here, and there is no CORS, so keys stay out of browsers. **A key acts as its owner**: it resolves to that user's real `UserContext`, so this surface can never do or see more than the same person can in the web app, and never less on the endpoints it exposes. Least privilege comes from the surface itself — reviewer and coordinator workflow is simply not mounted here — plus the key's scopes (`observations:write` for every write, `read` for every read). The response models are frozen and additive-only within v1; every error is problem-details (`{code, message, hint, details}`) with a stable `code` to branch on, and every 429 carries `Retry-After`. Submission is collapsed for scripts: create a draft declaring its files, POST each presigned target to S3, finalize, poll the observation resource (`readiness`, `checks`, `next_actions`), then submit."
+    }
+  ],
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/public/v1/observations/drafts": {
+      "post": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Create a draft and presign its uploads",
+        "description": "Create a draft observation and, in the same call, presign one upload target per declared file. POST each file straight to S3 with the returned `upload_url` and `fields`, then call `finalize`.\n\nIdentity fields (observer, asteroid, star, time, result) are not accepted: they are read from the report spreadsheet when the `report` slot is finalized.",
+        "operationId": "public_create_draft",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Client-generated key making this call safe to retry. A replay returns the first call's response and does no second write. Keys expire after 24 hours.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Client-generated key making this call safe to retry. A replay returns the first call's response and does no second write. Keys expire after 24 hours."
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PublicDraftCreateRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Draft created; `uploads` holds one target per file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicDraftCreated"
+                },
+                "example": {
+                  "observation": {
+                    "observation_id": "obs_01HZY4A1",
+                    "submission_status": "draft",
+                    "created_at": "2026-03-15T08:02:00Z",
+                    "updated_at": "2026-03-15T08:02:01Z",
+                    "version": 2,
+                    "created_via": "api",
+                    "observer_user_id": "usr_observer_1",
+                    "metadata": {
+                      "confirm_unnumbered_asteroid_id": false,
+                      "bypass_required_files": false
+                    },
+                    "files": {},
+                    "readiness": {
+                      "state": "in_progress",
+                      "missing_required": [
+                        "report",
+                        "lightcurve",
+                        "log"
+                      ],
+                      "open_findings": 0,
+                      "dismissed_findings": 0,
+                      "checks_current": false,
+                      "event_files_blocked": false
+                    },
+                    "next_actions": [
+                      "upload:report",
+                      "upload:lightcurve",
+                      "upload:log"
+                    ]
+                  },
+                  "uploads": [
+                    {
+                      "slot": "report",
+                      "filename": "report.xlsx",
+                      "upload_url": "https://prod-iota-hub-storage.s3.amazonaws.com/",
+                      "fields": {
+                        "key": "staging/obs_01HZY4A1/report/report.xlsx",
+                        "policy": "eyJleHBpcmF0aW9uIjoi...",
+                        "x-amz-signature": "1a2b3c..."
+                      },
+                      "file_key": "staging/obs_01HZY4A1/report/report.xlsx"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`draft_limit_reached` — too many open drafts",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "draft_limit_reached",
+                  "message": "You already have 100 open drafts (the limit is 100). Submit or delete some before creating another.",
+                  "hint": "You have too many open drafts. Submit or delete some before creating another.",
+                  "details": {
+                    "open_drafts": 100,
+                    "limit": 100
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`file_too_large` (`details.slot`), `validation_error` (unknown slot, duplicate slot, bad extension)",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "file_too_large",
+                  "message": "report.xlsx is 31457280 bytes; the report slot accepts at most 15728640",
+                  "hint": "The declared file is over the slot's size limit; see 'details.max_size_bytes'.",
+                  "details": {
+                    "slot": "report",
+                    "size": 31457280,
+                    "max_size_bytes": 15728640
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/observations/{observation_id}/finalize": {
+      "post": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Commit the declared uploads and start the checks",
+        "description": "Verify that every file declared at create landed in S3, commit each one onto the draft, parse the report, and make sure an observer check run is under way. Poll `GET /public/v1/observations/{id}` for the result.\n\nA slot whose object is missing answers `409 upload_missing` with `details.slot`; the uploads that did land stay staged, so uploading the missing one and calling finalize again completes the draft.",
+        "operationId": "public_finalize_draft",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Client-generated key making this call safe to retry. A replay returns the first call's response and does no second write. Keys expire after 24 hours.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Client-generated key making this call safe to retry. A replay returns the first call's response and does no second write. Keys expire after 24 hours."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Uploads committed; `checks.run_id` names the run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicObservation"
+                },
+                "example": {
+                  "observation_id": "obs_01HZY4A1",
+                  "submission_status": "draft",
+                  "created_at": "2026-03-15T08:02:00Z",
+                  "updated_at": "2026-03-15T08:11:00Z",
+                  "version": 6,
+                  "created_via": "api",
+                  "observer_user_id": "usr_observer_1",
+                  "metadata": {
+                    "observer_name": "A. Observer",
+                    "observer_email": "observer@example.org",
+                    "asteroid_id": "1036",
+                    "asteroid_name": "Ganymed",
+                    "star_catalog": "GAIA",
+                    "star_id": "1234567890123456789",
+                    "observed_at_utc": "2026-03-14T04:12:07Z",
+                    "result_type": "POS",
+                    "confirm_unnumbered_asteroid_id": false,
+                    "bypass_required_files": false
+                  },
+                  "files": {
+                    "report": {
+                      "slot": "report",
+                      "filename": "report.xlsx",
+                      "size_bytes": 51234,
+                      "uploaded_at": "2026-03-15T08:10:00Z"
+                    }
+                  },
+                  "readiness": {
+                    "state": "checking",
+                    "missing_required": [],
+                    "open_findings": 0,
+                    "dismissed_findings": 0,
+                    "checks_current": false,
+                    "event_files_blocked": false,
+                    "latest_run_id": "vrun_01HZY5B2"
+                  },
+                  "checks": {
+                    "run_id": "vrun_01HZY5B2",
+                    "status": "running",
+                    "checks_current": false,
+                    "open_findings": 0,
+                    "dismissed_findings": 0,
+                    "findings": []
+                  },
+                  "next_actions": [
+                    "poll"
+                  ],
+                  "report_parse": {
+                    "status": "parsed"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` — no such draft, or not yours",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_found",
+                  "message": "Draft not found",
+                  "hint": "Check the id, and that the resource is visible to your account."
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`upload_missing` — a declared file never arrived",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "upload_missing",
+                  "message": "No file was uploaded for the lightcurve slot. POST the presigned target from the create response, then finalize again.",
+                  "hint": "A file declared at create was never uploaded. POST its presigned target (see 'details.slot'), then call finalize again.",
+                  "details": {
+                    "slot": "lightcurve",
+                    "file_key": "staging/obs_01HZY4A1/lightcurve/lc.csv"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/observations/{observation_id}/files/{slot}/upload/init": {
+      "post": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Presign one file upload",
+        "description": "Presign a single slot's upload — the fix loop's replacement for a file the checks complained about.",
+        "operationId": "public_init_file_upload",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          },
+          {
+            "name": "slot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Slot"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicInitUploadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Upload target for this slot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicUploadTarget"
+                },
+                "example": {
+                  "slot": "report",
+                  "filename": "report.xlsx",
+                  "upload_url": "https://prod-iota-hub-storage.s3.amazonaws.com/",
+                  "fields": {
+                    "key": "staging/obs_01HZY4A1/report/report.xlsx",
+                    "policy": "eyJleHBpcmF0aW9uIjoi...",
+                    "x-amz-signature": "1a2b3c..."
+                  },
+                  "file_key": "staging/obs_01HZY4A1/report/report.xlsx"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_found",
+                  "message": "Observation not found",
+                  "hint": "Check the id, and that the resource is visible to your account."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/observations/{observation_id}/files/{slot}/upload/finalize": {
+      "post": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Commit one file upload",
+        "description": "Commit a staged upload onto the observation. Finalizing the `report` slot of a draft re-parses the workbook and rewrites the identity fields; `report_parse` says how that went.",
+        "operationId": "public_finalize_file_upload",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          },
+          {
+            "name": "slot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Slot"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Client-generated key making this call safe to retry. A replay returns the first call's response and does no second write. Keys expire after 24 hours.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Client-generated key making this call safe to retry. A replay returns the first call's response and does no second write. Keys expire after 24 hours."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicFinalizeUploadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "File committed; the updated observation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicObservation"
+                },
+                "example": {
+                  "observation_id": "obs_01HZY4A1",
+                  "submission_status": "draft",
+                  "created_at": "2026-03-15T08:02:00Z",
+                  "updated_at": "2026-03-15T08:11:00Z",
+                  "version": 6,
+                  "created_via": "api",
+                  "observer_user_id": "usr_observer_1",
+                  "metadata": {
+                    "observer_name": "A. Observer",
+                    "observer_email": "observer@example.org",
+                    "asteroid_id": "1036",
+                    "asteroid_name": "Ganymed",
+                    "star_catalog": "GAIA",
+                    "star_id": "1234567890123456789",
+                    "observed_at_utc": "2026-03-14T04:12:07Z",
+                    "result_type": "POS",
+                    "confirm_unnumbered_asteroid_id": false,
+                    "bypass_required_files": false
+                  },
+                  "files": {
+                    "report": {
+                      "slot": "report",
+                      "filename": "report.xlsx",
+                      "size_bytes": 51234,
+                      "uploaded_at": "2026-03-15T08:10:00Z"
+                    }
+                  },
+                  "readiness": {
+                    "state": "checking",
+                    "missing_required": [],
+                    "open_findings": 0,
+                    "dismissed_findings": 0,
+                    "checks_current": false,
+                    "event_files_blocked": false,
+                    "latest_run_id": "vrun_01HZY5B2"
+                  },
+                  "checks": {
+                    "run_id": "vrun_01HZY5B2",
+                    "status": "running",
+                    "checks_current": false,
+                    "open_findings": 0,
+                    "dismissed_findings": 0,
+                    "findings": []
+                  },
+                  "next_actions": [
+                    "poll"
+                  ],
+                  "report_parse": {
+                    "status": "parsed"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_found",
+                  "message": "Observation not found",
+                  "hint": "Check the id, and that the resource is visible to your account."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/observations/{observation_id}/files/{slot}": {
+      "delete": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Remove one file",
+        "description": "Clear a slot. On a draft this is the observer's own file; clearing the `report` slot also clears the eight identity fields it owns, so they return to `readiness.missing_required`.",
+        "operationId": "public_delete_file",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          },
+          {
+            "name": "slot",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Slot"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Slot cleared; the updated observation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicObservation"
+                },
+                "example": {
+                  "observation_id": "obs_01HZY4A1",
+                  "submission_status": "draft",
+                  "created_at": "2026-03-15T08:02:00Z",
+                  "updated_at": "2026-03-15T08:02:01Z",
+                  "version": 2,
+                  "created_via": "api",
+                  "observer_user_id": "usr_observer_1",
+                  "metadata": {
+                    "confirm_unnumbered_asteroid_id": false,
+                    "bypass_required_files": false
+                  },
+                  "files": {},
+                  "readiness": {
+                    "state": "in_progress",
+                    "missing_required": [
+                      "report",
+                      "lightcurve",
+                      "log"
+                    ],
+                    "open_findings": 0,
+                    "dismissed_findings": 0,
+                    "checks_current": false,
+                    "event_files_blocked": false
+                  },
+                  "next_actions": [
+                    "upload:report",
+                    "upload:lightcurve",
+                    "upload:log"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_found",
+                  "message": "Observation not found",
+                  "hint": "Check the id, and that the resource is visible to your account."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/observations/{observation_id}/validation/runs": {
+      "post": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Run the observer checks",
+        "description": "Start an observer check run over a draft and return it immediately with `status: running`. Poll `GET /public/v1/observations/{id}` for the findings.\n\nLimited to 100 runs per hour **per API key**; a 429 carries `Retry-After`.",
+        "operationId": "public_run_checks",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Run enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicChecks"
+                },
+                "example": {
+                  "run_id": "vrun_01HZY5B2",
+                  "status": "running",
+                  "checks_current": false,
+                  "open_findings": 0,
+                  "dismissed_findings": 0,
+                  "findings": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_found",
+                  "message": "Draft not found",
+                  "hint": "Check the id, and that the resource is visible to your account."
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`check_run_in_progress` — a run is already under way",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "check_run_in_progress",
+                  "message": "A validation run is already in progress for this observation",
+                  "hint": "A check run is already under way for this draft; poll GET /public/v1/observations/{id} instead of starting another."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited` — too many runs for this key; `Retry-After` carries the wait in seconds",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "rate_limited",
+                  "message": "Rate limit exceeded for check_run. Try again in 1800 seconds.",
+                  "hint": "Wait for the number of seconds in the Retry-After header, then retry."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/observations/{observation_id}/validation/findings/{fingerprint}/dismiss": {
+      "post": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Dismiss a finding",
+        "description": "Dismiss one finding with a written explanation, so it stops blocking submit. The note and the fact that an API key made the dismissal are carried onto the event at submit and read by the reviewer — dismissing hides nothing.\n\nA finding of the required-items check cannot be dismissed (`422 not_dismissable`): supply the missing item instead.",
+        "operationId": "public_dismiss_finding",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          },
+          {
+            "name": "fingerprint",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Fingerprint"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicDismissRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Dismissed; the run with the dismissal recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicChecks"
+                },
+                "example": {
+                  "run_id": "vrun_01HZY5B2",
+                  "status": "complete",
+                  "checks_current": true,
+                  "open_findings": 0,
+                  "dismissed_findings": 1,
+                  "findings": [
+                    {
+                      "check_number": 5,
+                      "code": "observation_identity",
+                      "name": "Observation identity",
+                      "severity": "warning",
+                      "message": "The light curve names a different star than the report.",
+                      "how_to_fix": "The asteroid, star or date differs between your files and this observation. Correct the report or the light curve — whichever is wrong — and upload it again.",
+                      "doc_url": "https://iota-hub.com/developers/checks#check-5",
+                      "fingerprint": "f3a91c4e7b20",
+                      "evidence": [
+                        {
+                          "source": "lightcurve.csv",
+                          "field": "star_id",
+                          "expected": "1234567890123456789",
+                          "actual": "1234567890123456780",
+                          "expected_label": "Report",
+                          "actual_label": "Light curve",
+                          "mismatch": true,
+                          "file_ref": "lightcurve"
+                        }
+                      ],
+                      "dismissal": {
+                        "dismissed_by": "usr_observer_1",
+                        "dismissed_at": "2026-03-15T08:20:00Z",
+                        "note": "Star id typo in the light curve header; timings are correct.",
+                        "via": "api"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` — no such draft or finding",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_found",
+                  "message": "Finding not found",
+                  "hint": "Check the id, and that the resource is visible to your account."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`not_dismissable`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_dismissable",
+                  "message": "Required-item findings cannot be dismissed; supply the missing item instead.",
+                  "hint": "This finding reports a missing required item — supply the item instead of dismissing it."
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Undo a dismissal",
+        "description": "Undo a dismissal, so the finding blocks submit again.",
+        "operationId": "public_undo_dismissal",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          },
+          {
+            "name": "fingerprint",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Fingerprint"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dismissal removed; the finding is open again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicChecks"
+                },
+                "example": {
+                  "run_id": "vrun_01HZY5B2",
+                  "status": "complete",
+                  "checks_current": true,
+                  "open_findings": 1,
+                  "dismissed_findings": 0,
+                  "findings": [
+                    {
+                      "check_number": 5,
+                      "code": "observation_identity",
+                      "name": "Observation identity",
+                      "severity": "warning",
+                      "message": "The light curve names a different star than the report.",
+                      "how_to_fix": "The asteroid, star or date differs between your files and this observation. Correct the report or the light curve — whichever is wrong — and upload it again.",
+                      "doc_url": "https://iota-hub.com/developers/checks#check-5",
+                      "fingerprint": "f3a91c4e7b20",
+                      "evidence": [
+                        {
+                          "source": "lightcurve.csv",
+                          "field": "star_id",
+                          "expected": "1234567890123456789",
+                          "actual": "1234567890123456780",
+                          "expected_label": "Report",
+                          "actual_label": "Light curve",
+                          "mismatch": true,
+                          "file_ref": "lightcurve"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` — no such draft or dismissal",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_found",
+                  "message": "Dismissal not found",
+                  "hint": "Check the id, and that the resource is visible to your account."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/observations/{observation_id}/submit": {
+      "post": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Submit a draft",
+        "description": "Submit the draft: match or create its event, attach, and flip it to `submitted`.\n\nStable codes: `422 missing_required` (`details.missing_required`), `409 open_findings` (`details.open_findings`), `409 checks_stale`, `409 already_submitted`, `409 stale_version`, `409 event_files_conflict`.",
+        "operationId": "public_submit_draft",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Client-generated key making this call safe to retry. A replay returns the first call's response and does no second write. Keys expire after 24 hours.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Client-generated key making this call safe to retry. A replay returns the first call's response and does no second write. Keys expire after 24 hours."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicSubmitRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicObservation"
+                },
+                "example": {
+                  "observation_id": "obs_01HZY4A1",
+                  "submission_status": "submitted",
+                  "submitted_at": "2026-03-15T08:30:00Z",
+                  "created_at": "2026-03-15T08:02:00Z",
+                  "updated_at": "2026-03-15T08:30:00Z",
+                  "version": 8,
+                  "created_via": "api",
+                  "event_id": "evt_01HZY3K9",
+                  "observer_user_id": "usr_observer_1",
+                  "metadata": {
+                    "observer_name": "A. Observer",
+                    "observer_email": "observer@example.org",
+                    "asteroid_id": "1036",
+                    "asteroid_name": "Ganymed",
+                    "star_catalog": "GAIA",
+                    "star_id": "1234567890123456789",
+                    "observed_at_utc": "2026-03-14T04:12:07Z",
+                    "result_type": "POS",
+                    "confirm_unnumbered_asteroid_id": false,
+                    "bypass_required_files": false
+                  },
+                  "files": {
+                    "report": {
+                      "slot": "report",
+                      "filename": "report.xlsx",
+                      "size_bytes": 51234,
+                      "uploaded_at": "2026-03-15T08:10:00Z"
+                    }
+                  },
+                  "next_actions": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_found",
+                  "message": "Draft not found",
+                  "hint": "Check the id, and that the resource is visible to your account."
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`open_findings`, `checks_stale`, `already_submitted`, `stale_version` or `event_files_conflict`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "open_findings",
+                  "message": "Draft has findings that are neither fixed nor dismissed",
+                  "hint": "Fix the listed findings by replacing the offending file, or dismiss each one with a note, then submit again.",
+                  "details": {
+                    "open_findings": 1
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`missing_required`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "missing_required",
+                  "message": "Draft is missing required items",
+                  "hint": "Supply every item listed in 'details.missing_required', then submit again.",
+                  "details": {
+                    "observation_id": "obs_01HZY4A1",
+                    "missing_required": [
+                      "lightcurve",
+                      "log"
+                    ]
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/observations/{observation_id}": {
+      "delete": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Delete a draft",
+        "description": "Delete a draft and every file on it. A submitted observation is never deleted through this API (`409 already_submitted`) — ask a coordinator.",
+        "operationId": "public_delete_draft",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Draft deleted (no body)"
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_found",
+                  "message": "Draft not found",
+                  "hint": "Check the id, and that the resource is visible to your account."
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`already_submitted` — submitted observations stay",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "already_submitted",
+                  "message": "This observation has been submitted; the public API does not delete submitted observations.",
+                  "hint": "This observation is already submitted; submitted observations cannot be re-submitted.",
+                  "details": {
+                    "observation_id": "obs_01HZY4A1"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      },
+      "get": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Get one observation",
+        "description": "Fetch a single observation or draft. A draft answers only to its owner — to anyone else it is a 404, so an id can never be probed for existence.\n\nFor a draft the response is self-describing: `readiness` says what is still missing, `checks` carries the latest observer-check run (null when it has never been checked), and `next_actions` gives the stable verbs to follow next.",
+        "operationId": "public_get_observation",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicObservation"
+                },
+                "example": {
+                  "observation_id": "obs_01HZY4A1",
+                  "submission_status": "submitted",
+                  "submitted_at": "2026-03-15T08:30:00Z",
+                  "created_at": "2026-03-15T08:02:00Z",
+                  "updated_at": "2026-03-15T08:30:00Z",
+                  "version": 3,
+                  "created_via": "api",
+                  "event_id": "evt_01HZY3K9",
+                  "observer_user_id": "usr_observer_1",
+                  "metadata": {
+                    "observer_name": "A. Observer",
+                    "observer_email": "observer@example.org",
+                    "asteroid_id": "1036",
+                    "asteroid_name": "Ganymed",
+                    "star_catalog": "GAIA",
+                    "star_id": "1234567890123456789",
+                    "observed_at_utc": "2026-03-14T04:12:07Z",
+                    "result_type": "POS",
+                    "confirm_unnumbered_asteroid_id": false,
+                    "bypass_required_files": false
+                  },
+                  "files": {
+                    "report": {
+                      "slot": "report",
+                      "filename": "report.xlsx",
+                      "size_bytes": 51234,
+                      "uploaded_at": "2026-03-15T08:10:00Z"
+                    }
+                  },
+                  "next_actions": []
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/events": {
+      "get": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "List events",
+        "description": "List occultation events, newest first, with the same filters the web app offers. Results are cursor-paginated: pass the `next_cursor` from one page as `?cursor=` to get the next, and stop when it is null.\n\nEvent files are only included for callers who can see them in the UI — before an event is COMPLETE, `files` is null unless you hold `event.files.view_pre_complete`.",
+        "operationId": "public_list_events",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Workflow status; comma-separate for OR, e.g. 'REVIEWED,COMPLETE'.",
+              "examples": [
+                "COMPLETE"
+              ],
+              "title": "Status"
+            },
+            "description": "Workflow status; comma-separate for OR, e.g. 'REVIEWED,COMPLETE'."
+          },
+          {
+            "name": "asteroid_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Asteroid designation (exact or partial match)",
+              "title": "Asteroid Id"
+            },
+            "description": "Asteroid designation (exact or partial match)"
+          },
+          {
+            "name": "asteroid_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Asteroid name (exact or partial match)",
+              "title": "Asteroid Name"
+            },
+            "description": "Asteroid name (exact or partial match)"
+          },
+          {
+            "name": "star_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Star identifier (exact or partial match)",
+              "title": "Star Id"
+            },
+            "description": "Star identifier (exact or partial match)"
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events with date_window_utc >= this ISO 8601 date",
+              "title": "Date From"
+            },
+            "description": "Only events with date_window_utc >= this ISO 8601 date"
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events with date_window_utc <= this ISO 8601 date",
+              "title": "Date To"
+            },
+            "description": "Only events with date_window_utc <= this ISO 8601 date"
+          },
+          {
+            "name": "observer_names",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeat to select several; an event matching ANY of the names is returned.",
+              "title": "Observer Names"
+            },
+            "description": "Repeat to select several; an event matching ANY of the names is returned."
+          },
+          {
+            "name": "waiting_for",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "files",
+                    "observations"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict to WAITING_FOR_OBSERVATIONS events still waiting on a specific input: 'files' (coordinator files) or 'observations' (observer data). Implies status=WAITING_FOR_OBSERVATIONS.",
+              "title": "Waiting For"
+            },
+            "description": "Restrict to WAITING_FOR_OBSERVATIONS events still waiting on a specific input: 'files' (coordinator files) or 'observations' (observer data). Implies status=WAITING_FOR_OBSERVATIONS."
+          },
+          {
+            "name": "assigned_reviewer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeat to select several; an event whose reviewer list contains ANY of the ids is returned. Pass __UNASSIGNED__ for events with no assigned reviewer.",
+              "title": "Assigned Reviewer Id"
+            },
+            "description": "Repeat to select several; an event whose reviewer list contains ANY of the ids is returned. Pass __UNASSIGNED__ for events with no assigned reviewer."
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(date_window_utc|created_at)$",
+              "description": "'date_window_utc' (default) or 'created_at'",
+              "default": "date_window_utc",
+              "title": "Sort By"
+            },
+            "description": "'date_window_utc' (default) or 'created_at'"
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(asc|desc)$",
+              "description": "'asc' or 'desc'",
+              "default": "desc",
+              "title": "Sort Order"
+            },
+            "description": "'asc' or 'desc'"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size, 1-100",
+              "default": 25,
+              "title": "Limit"
+            },
+            "description": "Page size, 1-100"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`next_cursor` from the last page",
+              "title": "Cursor"
+            },
+            "description": "`next_cursor` from the last page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicEventList"
+                },
+                "example": {
+                  "items": [
+                    {
+                      "event_id": "evt_01HZY3K9",
+                      "status": "COMPLETE",
+                      "asteroid_id": "1036",
+                      "asteroid_name": "Ganymed",
+                      "star_catalog": "GAIA",
+                      "star_id": "1234567890123456789",
+                      "date_window_utc": "2026-03-14T04:12:00Z",
+                      "observation_ids": [
+                        "obs_01HZY4A1",
+                        "obs_01HZY4A2"
+                      ],
+                      "observer_names": [
+                        "A. Observer",
+                        "B. Observer"
+                      ],
+                      "assigned_reviewer_ids": [
+                        "usr_reviewer_1"
+                      ],
+                      "created_at": "2026-03-01T09:00:00Z",
+                      "updated_at": "2026-03-20T17:45:00Z",
+                      "files": {
+                        "occelmnt": {
+                          "slot": "occelmnt",
+                          "filename": "1036_ganymed.occelmnt",
+                          "size_bytes": 4096,
+                          "uploaded_at": "2026-03-02T11:00:00Z"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/events/{event_id}": {
+      "get": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Get one event",
+        "description": "Fetch a single event. Files are included only when you could see them in the web app (see `GET /public/v1/events/{event_id}/files` for download links).",
+        "operationId": "public_get_event",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicEvent"
+                },
+                "example": {
+                  "event_id": "evt_01HZY3K9",
+                  "status": "COMPLETE",
+                  "asteroid_id": "1036",
+                  "asteroid_name": "Ganymed",
+                  "star_catalog": "GAIA",
+                  "star_id": "1234567890123456789",
+                  "date_window_utc": "2026-03-14T04:12:00Z",
+                  "observation_ids": [
+                    "obs_01HZY4A1",
+                    "obs_01HZY4A2"
+                  ],
+                  "observer_names": [
+                    "A. Observer",
+                    "B. Observer"
+                  ],
+                  "assigned_reviewer_ids": [
+                    "usr_reviewer_1"
+                  ],
+                  "created_at": "2026-03-01T09:00:00Z",
+                  "updated_at": "2026-03-20T17:45:00Z",
+                  "files": {
+                    "occelmnt": {
+                      "slot": "occelmnt",
+                      "filename": "1036_ganymed.occelmnt",
+                      "size_bytes": 4096,
+                      "uploaded_at": "2026-03-02T11:00:00Z"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/events/{event_id}/files": {
+      "get": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Download links for an event's files",
+        "description": "Time-limited presigned GET URLs for the current version of every populated event file slot, plus every attachment. `slot` repeats for the multi-file slots (`damit`, `ground_track`) and is `attachment` for attachments.\n\nEvent files are private until the event is COMPLETE: before that, a caller without `event.files.view_pre_complete` gets an empty list rather than an error — the same thing the web app shows them.",
+        "operationId": "public_list_event_files",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicEventFileList"
+                },
+                "example": {
+                  "event_id": "evt_01HZY3K9",
+                  "files": [
+                    {
+                      "slot": "occelmnt",
+                      "filename": "1036_ganymed.occelmnt",
+                      "size_bytes": 4096,
+                      "url": "https://s3.amazonaws.com/...&X-Amz-Signature=...",
+                      "expires_in": 900
+                    }
+                  ],
+                  "expires_in": 900
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/observations": {
+      "get": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "List observations",
+        "description": "List submitted observations, newest first, with the same filters the web app offers. Cursor-paginated: pass `next_cursor` as `?cursor=`.\n\nPass `submission_status=draft` to list **your own** drafts instead; drafts are never visible to anyone but their owner, whatever else is in the query. Observer email addresses are present only on observations you own, unless your account can see them in the UI.",
+        "operationId": "public_list_observations",
+        "parameters": [
+          {
+            "name": "observer_names",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeat to select several; an observation matching ANY of the names is returned.",
+              "title": "Observer Names"
+            },
+            "description": "Repeat to select several; an observation matching ANY of the names is returned."
+          },
+          {
+            "name": "event_status_group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(in_review|complete)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "'in_review': unattached, or attached to an event that is not COMPLETE/LONE_NEGATIVE/INSUFFICIENT_EVIDENCE. 'complete': attached to a COMPLETE event.",
+              "title": "Event Status Group"
+            },
+            "description": "'in_review': unattached, or attached to an event that is not COMPLETE/LONE_NEGATIVE/INSUFFICIENT_EVIDENCE. 'complete': attached to a COMPLETE event."
+          },
+          {
+            "name": "submission_status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(draft|submitted)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Omitted or 'submitted' lists submitted observations. 'draft' lists only your own drafts, each with `readiness`.",
+              "title": "Submission Status"
+            },
+            "description": "Omitted or 'submitted' lists submitted observations. 'draft' lists only your own drafts, each with `readiness`."
+          },
+          {
+            "name": "asteroid_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Asteroid designation",
+              "title": "Asteroid Id"
+            },
+            "description": "Asteroid designation"
+          },
+          {
+            "name": "asteroid_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Asteroid name",
+              "title": "Asteroid Name"
+            },
+            "description": "Asteroid name"
+          },
+          {
+            "name": "star_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Star identifier (partial match)",
+              "title": "Star Id"
+            },
+            "description": "Star identifier (partial match)"
+          },
+          {
+            "name": "result_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeat to select several: POS, NEG, UNSURE",
+              "title": "Result Type"
+            },
+            "description": "Repeat to select several: POS, NEG, UNSURE"
+          },
+          {
+            "name": "ungrouped_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Only observations not attached to any event",
+              "default": false,
+              "title": "Ungrouped Only"
+            },
+            "description": "Only observations not attached to any event"
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only observations observed at/after this ISO 8601 datetime (filters observed_at_utc, not the submission time).",
+              "title": "Date From"
+            },
+            "description": "Only observations observed at/after this ISO 8601 datetime (filters observed_at_utc, not the submission time)."
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only observations observed at/before this ISO 8601 datetime",
+              "title": "Date To"
+            },
+            "description": "Only observations observed at/before this ISO 8601 datetime"
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^observed_at$",
+              "description": "Only 'observed_at'",
+              "default": "observed_at",
+              "title": "Sort By"
+            },
+            "description": "Only 'observed_at'"
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(asc|desc)$",
+              "description": "'asc' or 'desc'",
+              "default": "desc",
+              "title": "Sort Order"
+            },
+            "description": "'asc' or 'desc'"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Page size, 1-100",
+              "default": 25,
+              "title": "Limit"
+            },
+            "description": "Page size, 1-100"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`next_cursor` from the last page",
+              "title": "Cursor"
+            },
+            "description": "`next_cursor` from the last page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicObservationList"
+                },
+                "example": {
+                  "items": [
+                    {
+                      "observation_id": "obs_01HZY4A1",
+                      "submission_status": "submitted",
+                      "submitted_at": "2026-03-15T08:30:00Z",
+                      "created_at": "2026-03-15T08:02:00Z",
+                      "updated_at": "2026-03-15T08:30:00Z",
+                      "version": 3,
+                      "created_via": "api",
+                      "event_id": "evt_01HZY3K9",
+                      "observer_user_id": "usr_observer_1",
+                      "metadata": {
+                        "observer_name": "A. Observer",
+                        "observer_email": "observer@example.org",
+                        "asteroid_id": "1036",
+                        "asteroid_name": "Ganymed",
+                        "star_catalog": "GAIA",
+                        "star_id": "1234567890123456789",
+                        "observed_at_utc": "2026-03-14T04:12:07Z",
+                        "result_type": "POS",
+                        "confirm_unnumbered_asteroid_id": false,
+                        "bypass_required_files": false
+                      },
+                      "files": {
+                        "report": {
+                          "slot": "report",
+                          "filename": "report.xlsx",
+                          "size_bytes": 51234,
+                          "uploaded_at": "2026-03-15T08:10:00Z"
+                        }
+                      },
+                      "next_actions": []
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/observations/{observation_id}/files": {
+      "get": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Download links for an observation's files",
+        "description": "Time-limited presigned GET URLs for the current version of every populated slot, plus every attachment (`slot` is `attachment` for those) and the export zip when one exists.\n\nYou can download files from your own observations; downloading someone else's needs the same permission the web app requires (`observation.view_pii`), otherwise the call is a 403.",
+        "operationId": "public_list_observation_files",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicFileList"
+                },
+                "example": {
+                  "observation_id": "obs_01HZY4A1",
+                  "files": [
+                    {
+                      "slot": "report",
+                      "filename": "report.xlsx",
+                      "size_bytes": 51234,
+                      "url": "https://s3.amazonaws.com/...&X-Amz-Signature=...",
+                      "expires_in": 900
+                    }
+                  ],
+                  "expires_in": 900
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PublicChecks": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id",
+            "description": "Id of the run these findings came from"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "'pending', 'running', 'complete' or 'error'"
+          },
+          "checks_current": {
+            "type": "boolean",
+            "title": "Checks Current",
+            "description": "False when the draft changed after this run started",
+            "default": false
+          },
+          "open_findings": {
+            "type": "integer",
+            "title": "Open Findings",
+            "description": "Findings not dismissed",
+            "default": 0
+          },
+          "dismissed_findings": {
+            "type": "integer",
+            "title": "Dismissed Findings",
+            "description": "Findings dismissed",
+            "default": 0
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/PublicFinding"
+            },
+            "type": "array",
+            "title": "Findings",
+            "description": "Every finding across every check in the run, in check order"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "status"
+        ],
+        "title": "PublicChecks",
+        "description": "The latest observer-check run on a draft, flattened for clients."
+      },
+      "PublicDeclaredFile": {
+        "properties": {
+          "slot": {
+            "type": "string",
+            "enum": [
+              "report",
+              "lightcurve",
+              "log",
+              "vizier"
+            ],
+            "title": "Slot",
+            "description": "Which slot this file fills"
+          },
+          "filename": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Filename",
+            "description": "Filename, with extension"
+          },
+          "size": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "title": "Size",
+            "description": "Exact size in bytes"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256",
+            "description": "Optional base64-encoded SHA-256 of the file's bytes, exactly as S3 wants it in `x-amz-checksum-sha256`. When given, the presigned target carries the digest in its `fields` and S3 verifies the upload against it; when omitted, the upload is presigned without a checksum condition."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "slot",
+          "filename",
+          "size"
+        ],
+        "title": "PublicDeclaredFile",
+        "description": "One file a client declares up front when creating a draft."
+      },
+      "PublicDismissRequest": {
+        "properties": {
+          "note": {
+            "type": "string",
+            "minLength": 3,
+            "title": "Note",
+            "description": "Why this finding is not a real problem"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "note"
+        ],
+        "title": "PublicDismissRequest",
+        "description": "Body of ``POST …/validation/findings/{fingerprint}/dismiss``.",
+        "examples": [
+          {
+            "note": "The catalog disagreement is a known typo in the light curve header; the timings are correct."
+          }
+        ]
+      },
+      "PublicDismissal": {
+        "properties": {
+          "dismissed_by": {
+            "type": "string",
+            "title": "Dismissed By",
+            "description": "User id of the dismisser"
+          },
+          "dismissed_at": {
+            "type": "string",
+            "title": "Dismissed At",
+            "description": "ISO 8601 timestamp of the dismissal"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note",
+            "description": "The required justification note"
+          },
+          "via": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Via",
+            "description": "Channel the dismissal was made through"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dismissed_by",
+          "dismissed_at",
+          "note"
+        ],
+        "title": "PublicDismissal",
+        "description": "A dismissal recorded against a finding.\n\n``via`` says which channel dismissed it (``\"web\"`` / ``\"api\"``, D9); it is\n``None`` on records made before the field existed."
+      },
+      "PublicDraftCreateRequest": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/PublicDeclaredFile"
+            },
+            "type": "array",
+            "title": "Files",
+            "description": "Files to be uploaded for this draft"
+          },
+          "auto_submit_when_clean": {
+            "type": "boolean",
+            "title": "Auto Submit When Clean",
+            "description": "Submit automatically when a check run completes with no open findings. Never dismisses anything (D9).",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PublicDraftCreateRequest",
+        "description": "Body of ``POST /public/v1/observations/drafts``.\n\nThe eight report-derived identity fields are deliberately absent: they come\nfrom parsing the report at finalize, and sending them is a ``422\nreport_derived_fields`` (design § 5).",
+        "examples": [
+          {
+            "auto_submit_when_clean": false,
+            "files": [
+              {
+                "filename": "report.xlsx",
+                "size": 51234,
+                "slot": "report"
+              },
+              {
+                "filename": "lightcurve.csv",
+                "size": 2483920,
+                "slot": "lightcurve"
+              },
+              {
+                "filename": "pyote.log",
+                "size": 18422,
+                "slot": "log"
+              }
+            ]
+          }
+        ]
+      },
+      "PublicDraftCreated": {
+        "properties": {
+          "observation": {
+            "$ref": "#/components/schemas/PublicObservation",
+            "description": "The newly created draft"
+          },
+          "uploads": {
+            "items": {
+              "$ref": "#/components/schemas/PublicUploadTarget"
+            },
+            "type": "array",
+            "title": "Uploads",
+            "description": "One presigned target per declared file"
+          }
+        },
+        "type": "object",
+        "required": [
+          "observation"
+        ],
+        "title": "PublicDraftCreated",
+        "description": "Response to the collapsed draft-create call (design § 4 step 1)."
+      },
+      "PublicError": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "Stable machine-readable error code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Human-readable explanation"
+          },
+          "hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint",
+            "description": "What to do next; filled from CODE_HINTS when the code is known"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details",
+            "description": "Structured context for the code, e.g. {\"missing_required\": [\"lightcurve\"]}"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "PublicError",
+        "description": "The public API's problem-details body.\n\n``code`` is the contract — clients branch on it, never on ``message``."
+      },
+      "PublicEvent": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id",
+            "description": "Event id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Workflow status, e.g. 'IN_REVIEW'"
+          },
+          "asteroid_id": {
+            "type": "string",
+            "title": "Asteroid Id",
+            "description": "Asteroid designation"
+          },
+          "asteroid_name": {
+            "type": "string",
+            "title": "Asteroid Name",
+            "description": "Asteroid name"
+          },
+          "star_catalog": {
+            "type": "string",
+            "title": "Star Catalog",
+            "description": "Star catalog, e.g. 'GAIA'"
+          },
+          "star_id": {
+            "type": "string",
+            "title": "Star Id",
+            "description": "Star identifier within the catalog"
+          },
+          "date_window_utc": {
+            "type": "string",
+            "title": "Date Window Utc",
+            "description": "UTC date window of the event"
+          },
+          "observation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Observation Ids",
+            "description": "Observations attached to this event"
+          },
+          "observer_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Observer Names",
+            "description": "Observer names across the attached observations, as the UI shows them"
+          },
+          "assigned_reviewer_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Assigned Reviewer Ids",
+            "description": "User ids of the assigned reviewers"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "description": "ISO 8601 creation timestamp"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At",
+            "description": "ISO 8601 last-modified timestamp"
+          },
+          "public_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Notes",
+            "description": "Public-facing notes shown on the results page"
+          },
+          "files": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/PublicFileVersion"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files",
+            "description": "Current file per single-file event slot, or null when the event carries no required-files structure for this caller."
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "status",
+          "asteroid_id",
+          "asteroid_name",
+          "star_catalog",
+          "star_id",
+          "date_window_utc",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PublicEvent",
+        "description": "An event as the public API returns it."
+      },
+      "PublicEventFileLink": {
+        "properties": {
+          "slot": {
+            "type": "string",
+            "title": "Slot",
+            "description": "Slot the file occupies"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "Original filename"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes",
+            "description": "Size in bytes"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Presigned GET URL"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In",
+            "description": "Seconds until the URL expires"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot",
+          "filename",
+          "size_bytes",
+          "url",
+          "expires_in"
+        ],
+        "title": "PublicEventFileLink",
+        "description": "A time-limited download link for one event file.\n\n``slot`` repeats for the multi-file slots (``damit``, ``ground_track``)."
+      },
+      "PublicEventFileList": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id",
+            "description": "Event the files belong to"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/PublicEventFileLink"
+            },
+            "type": "array",
+            "title": "Files"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In",
+            "description": "Seconds until the URLs expire"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "expires_in"
+        ],
+        "title": "PublicEventFileList",
+        "description": "``GET /public/v1/events/{id}/files``."
+      },
+      "PublicEventList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PublicEvent"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as ?cursor= for the next page; null on the last"
+          }
+        },
+        "type": "object",
+        "title": "PublicEventList",
+        "description": "A cursor-paginated page of events."
+      },
+      "PublicEvidence": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Where the value was read from"
+          },
+          "field": {
+            "type": "string",
+            "title": "Field",
+            "description": "Which field was compared"
+          },
+          "expected": {
+            "type": "string",
+            "title": "Expected",
+            "description": "Expected value ('' when not a comparison)"
+          },
+          "actual": {
+            "type": "string",
+            "title": "Actual",
+            "description": "Value actually found"
+          },
+          "expected_label": {
+            "type": "string",
+            "title": "Expected Label",
+            "description": "Column label for 'expected'",
+            "default": "Expected"
+          },
+          "actual_label": {
+            "type": "string",
+            "title": "Actual Label",
+            "description": "Column label for 'actual'",
+            "default": "Actual"
+          },
+          "mismatch": {
+            "type": "boolean",
+            "title": "Mismatch",
+            "description": "False when this row reports a value rather than a disagreement",
+            "default": true
+          },
+          "file_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Ref",
+            "description": "Machine-readable key of the file the value came from"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "field",
+          "expected",
+          "actual"
+        ],
+        "title": "PublicEvidence",
+        "description": "One evidence row backing a finding.\n\nThe internal row's rendering hints are kept — a client that prints the\nevidence needs the column labels and the ``mismatch`` flag to avoid\npresenting a lookup result as an error."
+      },
+      "PublicFileLink": {
+        "properties": {
+          "slot": {
+            "type": "string",
+            "title": "Slot",
+            "description": "Slot the file occupies"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "Original filename"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes",
+            "description": "Size in bytes"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Presigned GET URL"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In",
+            "description": "Seconds until the URL expires"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot",
+          "filename",
+          "size_bytes",
+          "url",
+          "expires_in"
+        ],
+        "title": "PublicFileLink",
+        "description": "A time-limited download link for one observation file."
+      },
+      "PublicFileList": {
+        "properties": {
+          "observation_id": {
+            "type": "string",
+            "title": "Observation Id",
+            "description": "Observation the files belong to"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/PublicFileLink"
+            },
+            "type": "array",
+            "title": "Files"
+          },
+          "zip_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zip Url",
+            "description": "Presigned URL for all files as one archive, if offered"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In",
+            "description": "Seconds until the URLs expire"
+          }
+        },
+        "type": "object",
+        "required": [
+          "observation_id",
+          "expires_in"
+        ],
+        "title": "PublicFileList",
+        "description": "``GET /public/v1/observations/{id}/files``."
+      },
+      "PublicFileVersion": {
+        "properties": {
+          "slot": {
+            "type": "string",
+            "title": "Slot",
+            "description": "File slot this version occupies"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "Original filename as uploaded"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes",
+            "description": "Size of the file in bytes"
+          },
+          "uploaded_at": {
+            "type": "string",
+            "title": "Uploaded At",
+            "description": "ISO 8601 upload timestamp"
+          },
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type",
+            "description": "Declared content type, when known"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot",
+          "filename",
+          "size_bytes",
+          "uploaded_at"
+        ],
+        "title": "PublicFileVersion",
+        "description": "The current file in one slot, as the public API describes it.\n\nDeliberately omits the internal version history, S3 keys, uploader ids and\ntombstone bookkeeping: a client gets the download URL from the ``/files``\nendpoint, not from here."
+      },
+      "PublicFinalizeUploadRequest": {
+        "properties": {
+          "file_key": {
+            "type": "string",
+            "title": "File Key",
+            "description": "The `file_key` the init call returned"
+          },
+          "filename": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Filename",
+            "description": "Filename, with extension"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "file_key",
+          "filename"
+        ],
+        "title": "PublicFinalizeUploadRequest",
+        "description": "Body of ``POST …/files/{slot}/upload/finalize``.",
+        "examples": [
+          {
+            "file_key": "staging/obs_01HZY4A1/lightcurve/lightcurve.csv",
+            "filename": "lightcurve.csv"
+          }
+        ]
+      },
+      "PublicFinding": {
+        "properties": {
+          "check_number": {
+            "type": "integer",
+            "title": "Check Number",
+            "description": "Observer catalog number of the check that produced this finding; 0 for a check the current catalog no longer knows."
+          },
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "Stable check identifier (the check_id) — branch on this"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Observer-facing name of the check"
+          },
+          "severity": {
+            "type": "string",
+            "title": "Severity",
+            "description": "'warning' or 'fail'"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "What the check found"
+          },
+          "how_to_fix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "How To Fix",
+            "description": "Static remediation text for this check"
+          },
+          "doc_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doc Url",
+            "description": "Public documentation anchor for this check"
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint",
+            "description": "Stable identifier of this finding across runs; the id used to dismiss it."
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/PublicEvidence"
+            },
+            "type": "array",
+            "title": "Evidence",
+            "description": "Rows backing the finding"
+          },
+          "dismissal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicDismissal"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when the finding has been dismissed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "check_number",
+          "code",
+          "name",
+          "severity",
+          "message",
+          "fingerprint"
+        ],
+        "title": "PublicFinding",
+        "description": "One issue an observer check surfaced on a draft."
+      },
+      "PublicInitUploadRequest": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Filename",
+            "description": "Filename, with extension"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256",
+            "description": "Optional base64-encoded SHA-256 of the file's bytes, exactly as S3 wants it in `x-amz-checksum-sha256`. When given, the presigned target carries the digest in its `fields` and S3 verifies the upload against it; when omitted, the upload is presigned without a checksum condition."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "filename"
+        ],
+        "title": "PublicInitUploadRequest",
+        "description": "Body of ``POST …/files/{slot}/upload/init``.",
+        "examples": [
+          {
+            "filename": "lightcurve.csv"
+          }
+        ]
+      },
+      "PublicObservation": {
+        "properties": {
+          "observation_id": {
+            "type": "string",
+            "title": "Observation Id",
+            "description": "Observation id"
+          },
+          "submission_status": {
+            "type": "string",
+            "title": "Submission Status",
+            "description": "'draft' or 'submitted'"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At",
+            "description": "ISO 8601 submit timestamp; null for drafts"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "description": "ISO 8601 creation timestamp"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At",
+            "description": "ISO 8601 last-modified timestamp"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version",
+            "description": "Optimistic-concurrency version; echo it back on submit"
+          },
+          "created_via": {
+            "type": "string",
+            "title": "Created Via",
+            "description": "Channel that created it: 'web' or 'api'",
+            "default": "web"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id",
+            "description": "Event this observation is attached to, if any"
+          },
+          "observer_user_id": {
+            "type": "string",
+            "title": "Observer User Id",
+            "description": "Owner of the observation"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/PublicObservationMetadata",
+            "description": "Identity and result fields"
+          },
+          "files": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PublicFileVersion"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Files",
+            "description": "Current file per slot (report, lightcurve, log, vizier); null for an empty slot."
+          },
+          "readiness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicReadiness"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Derived readiness; null for submitted observations"
+          },
+          "checks": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicChecks"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Latest observer-check run, when one was loaded"
+          },
+          "next_actions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Next Actions",
+            "description": "Stable verbs for what to do next"
+          },
+          "report_parse": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicReportParse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Outcome of the report parse, on the response to a call that finalized the report slot."
+          }
+        },
+        "type": "object",
+        "required": [
+          "observation_id",
+          "submission_status",
+          "created_at",
+          "updated_at",
+          "version",
+          "observer_user_id",
+          "metadata"
+        ],
+        "title": "PublicObservation",
+        "description": "An observation (draft or submitted) as the public API returns it.\n\nSelf-describing by design: a client polls this one resource and learns the\nsubmission state, what is still missing, the latest check findings, and\nthe verbs to act on next (design § 7)."
+      },
+      "PublicObservationList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PublicObservation"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as ?cursor= for the next page; null on the last"
+          }
+        },
+        "type": "object",
+        "title": "PublicObservationList",
+        "description": "A cursor-paginated page of observations."
+      },
+      "PublicObservationMetadata": {
+        "properties": {
+          "observer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observer Name",
+            "description": "Report-derived"
+          },
+          "observer_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observer Email",
+            "description": "Report-derived"
+          },
+          "asteroid_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asteroid Id",
+            "description": "Report-derived"
+          },
+          "asteroid_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asteroid Name",
+            "description": "Report-derived"
+          },
+          "star_catalog": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Star Catalog",
+            "description": "Report-derived"
+          },
+          "star_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Star Id",
+            "description": "Report-derived"
+          },
+          "observed_at_utc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed At Utc",
+            "description": "Report-derived"
+          },
+          "result_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Type",
+            "description": "Report-derived: 'POS', 'NEG' or 'UNSURE'"
+          },
+          "comments": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comments",
+            "description": "Free-text notes from the observer"
+          },
+          "confirm_unnumbered_asteroid_id": {
+            "type": "boolean",
+            "title": "Confirm Unnumbered Asteroid Id",
+            "description": "The observer confirmed a non-numeric asteroid id is deliberate",
+            "default": false
+          },
+          "bypass_required_files": {
+            "type": "boolean",
+            "title": "Bypass Required Files",
+            "description": "The observer took the alternative-processing-software bypass, so lightcurve and log are not required for a POS/UNSURE submit.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "PublicObservationMetadata",
+        "description": "The observation's identity and result fields.\n\nThe first eight are **report-derived**: they are written from the parsed\nreport spreadsheet and cannot be set directly (design § 5). The last two\nare observer-owned flags that change what submit requires."
+      },
+      "PublicReadiness": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "title": "State",
+            "description": "'in_progress' (required items missing or event files blocking), 'checking' (checks absent, running or stale), 'needs_attention' (open findings), or 'ready'."
+          },
+          "missing_required": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing Required",
+            "description": "Stable keys still absent: report, lightcurve, log, result_type, asteroid_id, asteroid_id_confirmation, asteroid_name, star, observed_at_utc, observer_name, observer_email."
+          },
+          "open_findings": {
+            "type": "integer",
+            "title": "Open Findings",
+            "description": "Non-dismissed findings on the latest run",
+            "default": 0
+          },
+          "dismissed_findings": {
+            "type": "integer",
+            "title": "Dismissed Findings",
+            "description": "Dismissed findings on the latest run",
+            "default": 0
+          },
+          "checks_current": {
+            "type": "boolean",
+            "title": "Checks Current",
+            "description": "True when the latest complete run describes the draft as it stands",
+            "default": false
+          },
+          "event_files_blocked": {
+            "type": "boolean",
+            "title": "Event Files Blocked",
+            "description": "Staged event files would conflict with an existing event on submit",
+            "default": false
+          },
+          "latest_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Run Id",
+            "description": "Id of the latest observer check run, if any"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "title": "PublicReadiness",
+        "description": "Derived submit readiness of a draft (never stored)."
+      },
+      "PublicReportParse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "'parsed' or 'failed'"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code",
+            "description": "Stable outcome identifier: 'partial' with status 'parsed'; 'unreadable', 'version_not_detected', 'unsupported_version' or 'no_metadata' with status 'failed'."
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "Explanation for the observer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "PublicReportParse",
+        "description": "Outcome of the server-side parse of the ``report`` slot."
+      },
+      "PublicSubmitRequest": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "title": "Version",
+            "description": "The version you last read. A mismatch answers 409 so a concurrent change is never submitted unseen."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "title": "PublicSubmitRequest",
+        "description": "Body of ``POST /public/v1/observations/{id}/submit``.",
+        "examples": [
+          {
+            "version": 7
+          }
+        ]
+      },
+      "PublicUploadTarget": {
+        "properties": {
+          "slot": {
+            "type": "string",
+            "title": "Slot",
+            "description": "Slot this target fills"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "Filename the target was issued for"
+          },
+          "upload_url": {
+            "type": "string",
+            "title": "Upload Url",
+            "description": "S3 URL to POST the file to"
+          },
+          "fields": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Fields",
+            "description": "Form fields that must accompany the file"
+          },
+          "file_key": {
+            "type": "string",
+            "title": "File Key",
+            "description": "Opaque key identifying this upload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot",
+          "filename",
+          "upload_url",
+          "file_key"
+        ],
+        "title": "PublicUploadTarget",
+        "description": "A presigned POST target for one declared file.\n\nUpload with a multipart POST: the ``fields`` go in the form body and the\nfile part comes last."
+      }
+    },
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Personal API key, created on your IOTA Hub profile page and shown once. Format `iotahub_<key_id>_<secret>`. Scopes are fixed at creation: `read` for every read, `observations:write` for every write."
+      }
+    }
+  }
+}
