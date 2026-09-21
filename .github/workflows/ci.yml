@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # Lint once is enough; running it on every OS/Python combo is pure
+      # duplication of the same check.
+      - name: Lint (ruff check)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        run: uv run ruff check .
+
+      - name: Format check (ruff format)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        run: uv run ruff format --check .
+
+      - name: Test
+        run: uv run pytest -q
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Check sdist contents
+        run: uv run python scripts/check_sdist.py dist/*.tar.gz
+
+      - name: Install built wheel into a fresh venv
+        run: |
+          uv venv /tmp/w
+          uv pip install --python /tmp/w dist/*.whl
+          /tmp/w/bin/python -c "import iota_hub; print(iota_hub.__version__)"
+          # The CLI entry point must import and print help from the installed wheel.
+          /tmp/w/bin/iota-hub --help
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  openapi-drift:
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Check spec/openapi.json against the deployed document
+        run: uv run python scripts/check_openapi_drift.py
+
+  smoke:
+    runs-on: ubuntu-latest
+    # Only on push to main: fork PRs must never get the smoke-test API key.
+    if: github.event_name == 'push'
+    concurrency:
+      group: smoke
+      cancel-in-progress: false
+    env:
+      IOTA_HUB_API_KEY: ${{ secrets.IOTA_HUB_SMOKE_API_KEY }}
+      IOTA_HUB_BASE_URL: https://d7gigln4gk.execute-api.us-west-2.amazonaws.com/dev/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Smoke test against dev
+        run: uv run pytest -m smoke tests/smoke -q
