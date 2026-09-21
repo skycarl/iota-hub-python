@@ -137,6 +137,16 @@ exist is `unknown_profile`; a config file that is not valid TOML is
 `invalid_config`. A stored `default_profile` that no longer exists is simply
 ignored, so deleting a profile never wedges the CLI.
 
+**`auth login` resolves its target the same way, minus the profile's key.**
+*Decision:* the profile it is about to write may not exist yet, so naming it
+cannot be `unknown_profile`. The base URL stored with the key is the flag, else
+`IOTA_HUB_BASE_URL`, else what that profile already had (a re-login keeps its
+target), else the default — the § 3 order with the one profile in question
+standing in for "the profile". The key itself is read from a hidden prompt on a
+TTY and otherwise from one line of stdin, and is verified with
+`list_observations(limit=1)` **before** anything is written, so a typo never
+lands in the config file. Nothing but `key_prefix` is ever printed back.
+
 **`auth status` shows profile, base URL and key prefix — and nothing else.**
 *Decision:* the public API has no `whoami` operation (there is none in
 `spec/openapi.json`), so scopes and expiry are not knowable from a key, and a
@@ -348,6 +358,7 @@ and the CLI maps each one to an exit code (§ 12):
 | `missing_api_key` | nothing configured a key (§ 3) — the auth category |
 | `unknown_profile` | a profile was named and the config file has no such profile |
 | `invalid_config` | the config file is not valid TOML |
+| `confirmation_required` | a destructive command would have had to prompt, and stdin is not a TTY (§ 13); the `hint` names `--yes` |
 
 Every one of them carries a `hint` naming the way out — the flag to pass, the
 command to run — because these are the errors a person or an agent hits first.
@@ -399,11 +410,31 @@ Scripts and agents branch on these.
 
 The client-invented codes of § 10 map on: the mapping errors
 (`ambiguous_files`, `missing_files`, `invalid_extension`, `not_a_directory`)
-and `unknown_profile` are **usage**, `2`; `missing_api_key` is **auth**, `3`;
+and `unknown_profile` and `confirmation_required` are **usage**, `2`;
+`missing_api_key` is **auth**, `3`;
 `timeout`, and an `outcome` of `needs_attention`, are **not ready**, `4`;
 `upload_failed`, `download_failed`, `file_exists` and `invalid_config` are
 plain errors, `1`. An `outcome` of `ready` or `draft` is a success the caller
 asked for, so `0`.
+
+One function decides all of it, and one handler wraps every command — a code
+that *names* the situation is checked before the exception's category, so a
+`422 missing_required` is `4` while `missing_api_key` stays `3`.
+
+**Only the commands that act fail on "not ready".** *Decision:* `submit` and
+`drafts submit` exit `4` when the draft is not ready, because they were asked
+to submit it and did not. The commands that only *report* — `drafts show`,
+`drafts check`, `observations show`, `auth status` — exit `0` and print what
+they found, exactly as `auth status` reports an invalid key without failing.
+A caller that wants the verdict reads `readiness.state`, or runs the command
+that acts.
+
+**`drafts submit` decides the refusal locally.** It must read the observation
+anyway (`submit` echoes the `version` it last saw, § 9), so when that read says
+the draft is not ready it raises the same `code` the API's own refusal carries
+— `missing_required`, `event_files_conflict`, `open_findings`, else
+`checks_stale`, in that order — rather than spending a write that is certain to
+be rejected. One contract either way.
 
 ## 13. Output
 
@@ -430,7 +461,44 @@ asked for, so `0`.
   | `dismiss_or_fix` | one `iota-hub drafts dismiss <id> <fingerprint> --note "…"` per **open** finding, then the `files add` alternative — fixing the file is the other way out |
   | `confirm_asteroid_id`, `resolve_event_files_conflict` | a sentence saying to finish it in the web app: *decision*, because the public API has no verb for either (API spec § 5) |
   | anything else | `<verb>: see iota-hub guide` — a verb a client does not know is never silently dropped |
-- Errors print the API's `code` and `hint`.
+- Errors print the API's `code` and `hint`, as
+  `error: <code>: <message>` then `hint: <hint>`, both on stderr, plus
+  `retry after <n> s` when the response carried a `Retry-After`.
+- Dates are printed as the API gives them. No local-time conversion: an
+  observation's `observed_at_utc` is UTC and stays readable as UTC.
+- Tables are simple aligned columns — no box drawing and no emoji, so a
+  non-UTF-8 console and a `grep`/`awk` pipeline both survive them.
+
+**The `--json` document, per command.** *Decision:* the design fixed only
+`submit --json`; the rest follow one rule — a command that answers with **one
+resource** prints that resource's model as the API returned it, and a command
+that answers with **a page** prints `{"items": [...], "next_cursor": ...}`. The
+shapes are part of semver (a major bump to change one):
+
+| Command | Document |
+|---|---|
+| `submit` | `{observation_id, outcome, submitted, uploads: {slot: filename}, ignored: [filename], next_commands: [...], observation: {...}}` |
+| `submit --dry-run` | `{target, directory, uploads: [{slot, filename, path, size}], ignored: [filename]}` — and no request is sent, so it needs no key |
+| `drafts show`, `drafts check`, `drafts files add`, `drafts files rm`, `drafts submit`, `observations show` | the `PublicObservation` |
+| `drafts dismiss` | the `PublicChecks` the dismissal returned |
+| `events show` | the `PublicEvent` |
+| `drafts list` | `{items: [...]}` — it follows the cursor itself (the open-draft cap is 100), so there is no `next_cursor` to report |
+| `observations list`, `events list` | `{items: [...], next_cursor}`; with `--all` the cursor is followed and `next_cursor` is `null` |
+| `auth login` | `{profile, base_url, key_prefix, config_file}` |
+| `auth status` | `{profile, base_url, key_prefix, key_source, config_file, check}` |
+| `auth logout` | `{profile, deleted, config_file}` |
+| `drafts delete` | `{observation_id, deleted}` |
+| `files download` | `{files: [path]}` |
+| `guide` | `{guide: "<the markdown>"}` |
+
+A key never appears in any of them — the most any document carries is
+`key_prefix` (§ 3).
+
+**`--dry-run` prints its target on stdout.** *Decision:* the target is part of
+the mapping report the design asks `--dry-run` for ("the slot mapping, sizes
+and target"), so it is data, not a diagnostic. The stderr `Target:` line of § 3
+is unchanged and still appears whenever the target is not the default, which on
+a dry run means the two agree with each other.
 
 ## 14. The shared fixture folder
 
