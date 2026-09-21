@@ -210,3 +210,53 @@ def test_no_error_ever_carries_the_key(config_path):
     rendered = f"{error} {error.details} {error.hint}"
     assert FLAG_KEY not in rendered
     assert PROFILE_KEY not in rendered
+
+
+# -- what may be written ----------------------------------------------------
+
+
+def test_a_control_character_in_a_profile_name_is_refused(tmp_path):
+    path = tmp_path / "config.toml"
+    with pytest.raises(IotaHubError) as excinfo:
+        save_profile(
+            "dev\nevil", api_key=PROFILE_KEY, base_url=DEV_URL, config_path=path
+        )
+
+    assert excinfo.value.code == "invalid_config"
+    assert not path.exists()
+
+
+def test_a_quote_in_a_profile_name_is_refused(tmp_path):
+    path = tmp_path / "config.toml"
+    with pytest.raises(IotaHubError) as excinfo:
+        save_profile('de"v', api_key=PROFILE_KEY, base_url=DEV_URL, config_path=path)
+
+    assert excinfo.value.code == "invalid_config"
+
+
+def test_a_control_character_in_the_base_url_is_refused(tmp_path):
+    path = tmp_path / "config.toml"
+    with pytest.raises(IotaHubError) as excinfo:
+        save_profile(
+            "dev", api_key=PROFILE_KEY, base_url="https://x\x7f.test", config_path=path
+        )
+
+    assert excinfo.value.code == "invalid_config"
+
+
+def test_a_backslash_in_the_base_url_round_trips(tmp_path):
+    path = tmp_path / "config.toml"
+    target = "https://x.test/a\\b"
+    save_profile("dev", api_key=PROFILE_KEY, base_url=target, config_path=path)
+
+    assert load_config(path)["profiles"]["dev"]["base_url"] == target
+
+
+def test_a_control_character_in_the_key_is_refused(tmp_path):
+    path = tmp_path / "config.toml"
+    with pytest.raises(IotaHubError) as excinfo:
+        save_profile(
+            "dev", api_key="iotahub_a_b\x01c", base_url=DEV_URL, config_path=path
+        )
+
+    assert excinfo.value.code == "invalid_config"

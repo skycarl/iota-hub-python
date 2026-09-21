@@ -152,7 +152,10 @@ HTTP: `GET /observations/{id}`, the self-describing resource - read `readiness`,
     iota-hub drafts delete <id> --yes                     # throw a draft away
 
 - Replacing a file re-arms the checks by itself, so an explicit `drafts check`
-  is usually unnecessary.
+  is usually unnecessary. When a run is already under way, `drafts check` waits
+  for that one rather than starting another.
+- `drafts submit` on an observation that is already submitted is
+  `already_submitted`: submitted observations are never re-submitted.
 - A dismissal takes one finding at a time and a note of at least 3 characters.
   Dismissals made with a key record that, and the key id, beside the note.
 - A finding about a missing required item cannot be dismissed: supply the item.
@@ -177,6 +180,9 @@ to undo), `POST /observations/{id}/validation/runs`,
     iota-hub events show <id>
     iota-hub files download observation <id> -o ./downloads
     iota-hub files download event <id> --slot lightcurve -o ./downloads --force
+
+`--slot` takes any slot the listing names, not just the four upload slots -
+event files carry slots such as `damit` and `ground_track`.
 
 Observation filters: `observer_names`, `event_status_group`, `submission_status`,
 `asteroid_id`, `asteroid_name`, `star_id`, `result_type`, `ungrouped_only`,
@@ -206,8 +212,13 @@ See /developers/guide.md.
 
 - `--json` works on every command: exactly one JSON document on stdout and
   nothing else, with progress and logs on stderr. An error is then JSON on
-  stderr in the problem-details shape plus the exit code:
-  `{"code": "...", "message": "...", "hint": "...", "details": {}, "exit_code": 4}`.
+  stderr in the problem-details shape plus the HTTP status, the retry wait and
+  the exit code: `{"code": "...", "message": "...", "hint": "...",
+  "details": {}, "status": 409, "retry_after": null, "exit_code": 4}`. A bad
+  invocation is JSON too, as `usage_error` with exit code `2`.
+- `--json`, `--profile` and `--base-url` are accepted after the subcommand
+  (`iota-hub submit --json`) and before it (`iota-hub --json submit`); the one
+  after the subcommand wins when both are given.
 - Branch on `code` and on the exit code, never on a message. Messages are for
   people and are free to change. Exit codes: `0` success, `1` error, `2` usage
   (bad flags, or an ambiguous or incomplete mapping), `3` auth, `4` open
@@ -255,6 +266,8 @@ Every failure carries a stable `code`. These are the ones an observer meets.
 | `invalid_extension`    | 2    | A named file has the wrong extension for its slot.          |
 | `not_a_directory`      | 2    | The path to submit is not a directory.                      |
 | `unknown_profile`      | 2    | No such profile in the config file.                         |
+| `usage_error`          | 2    | Bad flags or a missing argument. Run it with `--help`.      |
+| `already_submitted`    | 1    | The observation is submitted; it cannot be re-submitted.    |
 | `internal_error`       | 1    | Something failed on our side. Retry; then report it.        |
 
 The full table, including codes only a raw HTTP caller can hit, is in
@@ -268,7 +281,7 @@ third-party developers build. Its base URL is published on that site's
 `/developers` page, and no non-production URL is baked into this package.
 
     iota-hub auth login --profile dev --base-url <the dev base URL>
-    iota-hub --profile dev observations list      # or IOTA_HUB_PROFILE=dev
+    iota-hub observations list --profile dev      # or IOTA_HUB_PROFILE=dev
 
 A profile stores a key and its base URL together, so a dev key is never sent to
 production or the reverse. `--base-url` (and `IOTA_HUB_BASE_URL`) is the API

@@ -166,6 +166,9 @@ def save_profile(
 
     The first profile written becomes ``default_profile``.
     """
+    _check_writable("profile name", name, forbidden='"\\')
+    _check_writable("base_url", base_url)
+    _check_writable("API key", api_key)
     config = load_config(config_path)
     profiles = dict(config.get("profiles") or {})
     profiles[name] = {"base_url": base_url.rstrip("/"), "api_key": api_key}
@@ -229,6 +232,28 @@ def _to_toml(config: dict) -> str:
                 lines.append(f"{key} = {_quote(value)}")
         lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _check_writable(what: str, value: str, *, forbidden: str = "") -> None:
+    """Refuse a value that would make the config file unreadable.
+
+    A control character cannot go in a TOML string at all, and a profile name
+    is also a table header (``[profiles."dev"]``), so it additionally cannot
+    carry a quote or a backslash. Everything else is escaped on the way out
+    (:func:`_quote`), so a backslash in a base URL round-trips.
+    """
+    bad = [
+        character
+        for character in value
+        if character < " " or character == "\x7f" or character in forbidden
+    ]
+    if bad:
+        raise IotaHubError(
+            "invalid_config",
+            f"The {what} contains a character that cannot be stored: {bad[0]!r}.",
+            hint="Use a plain name and a plain URL.",
+            details={"field": what},
+        )
 
 
 def _quote(value: str) -> str:

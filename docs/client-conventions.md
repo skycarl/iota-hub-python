@@ -43,7 +43,9 @@ replacement):
 - `replace_file(observation_id, slot, path)` — the fix loop's init → upload →
   finalize, in one call,
 - `download_files("observation" | "event", id, dest, …)` — list the files,
-  optionally filter by `slot`, and stream each presigned link into `dest`
+  optionally filter by `slot` — **any** slot the listing names, not only the
+  four upload slots (an event carries `damit`, `ground_track`, `attachment`) —
+  and stream each presigned link into `dest`
   **without the API key** (§ 5). Nothing is skipped silently: an existing file
   is `file_exists` unless `overwrite` was asked for — `--force` on the CLI —
   (and every destination is
@@ -120,6 +122,13 @@ api_key  = "iotahub_<key_id>_<secret>"
 
 - On POSIX the file is `0600`. On Windows the user profile directory's ACL is
   the protection, and the docs say so rather than promising permissions.
+- **What may be written.** Strings written to the file escape `\` and `"`, so a
+  base URL carrying either round-trips. A control character (U+0000–U+001F,
+  U+007F) cannot go in a TOML string at all — not in the profile name, the base
+  URL or the key — and a profile name is also a table header
+  (`[profiles."dev"]`), so it carries neither a quote nor a backslash. Either is
+  `invalid_config`, raised **before** the file is touched: the file a client
+  writes always parses.
 - A key is **never** accepted as a command-line argument — it would land in
   shell history and in `ps`. Prompt with hidden input, or read stdin.
 - No OS keyring in v1.
@@ -348,7 +357,7 @@ and the CLI maps each one to an exit code (§ 12):
 | `code` | Raised when |
 |---|---|
 | `upload_failed` | S3 refused a presigned POST; `status` and `details.slot` say which |
-| `download_failed` | S3 refused a presigned GET — an expired link answers `403` |
+| `download_failed` | S3 refused a presigned GET — an expired link answers `403`; also a server-supplied filename that names no file (`""`, `.`, `..` once the directories are stripped), refused before anything is written |
 | `file_exists` | a download would overwrite an existing file and `overwrite` was not asked for |
 | `timeout` | `wait_for_checks` gave up (§ 8) |
 | `ambiguous_files` | two candidates for one slot (§ 11); `details.slot`, `details.candidates` |
@@ -357,8 +366,10 @@ and the CLI maps each one to an exit code (§ 12):
 | `not_a_directory` | the folder to submit is not a directory |
 | `missing_api_key` | nothing configured a key (§ 3) — the auth category |
 | `unknown_profile` | a profile was named and the config file has no such profile |
-| `invalid_config` | the config file is not valid TOML |
+| `invalid_config` | the config file is not valid TOML, or a profile name, base URL or key carries something that cannot be stored in it (§ 3) |
 | `confirmation_required` | a destructive command would have had to prompt, and stdin is not a TTY (§ 13); the `hint` names `--yes` |
+| `already_submitted` | `drafts submit` was given an observation that is already submitted (§ 12) |
+| `usage_error` | the invocation itself was rejected by the argument parser (§ 12) |
 
 Every one of them carries a `hint` naming the way out — the flag to pass, the
 command to run — because these are the errors a person or an agent hits first.
@@ -421,6 +432,13 @@ One function decides all of it, and one handler wraps every command — a code
 that *names* the situation is checked before the exception's category, so a
 `422 missing_required` is `4` while `missing_api_key` stays `3`.
 
+**A bad invocation is the argument parser's, and it is `2`.** *Decision:* under
+`--json` it is reported like every other failure — the problem-details object of
+§ 13 with `code` `usage_error`, the parser's own message, and the hint `Run the
+command with --help.` — so an agent never has to switch parsers between a
+rejected command and a rejected request. Without `--json` the parser prints its
+usual usage line.
+
 **Only the commands that act fail on "not ready".** *Decision:* `submit` and
 `drafts submit` exit `4` when the draft is not ready, because they were asked
 to submit it and did not. The commands that only *report* — `drafts show`,
@@ -432,18 +450,38 @@ that acts.
 **`drafts submit` decides the refusal locally.** It must read the observation
 anyway (`submit` echoes the `version` it last saw, § 9), so when that read says
 the draft is not ready it raises the same `code` the API's own refusal carries
-— `missing_required`, `event_files_conflict`, `open_findings`, else
+— `already_submitted` when the read says `submission_status == "submitted"`,
+else `missing_required`, `event_files_conflict`, `open_findings`, else
 `checks_stale`, in that order — rather than spending a write that is certain to
-be rejected. One contract either way.
+be rejected. One contract either way. *Decision:* `already_submitted` is
+checked first, because a submitted observation has no readiness to reason about
+and would otherwise be reported as `checks_stale`; it is a plain error, `1`,
+not "not ready".
+
+**`check` joins the run that is already under way.** *Decision:* `409
+check_run_in_progress` is not a failure of the command that asked for a check
+run — the run it wanted exists — so the client falls through to the wait
+instead of exiting `1`, which is what the API's own hint says to do. With
+`--no-wait` it says on stderr that a run is already under way and exits `0`.
 
 ## 13. Output
 
 - Human output by default on a TTY; `--json` on **every** command.
-- Data on **stdout**, progress and logs on **stderr**.
+- Data on **stdout**, progress and logs on **stderr**. A prompt is not data
+  either: the hidden key prompt and every confirmation are written to
+  **stderr**, so `--json` and a redirected stdout stay clean.
+- `--json`, and the options that pick a target (`--profile`, `--base-url`), are
+  accepted **before the subcommand and after it** — `iota-hub submit --json` is
+  the natural form and the one the docs show. *Decision:* a value given after
+  the subcommand wins over the same option given before it, being the more
+  specific of the two.
 - With `--json`: exactly **one JSON document on stdout and nothing else**. Errors
-  are JSON too, on **stderr**, in the API's problem-details shape plus
-  `exit_code`:
-  `{"code": "...", "message": "...", "hint": "...", "details": {}, "exit_code": 4}`.
+  are JSON too, on **stderr**, in the API's problem-details shape plus the
+  transport facts of § 10 and `exit_code`:
+  `{"code": "...", "message": "...", "hint": "...", "details": {}, "status": 409, "retry_after": null, "exit_code": 4}`.
+  `status` is the HTTP status, or `null` when no response arrived; `retry_after`
+  is the `Retry-After` wait in seconds, or `null` when the response carried
+  none. Both are always present, so a reader never has to test for the key.
 - No color when piped or when `NO_COLOR` is set.
 - Output must survive a non-UTF-8 Windows console: no decorative Unicode in
   default output.

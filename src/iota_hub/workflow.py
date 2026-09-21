@@ -19,6 +19,8 @@ from .errors import IotaHubError
 from .files import SLOTS, FolderMapping, map_folder
 from .models import (
     PublicDeclaredFile,
+    PublicEventFileLink,
+    PublicFileLink,
     PublicFinding,
     PublicObservation,
     PublicUploadTarget,
@@ -272,7 +274,7 @@ class WorkflowMixin:
         directory.mkdir(parents=True, exist_ok=True)
         # Check every destination before writing any of it: a refusal halfway
         # through would leave the caller with a partial download.
-        targets = [(link, directory / Path(link.filename).name) for link in links]
+        targets = [(link, directory / _safe_name(link)) for link in links]
         if not overwrite:
             for link, out in targets:
                 if out.exists():
@@ -415,6 +417,24 @@ def _open_findings(observation: PublicObservation) -> list[PublicFinding]:
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
+
+
+def _safe_name(link: PublicFileLink | PublicEventFileLink) -> str:
+    """The file's bare name, refusing one that does not name a file.
+
+    ``filename`` comes from the server: everything but the last component is
+    dropped, and a name that leaves nothing to write to -- empty, ``.`` or
+    ``..`` -- is refused before any byte is written.
+    """
+    name = Path(link.filename).name
+    if name in {"", ".", ".."}:
+        raise IotaHubError(
+            "download_failed",
+            f"The API named a file this client will not write: {link.filename!r}.",
+            hint="Download it from the web app, and report the filename.",
+            details={"filename": link.filename, "slot": link.slot},
+        )
+    return name
 
 
 def _paths(files: Mapping[str, str | Path]) -> dict[str, Path]:

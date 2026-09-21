@@ -7,7 +7,9 @@ so the command wiring under test is the wiring that ships.
 
 from __future__ import annotations
 
+import io
 import json
+import sys
 from pathlib import Path
 
 import httpx
@@ -37,8 +39,12 @@ DRAFTS = f"{OBSERVATIONS}/drafts"
 GET = f"{OBSERVATIONS}/{OBS_ID}"
 FINALIZE = f"{GET}/finalize"
 SUBMIT = f"{GET}/submit"
+RUNS = f"{GET}/validation/runs"
 EVENTS = "/public/v1/events"
 BUCKET = "/staging-bucket"
+
+#: A second deployment, for the options that pick one.
+OTHER_URL = "https://other.example.test"
 
 
 # -- fixtures ---------------------------------------------------------------
@@ -103,6 +109,12 @@ def observation(**overrides):
 
 def ready(**overrides):
     body = {"state": "ready", "checks_current": True}
+    body.update(overrides)
+    return body
+
+
+def checks(**overrides):
+    body = {"run_id": "run_1", "status": "complete", "checks_current": True}
     body.update(overrides)
     return body
 
@@ -931,3 +943,246 @@ def test_every_command_help_carries_an_example(runner: CliRunner) -> None:
         result = run(runner, *command, "--help")
         assert result.exit_code == 0, command
         assert "Example: iota-hub" in result.stdout, command
+
+
+# -- the shared options, before or after the subcommand ---------------------
+
+
+def test_json_is_the_same_run_before_or_after_the_subcommand(
+    runner: CliRunner,
+) -> None:
+    leading = run(runner, "--json", "submit", "--dry-run", str(OBSERVATION_DIR))
+    trailing = run(runner, "submit", "--dry-run", str(OBSERVATION_DIR), "--json")
+    assert leading.exit_code == trailing.exit_code == 0
+    assert json.loads(leading.stdout) == json.loads(trailing.stdout)
+
+
+@pytest.mark.parametrize("args", [["--base-url", OTHER_URL], ["--profile", "other"]])
+def test_the_target_options_work_after_the_subcommand(
+    runner: CliRunner,
+    mock_api: MockAPI,
+    config_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    args: list[str],
+) -> None:
+    # The environment would beat the profile, so the profile has to stand alone.
+    monkeypatch.delenv("IOTA_HUB_BASE_URL")
+    config_file.write_text(
+        f'[profiles.other]\nbase_url = "{OTHER_URL}"\napi_key = "{API_KEY}"\n',
+        encoding="utf-8",
+    )
+    mock_api.json("GET", OBSERVATIONS, {"items": [], "next_cursor": None})
+    result = run(runner, "observations", "list", *args)
+    assert result.exit_code == 0
+    assert f"Target: {OTHER_URL}" in result.stderr
+
+
+def test_a_leaf_option_beats_the_root_one(runner: CliRunner, mock_api: MockAPI) -> None:
+    mock_api.json("GET", OBSERVATIONS, {"items": [], "next_cursor": None})
+    result = run(
+        runner, "--base-url", BASE_URL, "observations", "list", "--base-url", OTHER_URL
+    )
+    assert result.exit_code == 0
+    assert f"Target: {OTHER_URL}" in result.stderr
+
+
+# -- prompts are not data ---------------------------------------------------
+
+
+class _Tty(io.StringIO):
+    """A stdin that claims to be a terminal, so the prompts are reached."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+def test_the_key_prompt_and_the_confirmation_are_written_to_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked: dict[str, dict] = {}
+
+    def fake_prompt(text: str, **kwargs) -> str:
+        asked["prompt"] = kwargs
+        return "iotahub_key_secret"
+
+    def fake_confirm(text: str, **kwargs) -> bool:
+        asked["confirm"] = kwargs
+        return True
+
+    monkeypatch.setattr(cli_module.sys, "stdin", _Tty())
+    monkeypatch.setattr(cli_module.typer, "prompt", fake_prompt)
+    monkeypatch.setattr(cli_module.typer, "confirm", fake_confirm)
+
+    assert cli_module._read_key() == "iotahub_key_secret"
+    cli_module._confirm("Delete draft obs_1?", False)
+    assert asked["prompt"]["err"] is True
+    assert asked["confirm"]["err"] is True
+
+
+# -- drafts submit and drafts check -----------------------------------------
+
+
+def test_drafts_submit_refuses_an_observation_that_is_already_submitted(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "GET",
+        GET,
+        observation(submission_status="submitted", readiness=None),
+    )
+    result = run(runner, "drafts", "submit", OBS_ID)
+    assert result.exit_code == 1
+    assert "error: already_submitted:" in result.stderr
+    assert not [r for r in mock_api.requests if r.url.path == SUBMIT]
+
+
+def test_drafts_check_waits_for_the_run_that_is_already_under_way(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "POST",
+        RUNS,
+        {
+            "code": "check_run_in_progress",
+            "message": "A validation run is already in progress.",
+        },
+        status=409,
+    )
+    mock_api.json("GET", GET, observation(checks=checks(status="complete")))
+    result = run(runner, "drafts", "check", OBS_ID)
+    assert result.exit_code == 0
+    assert [r for r in mock_api.requests if r.url.path == GET]
+
+
+def test_drafts_check_no_wait_says_a_run_is_already_under_way(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "POST",
+        RUNS,
+        {
+            "code": "check_run_in_progress",
+            "message": "A validation run is already in progress.",
+        },
+        status=409,
+    )
+    mock_api.json("GET", GET, observation(checks=checks(status="running")))
+    result = run(runner, "drafts", "check", OBS_ID, "--no-wait")
+    assert result.exit_code == 0
+    assert "already under way" in result.stderr
+
+
+def test_drafts_check_still_fails_on_another_conflict(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "POST",
+        RUNS,
+        {"code": "missing_required", "message": "No lightcurve."},
+        status=409,
+    )
+    result = run(runner, "drafts", "check", OBS_ID)
+    assert result.exit_code == 4
+    assert "error: missing_required:" in result.stderr
+
+
+# -- downloads name server-side slots too -----------------------------------
+
+
+def test_files_download_takes_a_slot_the_server_names(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    mock_api.json(
+        "GET",
+        f"{GET}/files",
+        {
+            "observation_id": OBS_ID,
+            "expires_in": 900,
+            "files": [
+                {
+                    "slot": "damit",
+                    "filename": "model.png",
+                    "size_bytes": 3,
+                    "url": "https://s3.example.test/get/model.png",
+                    "expires_in": 900,
+                },
+                {
+                    "slot": "lightcurve",
+                    "filename": "lc.csv",
+                    "size_bytes": 3,
+                    "url": "https://s3.example.test/get/lc.csv",
+                    "expires_in": 900,
+                },
+            ],
+        },
+    )
+    mock_api.add("GET", "/get/model.png", httpx.Response(200, content=b"png"))
+
+    out = tmp_path / "downloads"
+    result = run(
+        runner,
+        "files",
+        "download",
+        "observation",
+        OBS_ID,
+        "--slot",
+        "damit",
+        "-o",
+        str(out),
+        "--json",
+    )
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["files"] == [str(out / "model.png")]
+
+
+# -- the JSON error object --------------------------------------------------
+
+
+def test_the_json_error_carries_status_and_retry_after(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "GET",
+        OBSERVATIONS,
+        {"code": "rate_limited", "message": "Too many requests."},
+        status=429,
+        headers={"Retry-After": "3"},
+    )
+    result = run(runner, "observations", "list", "--json")
+    assert result.exit_code == 5
+    # The `Target:` line shares stderr with the error document.
+    payload = json.loads(result.stderr[result.stderr.index("{") :])
+    assert payload["status"] == 429
+    assert payload["retry_after"] == 3.0
+    assert payload["exit_code"] == 5
+
+
+def test_a_usage_error_is_json_too_when_json_was_asked_for(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["iota-hub", "drafts", "show", "--json"])
+    with pytest.raises(SystemExit) as exit_info:
+        cli_module.main()
+    assert exit_info.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    payload = json.loads(captured.err)
+    assert payload == {
+        "code": "usage_error",
+        "message": "Missing argument 'ID'.",
+        "hint": "Run the command with --help.",
+        "details": {},
+        "status": None,
+        "retry_after": None,
+        "exit_code": 2,
+    }
+
+
+def test_a_usage_error_without_json_is_clicks_own_message(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["iota-hub", "drafts", "show"])
+    with pytest.raises(SystemExit) as exit_info:
+        cli_module.main()
+    assert exit_info.value.code == 2
+    assert "Missing argument 'ID'." in capsys.readouterr().err

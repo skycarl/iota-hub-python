@@ -14,6 +14,7 @@ exit codes, ASCII only, and never a prompt when stdin is not a TTY.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import sys
@@ -25,6 +26,11 @@ from pathlib import Path
 from typing import Annotated, Any, NoReturn
 
 import typer
+
+try:  # typer 0.27+ vendors click; older typer depends on the package.
+    from typer._click.exceptions import UsageError
+except ImportError:  # pragma: no cover - typer < 0.27 only
+    from click.exceptions import UsageError  # type: ignore[no-redef]
 
 from . import config
 from ._http import DEFAULT_BASE_URL
@@ -127,12 +133,21 @@ def exit_code_for(error: IotaHubError) -> int:
 
 
 def handle_errors(command):
-    """Turn any :class:`IotaHubError` into the documented output and exit code.
+    """The one wrapper around every command: shared options in, errors out.
 
-    One wrapper around every command, so no command carries its own ``try``.
+    It turns any :class:`IotaHubError` into the documented output and exit
+    code, and it appends ``--base-url``, ``--profile`` and ``--json`` to the
+    command's signature, so the three are accepted *after* the subcommand
+    (`iota-hub submit --json`) as well as before it, without any command
+    having to declare them.
     """
 
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        _merge_options(
+            base_url=kwargs.pop("base_url", None),
+            profile=kwargs.pop("profile", None),
+            as_json=kwargs.pop("json", False),
+        )
         try:
             return command(*args, **kwargs)
         except IotaHubError as error:
@@ -141,7 +156,23 @@ def handle_errors(command):
     wrapper.__name__ = command.__name__
     wrapper.__doc__ = command.__doc__
     wrapper.__wrapped__ = command
+    signature = inspect.signature(command, eval_str=True)
+    wrapper.__signature__ = signature.replace(
+        parameters=[*signature.parameters.values(), *_shared_options()]
+    )
     return wrapper
+
+
+def _merge_options(*, base_url: str | None, profile: str | None, as_json: bool) -> None:
+    """Fold one command's copy of the shared options into the root's.
+
+    A value given on the leaf wins; one that was not given leaves the root's
+    alone, so ``iota-hub --json submit DIR`` and ``iota-hub submit DIR --json``
+    are the same run.
+    """
+    _OPTIONS.base_url = base_url or _OPTIONS.base_url
+    _OPTIONS.profile = profile or _OPTIONS.profile
+    _OPTIONS.json = as_json or _OPTIONS.json
 
 
 def _fail(error: IotaHubError) -> NoReturn:
@@ -155,6 +186,7 @@ def _fail(error: IotaHubError) -> NoReturn:
                     "hint": error.hint,
                     "details": error.details,
                     "status": error.status,
+                    "retry_after": error.retry_after,
                     "exit_code": code,
                 },
                 indent=2,
@@ -383,6 +415,25 @@ ProfileOption = Annotated[
         help="The stored profile to use. Beats IOTA_HUB_PROFILE.",
     ),
 ]
+JsonOption = Annotated[
+    bool,
+    typer.Option(
+        "--json",
+        help="Print one JSON document on stdout, and JSON errors on stderr.",
+    ),
+]
+
+
+def _shared_options() -> list[inspect.Parameter]:
+    """``--base-url``, ``--profile`` and ``--json``, for one command's signature."""
+    keyword = inspect.Parameter.KEYWORD_ONLY
+    return [
+        inspect.Parameter("base_url", keyword, default=None, annotation=BaseUrlOption),
+        inspect.Parameter("profile", keyword, default=None, annotation=ProfileOption),
+        inspect.Parameter("json", keyword, default=False, annotation=JsonOption),
+    ]
+
+
 IdArgument = Annotated[str, typer.Argument(metavar="ID")]
 SlotArgument = Annotated[
     SlotName,
@@ -417,13 +468,7 @@ DateToOption = Annotated[str | None, typer.Option("--date-to", metavar="DATE")]
 def root(
     base_url: BaseUrlOption = None,
     profile: ProfileOption = None,
-    as_json: Annotated[
-        bool,
-        typer.Option(
-            "--json",
-            help="Print one JSON document on stdout, and JSON errors on stderr.",
-        ),
-    ] = False,
+    as_json: JsonOption = False,
     version: Annotated[
         bool,
         typer.Option(
@@ -439,7 +484,10 @@ def root(
     The key is never a command-line argument: set IOTA_HUB_API_KEY, or store
     one with `iota-hub auth login`.
 
-    Example: iota-hub --json submit ./20180305_9721_Doty_Observer_POS
+    The three options below are also accepted after the subcommand:
+    `iota-hub submit DIR --json` is the same run as `iota-hub --json submit DIR`.
+
+    Example: iota-hub submit ./20180305_9721_Doty_Observer_POS --json
     """
     _OPTIONS.base_url = base_url
     _OPTIONS.profile = profile
@@ -601,10 +649,7 @@ def _emit_submit(result: SubmitResult) -> None:
 
 @auth_app.command("login")
 @handle_errors
-def auth_login(
-    profile: ProfileOption = None,
-    base_url: BaseUrlOption = None,
-) -> None:
+def auth_login() -> None:
     """Read an API key and store it, with its base URL, in a profile.
 
     The key is read from a hidden prompt on a terminal, otherwise from one line
@@ -613,11 +658,10 @@ def auth_login(
 
     Example: iota-hub auth login --profile dev --base-url https://host/dev/api
     """
-    name = profile or _OPTIONS.profile or "default"
+    name = _OPTIONS.profile or "default"
     stored = (config.load_config().get("profiles") or {}).get(name) or {}
     target = (
-        base_url
-        or _OPTIONS.base_url
+        _OPTIONS.base_url
         or os.environ.get(ENV_BASE_URL)
         or stored.get("base_url")
         or DEFAULT_BASE_URL
@@ -664,7 +708,8 @@ def auth_login(
 def _read_key() -> str:
     """The key, from a hidden prompt or from stdin. Never echoed, ever."""
     if sys.stdin.isatty():
-        return typer.prompt("API key", hide_input=True).strip()
+        # The prompt is not data: stdout carries only the command's output.
+        return typer.prompt("API key", hide_input=True, err=True).strip()
     key = sys.stdin.readline().strip()
     if not key:
         raise AuthError(
@@ -682,7 +727,7 @@ def auth_status() -> None:
 
     It reports the check rather than failing on it, so it exits 0 either way.
 
-    Example: iota-hub --profile dev auth status
+    Example: iota-hub auth status --profile dev
     """
     settings = _settings()
     with _make_client(settings) as client:
@@ -716,12 +761,12 @@ def auth_status() -> None:
 
 @auth_app.command("logout")
 @handle_errors
-def auth_logout(profile: ProfileOption = None) -> None:
+def auth_logout() -> None:
     """Forget one profile's stored key and base URL.
 
     Example: iota-hub auth logout --profile dev
     """
-    name = profile or _OPTIONS.profile or "default"
+    name = _OPTIONS.profile or "default"
     deleted = config.delete_profile(name)
     path = config.config_file_path()
     if _OPTIONS.json:
@@ -796,7 +841,16 @@ def drafts_check(
     """
     settings = _settings()
     with _make_client(settings) as client:
-        client.run_checks(observation_id)
+        try:
+            client.run_checks(observation_id)
+        except ConflictError as error:
+            # A run that is already under way is the state this command wanted
+            # anyway, so wait for that one instead of failing (API spec: 409
+            # check_run_in_progress says to poll rather than start another).
+            if error.code != "check_run_in_progress":
+                raise
+            if no_wait:
+                _err(f"A check run is already under way for {observation_id}.")
         if no_wait:
             observation = client.get_observation(observation_id)
         else:
@@ -816,6 +870,16 @@ def drafts_submit(observation_id: IdArgument) -> None:
     settings = _settings()
     with _make_client(settings) as client:
         observation = client.get_observation(observation_id)
+        if observation.submission_status == "submitted":
+            raise IotaHubError(
+                "already_submitted",
+                f"{observation_id} is already submitted.",
+                hint=(
+                    "This observation is already submitted; submitted "
+                    "observations cannot be re-submitted."
+                ),
+                details={"observation_id": observation_id},
+            )
         readiness = observation.readiness
         if readiness is None or readiness.state != "ready":
             if not _OPTIONS.json:
@@ -888,7 +952,7 @@ def _confirm(question: str, yes: bool) -> None:
             f"{question} Refusing to assume an answer: stdin is not a terminal.",
             hint="Pass --yes to confirm without being asked.",
         )
-    typer.confirm(question, abort=True)
+    typer.confirm(question, abort=True, err=True)
 
 
 @drafts_app.command("dismiss")
@@ -1179,8 +1243,15 @@ def files_download(
     kind: Annotated[ResourceKind, typer.Argument(metavar="observation|event")],
     resource_id: IdArgument,
     slot: Annotated[
-        SlotName | None,
-        typer.Option("--slot", metavar="S", help="Download only this slot."),
+        str | None,
+        typer.Option(
+            "--slot",
+            metavar="SLOT",
+            help=(
+                "Download only this slot. Any slot the server names, not just "
+                "the four upload slots: damit, ground_track, attachment, ..."
+            ),
+        ),
     ] = None,
     out_dir: Annotated[
         Path,
@@ -1200,7 +1271,7 @@ def files_download(
             kind.value,
             resource_id,
             out_dir,
-            slot=slot.value if slot else None,
+            slot=slot,
             overwrite=force,
             on_progress=_progress,
         )
@@ -1239,7 +1310,48 @@ def guide() -> None:
 
 def main() -> None:
     """The ``iota-hub`` entry point."""
-    app()
+    for stream in (sys.stdout, sys.stderr):
+        # API data can carry characters a Windows console's code page cannot
+        # encode; escape them rather than dying with UnicodeEncodeError.
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="backslashreplace")
+    # ``standalone_mode=False`` hands click's own usage errors back here, so
+    # they can be JSON too; the exit code is returned instead of raised.
+    try:
+        code = app(standalone_mode=False)
+    except UsageError as error:
+        _usage_error(error)
+    except typer.Abort:
+        _err("Aborted!")
+        raise SystemExit(1) from None
+    raise SystemExit(code if isinstance(code, int) else 0)
+
+
+def _usage_error(error: UsageError) -> NoReturn:
+    """A bad invocation: click's own message, as JSON when --json was asked for.
+
+    ``--json`` is read from the argument list because the error happened while
+    parsing it -- no callback ran, so nothing settled :data:`_OPTIONS`.
+    """
+    if "--json" in sys.argv:
+        _err(
+            json.dumps(
+                {
+                    "code": "usage_error",
+                    "message": error.format_message(),
+                    "hint": "Run the command with --help.",
+                    "details": {},
+                    "status": None,
+                    "retry_after": None,
+                    "exit_code": 2,
+                },
+                indent=2,
+            )
+        )
+    else:
+        error.show()
+    raise SystemExit(error.exit_code)
 
 
 if __name__ == "__main__":

@@ -543,6 +543,35 @@ def test_download_files_overwrites_when_told_to(client, mock_api, tmp_path):
     assert (tmp_path / "report.xlsx").read_bytes() == b"fresh"
 
 
+@pytest.mark.parametrize("filename", ["..", ".", "", "sub/.."])
+def test_a_filename_that_names_no_file_is_refused(client, mock_api, tmp_path, filename):
+    mock_api.json(
+        "GET",
+        FILE_LIST,
+        {
+            "observation_id": OBS_ID,
+            "expires_in": 900,
+            "files": [
+                {
+                    "slot": "report",
+                    "filename": filename,
+                    "size_bytes": 12,
+                    "url": f"https://s3.example.test{REPORT_URL}?sig=1",
+                    "expires_in": 900,
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(IotaHubError) as excinfo:
+        client.download_files("observation", OBS_ID, tmp_path)
+
+    assert excinfo.value.code == "download_failed"
+    # Refused before any request: nothing was fetched and nothing was written.
+    assert requests_to(mock_api, REPORT_URL) == []
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_an_expired_link_is_download_failed(client, mock_api, tmp_path):
     script_file_list(mock_api)
     mock_api.add("GET", REPORT_URL, httpx.Response(403, text="<Error>Expired</Error>"))

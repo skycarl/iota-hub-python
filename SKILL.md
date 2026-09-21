@@ -33,6 +33,9 @@ Read `outcome` from the JSON document on stdout:
 Use `--dry-run` first if you want to show the observer the slot mapping before
 anything is created. It calls nothing.
 
+`--json`, `--profile` and `--base-url` work after the subcommand, as above, and
+before it as well.
+
 ## Reading `needs_attention`
 
 The document carries the observation, including `checks.findings[]`. Each
@@ -82,7 +85,9 @@ Branch on these, not on the text.
 | `5`  | rate limited after the built-in retries                     |
 
 With `--json`, an error is a JSON object on **stderr** with `code`, `message`,
-`hint` and `exit_code`. Branch on `code`, never on `message`.
+`hint`, `details`, `status`, `retry_after` and `exit_code`. Branch on `code`,
+never on `message`. A bad invocation (an unknown flag, a missing argument) is
+JSON too: `usage_error`, exit code `2`.
 
 ## Safety rules
 

@@ -122,8 +122,12 @@ sent to production or the reverse:
 
 ```bash
 iota-hub auth login --profile dev --base-url <dev base URL>
-iota-hub --profile dev submit          # or IOTA_HUB_PROFILE=dev
+iota-hub submit --profile dev          # or IOTA_HUB_PROFILE=dev
 ```
+
+`--json`, `--profile` and `--base-url` are accepted after the subcommand, as
+above, and before it (`iota-hub --profile dev submit`) — whichever reads better.
+When both carry a value, the one after the subcommand wins.
 
 Whenever the resolved target is not the production default, the CLI prints
 `Target: <base URL>` on stderr before acting, so a test run is never mistaken
@@ -144,9 +148,10 @@ no OS keyring integration.
 
 - **`--json` works on every command**: exactly one JSON document on stdout and
   nothing else. Errors are JSON too, on **stderr**, in the API's problem-details
-  shape plus the exit code:
-  `{"code": "open_findings", "message": "...", "hint": "...", "details": {}, "exit_code": 4}`.
-  Branch on `code`, never on `message`.
+  shape plus the HTTP status, the retry wait and the exit code:
+  `{"code": "open_findings", "message": "...", "hint": "...", "details": {}, "status": 409, "retry_after": null, "exit_code": 4}`.
+  Branch on `code`, never on `message`. A bad invocation is JSON too, as
+  `usage_error` with exit code `2`.
 - **Exit codes** — branch on these rather than parsing output:
 
   | Code | Meaning                  | Typical cause                                                             |
@@ -225,7 +230,7 @@ package.
 
 ```bash
 iota-hub auth login --profile dev --base-url <the dev base URL>
-iota-hub --profile dev observations list
+iota-hub observations list --profile dev
 ```
 
 `--base-url` (and `IOTA_HUB_BASE_URL`) is the **API base**; the client appends

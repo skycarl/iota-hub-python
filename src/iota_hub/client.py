@@ -16,18 +16,24 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+from pydantic import BaseModel
 
 from ._http import DEFAULT_BASE_URL, Transport
 from .models import (
     PublicChecks,
     PublicDeclaredFile,
+    PublicDismissRequest,
     PublicDraftCreated,
+    PublicDraftCreateRequest,
     PublicEvent,
     PublicEventFileList,
     PublicEventList,
     PublicFileList,
+    PublicFinalizeUploadRequest,
+    PublicInitUploadRequest,
     PublicObservation,
     PublicObservationList,
+    PublicSubmitRequest,
     PublicUploadTarget,
 )
 from .workflow import WorkflowMixin
@@ -82,14 +88,14 @@ class Client(WorkflowMixin):
         idempotency_key: str | None = None,
     ) -> PublicDraftCreated:
         """``public_create_draft`` — create a draft and presign its uploads."""
-        body = {
-            "files": [_as_dict(item) for item in files or []],
-            "auto_submit_when_clean": auto_submit_when_clean,
-        }
+        body = PublicDraftCreateRequest(
+            files=files or [],
+            auto_submit_when_clean=auto_submit_when_clean,
+        )
         response = self.http.request(
             "POST",
             "/observations/drafts",
-            json=body,
+            json=_body(body),
             idempotency_key=idempotency_key,
         )
         return PublicDraftCreated.model_validate(response.json())
@@ -117,7 +123,7 @@ class Client(WorkflowMixin):
         response = self.http.request(
             "POST",
             f"/observations/{_seg(observation_id)}/files/{_seg(slot)}/upload/init",
-            json={"filename": filename, "sha256": sha256},
+            json=_body(PublicInitUploadRequest(filename=filename, sha256=sha256)),
         )
         return PublicUploadTarget.model_validate(response.json())
 
@@ -134,7 +140,9 @@ class Client(WorkflowMixin):
         response = self.http.request(
             "POST",
             f"/observations/{_seg(observation_id)}/files/{_seg(slot)}/upload/finalize",
-            json={"file_key": file_key, "filename": filename},
+            json=_body(
+                PublicFinalizeUploadRequest(file_key=file_key, filename=filename)
+            ),
             idempotency_key=idempotency_key,
         )
         return PublicObservation.model_validate(response.json())
@@ -161,7 +169,7 @@ class Client(WorkflowMixin):
             "POST",
             f"/observations/{_seg(observation_id)}"
             f"/validation/findings/{_seg(fingerprint)}/dismiss",
-            json={"note": note},
+            json=_body(PublicDismissRequest(note=note)),
         )
         return PublicChecks.model_validate(response.json())
 
@@ -185,7 +193,7 @@ class Client(WorkflowMixin):
         response = self.http.request(
             "POST",
             f"/observations/{_seg(observation_id)}/submit",
-            json={"version": version},
+            json=_body(PublicSubmitRequest(version=version)),
             idempotency_key=idempotency_key,
         )
         return PublicObservation.model_validate(response.json())
@@ -341,5 +349,11 @@ def _comma(value: str | list[str] | None) -> str | None:
     return value
 
 
-def _as_dict(item: Any) -> dict[str, Any]:
-    return item.model_dump() if hasattr(item, "model_dump") else dict(item)
+def _body(request: BaseModel) -> dict[str, Any]:
+    """One request model as the body to send.
+
+    The request side is typed too: every body here is built from the
+    ``Public*Request`` model of ``spec/openapi.json``. Nothing is dropped --
+    a declared ``sha256`` of ``null`` is part of the body the API documents.
+    """
+    return request.model_dump(mode="json")
