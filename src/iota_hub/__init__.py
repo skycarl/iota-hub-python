@@ -13,6 +13,15 @@ language-neutral client contract is ``docs/client-conventions.md``.
 from ._http import DEFAULT_BASE_URL, Transport, sha256_base64
 from ._version import __version__
 from .client import Client
+from .config import (
+    Settings,
+    config_file_path,
+    delete_profile,
+    key_prefix,
+    load_config,
+    resolve,
+    save_profile,
+)
 from .errors import (
     AuthError,
     ConflictError,
@@ -22,18 +31,33 @@ from .errors import (
     RequestError,
     TransportError,
 )
+from .files import SLOTS, FolderMapping, MappingError, map_folder
+from .workflow import SubmitResult, next_actions_commands
 
 __all__ = [
     "DEFAULT_BASE_URL",
+    "SLOTS",
     "AuthError",
     "Client",
     "ConflictError",
+    "FolderMapping",
     "IotaHubError",
+    "MappingError",
     "NotFoundError",
     "RateLimitError",
     "RequestError",
+    "Settings",
+    "SubmitResult",
     "Transport",
     "TransportError",
     "__version__",
+    "config_file_path",
+    "delete_profile",
+    "key_prefix",
+    "load_config",
+    "map_folder",
+    "next_actions_commands",
+    "resolve",
+    "save_profile",
     "sha256_base64",
 ]

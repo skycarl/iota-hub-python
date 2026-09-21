@@ -37,10 +37,42 @@ replacement):
 
 **Workflow surface** (the names are part of this contract):
 
-- `submit_folder(dir, …)` / `submit_files(files, …)` — map, create, upload,
-  finalize, wait, submit,
+- `submit_folder(dir, …)` / `submit_files({slot: path}, …)` — map, create,
+  upload, finalize, wait, submit,
 - `wait_for_checks(observation_id, …)` — § 8,
-- `download_files(observation_id | event_id, dest, …)`.
+- `replace_file(observation_id, slot, path)` — the fix loop's init → upload →
+  finalize, in one call,
+- `download_files("observation" | "event", id, dest, …)` — list the files,
+  optionally filter by `slot`, and stream each presigned link into `dest`
+  **without the API key** (§ 5). Nothing is skipped silently: an existing file
+  is `file_exists` unless `overwrite` was asked for — `--force` on the CLI —
+  (and every destination is
+  checked before the first byte is written, so a refusal leaves no half-done
+  download), and a link S3 refuses is `download_failed`,
+- `next_actions_commands(observation)` — the API's verbs as the literal
+  commands that answer them (§ 13). It lives in the *library*, not the CLI, so
+  an embedder prints the same guidance the CLI does.
+
+`submit_folder` / `submit_files` return one result object carrying the last
+observation it read, `submitted`, the uploaded `{slot: filename}`, the files
+the mapping ignored, and an **`outcome`** — the vocabulary a script branches on:
+
+| `outcome` | Meaning |
+|---|---|
+| `submitted` | the observation is submitted (by this client, or by the server's `auto_submit_when_clean`) |
+| `ready` | readiness is `ready`, but `submit=False` left it a draft |
+| `needs_attention` | open findings, something missing, or the run errored |
+| `draft` | `wait=False`: uploaded and finalized, not waited on |
+
+Flags: `wait=False` stops after finalize, `submit=False` stops at `ready`.
+**A draft that is not `ready` is never submitted**, and a failed run is never
+cleaned up: the draft stays, because it is recoverable in the web app (and
+`delete_draft` is one call away if the caller disagrees).
+
+Progress is reported through an optional `on_progress` callback taking one
+short string (`Uploading lightcurve (2/3)...`, `Waiting for checks...`), which
+the CLI prints to stderr. Those strings are **ASCII**, like everything else a
+client prints by default (§ 13).
 
 ## 2. Naming
 
@@ -94,6 +126,24 @@ api_key  = "iotahub_<key_id>_<secret>"
 - Whenever the resolved base URL is not the default, the CLI prints
   `Target: <base URL>` on **stderr** before acting, so a test run is never
   mistaken for a prod submission.
+
+**Precedence in detail.** The key comes from the flag, else the environment,
+else the profile; the base URL from the flag, else the environment, else the
+profile, else the default. *Decision:* a `--base-url` passed alongside a
+profile is allowed and wins — an explicit instruction beats a stored one — and
+the resolved settings say which of `flag` / `env` / `profile` the key came
+from, so a client can show it. A profile that was **asked for** and does not
+exist is `unknown_profile`; a config file that is not valid TOML is
+`invalid_config`. A stored `default_profile` that no longer exists is simply
+ignored, so deleting a profile never wedges the CLI.
+
+**`auth status` shows profile, base URL and key prefix — and nothing else.**
+*Decision:* the public API has no `whoami` operation (there is none in
+`spec/openapi.json`), so scopes and expiry are not knowable from a key, and a
+client must not invent them. The key prefix is `iotahub_<key_id>_...`: the
+identifying half, never the secret. To say more than "here is what is
+configured", `auth status` makes one cheap read — `list_observations(limit=1)`
+— and reports `valid`, or the auth `code` the API answered with.
 
 ## 4. Base URL
 
@@ -152,7 +202,14 @@ Applies to every API call, and only to these cases:
 - After the last attempt the mapped exception is raised, carrying `retry_after`
   so the caller can decide.
 - *Decision:* S3 uploads (§ 7) are **not** retried at this layer. A presigned
-  target can expire, so the workflow layer re-initializes the upload instead.
+  target can expire, so the workflow layer re-initializes the upload instead:
+  **once**, through `init_file_upload`, and then it posts the fresh target.
+  A second failure raises and leaves the draft alone.
+  That recovery finishes with the **per-slot** `finalize_file_upload`, not with
+  the collapsed finalize: the draft's `pending_uploads` still names the target
+  that expired, and only the per-slot finalize (or a slot delete) clears it —
+  without that call the collapsed finalize keeps answering `409
+  upload_missing` for a file that is sitting in S3 under a different key.
 
 The sleep function is injectable, so tests never wait.
 
@@ -196,13 +253,28 @@ Poll `GET /observations/{id}` — the one self-describing resource.
 A run is **terminal when `checks.status` is neither `"running"` nor
 `"pending"`** — today that means `"complete"` or `"error"`. *Decision:* the test
 is on the two non-terminal values, not on the two terminal ones, so a status the
-API adds later ends the wait instead of hanging forever. A missing `checks`
-object is not terminal.
+API adds later ends the wait instead of hanging forever.
 
-A timeout raises the language's timeout error carrying the observation id; it
-never submits and never deletes. `next_actions` is what to do next: act on the
-verbs, ignore any verb you do not recognize (only the first applicable group is
-ever returned).
+Two more ways the wait ends, so it cannot hang on a draft that will never
+produce a run:
+
+- **no `checks` and no `poll` verb** — a draft still missing a required file
+  answers with its `upload:` verbs only (§ 5 of the API spec: only the first
+  applicable group is returned), and there is nothing to wait for. A missing
+  `checks` object *with* `poll` in `next_actions` is not terminal.
+- **`submission_status == "submitted"`** — `auto_submit_when_clean` means the
+  validation worker may submit the draft while the client is polling. That is
+  an outcome, not a surprise: the wait ends and the result is `submitted`.
+
+*Decision:* the timeout bounds the time spent **waiting between polls**, not
+wall-clock time including the requests — those are bounded by the transport's
+own timeout. That keeps the wait deterministic under an injected sleep, so a
+test asserts `[2.0, 3.0, 4.5, …]` and never sleeps. The final wait is trimmed
+to what is left of the budget, and one last poll follows it.
+
+A timeout raises `timeout`, carrying `observation_id`, `timeout` and the last
+`checks_status` in `details`; it never submits and never deletes. `next_actions`
+is what to do next: act on the verbs, ignore any verb you do not recognize.
 
 ## 9. Idempotency
 
@@ -216,6 +288,9 @@ the result, never retry with a fresh key.
   logical call, reused across every transport retry of it.
 - A new logical call gets a new key. Re-submitting after fixing a finding is a
   new logical call.
+- So one `submit_folder` sends **three** distinct keys — create, finalize,
+  submit — plus one per `finalize_file_upload` it had to make (§ 6). The
+  per-slot `upload/init` takes no key: it presigns, it does not write.
 
 ## 10. Error model
 
@@ -256,8 +331,26 @@ a truncated response — the client synthesizes one rather than raising a parse
 error. *Decision:* `rate_limited` for `429`, `internal_error` for `5xx`,
 `http_error` otherwise, with `details` empty.
 
-A failed S3 upload is `upload_failed`, carrying S3's status and the slot. It is
-the one code a client invents; every other code comes from the API.
+**The codes a client invents.** Everything else comes from the API. They are
+part of this contract too — a port raises the same code for the same situation,
+and the CLI maps each one to an exit code (§ 12):
+
+| `code` | Raised when |
+|---|---|
+| `upload_failed` | S3 refused a presigned POST; `status` and `details.slot` say which |
+| `download_failed` | S3 refused a presigned GET — an expired link answers `403` |
+| `file_exists` | a download would overwrite an existing file and `overwrite` was not asked for |
+| `timeout` | `wait_for_checks` gave up (§ 8) |
+| `ambiguous_files` | two candidates for one slot (§ 11); `details.slot`, `details.candidates` |
+| `missing_files` | a required slot has no candidate, or an explicit path is not there; `details.missing` |
+| `invalid_extension` | an explicit path has the wrong extension for its slot |
+| `not_a_directory` | the folder to submit is not a directory |
+| `missing_api_key` | nothing configured a key (§ 3) — the auth category |
+| `unknown_profile` | a profile was named and the config file has no such profile |
+| `invalid_config` | the config file is not valid TOML |
+
+Every one of them carries a `hint` naming the way out — the flag to pass, the
+command to run — because these are the errors a person or an agent hits first.
 
 ## 11. Folder → slot mapping
 
@@ -269,13 +362,22 @@ naming convention (`YYYYMMDD_<number>_<name>_<lastname>_POS|NEG[-X]`,
 |---|---|
 | `report` | exactly one `.xlsx` / `.xls` |
 | `lightcurve` | exactly one `.csv` |
-| `log` | exactly one `.txt` whose name contains `log` (the rule the server enforces) |
+| `log` | exactly one `.txt` whose name contains `log` (case-insensitive) |
 | `vizier` | at most one `.dat` |
 
+`report`, `lightcurve` and `log` are required; `vizier` is optional.
+
+- The listing is **non-recursive**, and skips subdirectories and dotfiles.
+  Extensions match case-insensitively (`.CSV` is a light curve).
 - **Never guess.** Two candidates for one slot, or none for a required one, is
   an error that names the file(s) and the explicit flag to resolve it
-  (`--lightcurve PATH`).
-- Explicit flags override the rules for that slot.
+  (`--lightcurve PATH`): `ambiguous_files` (with `details.slot` and
+  `details.candidates`) or `missing_files` (with `details.missing`).
+- Explicit flags override the rules for that slot, and are checked for the
+  slot's **extension** only (`invalid_extension` otherwise). *Decision:* the
+  "contains `log`" part is the client's own disambiguator between two `.txt`
+  files, not a server rule — the server's allow-list is the extension
+  (`observation_file_validation.py`) — so `--log notes.txt` is accepted.
 - Anything else — `_notes.txt`, `.png`, a second CSV's companions — is listed as
   **not uploaded**, with a note that it can be attached in the web app; the
   public surface has no attachment slot.
@@ -295,6 +397,14 @@ Scripts and agents branch on these.
 | `4` | open findings / not ready | `open_findings`, `missing_required`, `checks_stale`, `event_files_conflict`, or a wait that timed out short of `ready` |
 | `5` | rate limited | the rate-limit category, after retries are exhausted |
 
+The client-invented codes of § 10 map on: the mapping errors
+(`ambiguous_files`, `missing_files`, `invalid_extension`, `not_a_directory`)
+and `unknown_profile` are **usage**, `2`; `missing_api_key` is **auth**, `3`;
+`timeout`, and an `outcome` of `needs_attention`, are **not ready**, `4`;
+`upload_failed`, `download_failed`, `file_exists` and `invalid_config` are
+plain errors, `1`. An `outcome` of `ready` or `draft` is a success the caller
+asked for, so `0`.
+
 ## 13. Output
 
 - Human output by default on a TTY; `--json` on **every** command.
@@ -308,8 +418,18 @@ Scripts and agents branch on these.
   default output.
 - Never prompt when stdin is not a TTY; destructive commands take `--yes`.
 - Human output prints the literal next command for each `next_actions` verb, so
-  neither a person nor an agent has to translate:
-  `iota-hub drafts dismiss <id> <fingerprint> --note "…"`.
+  neither a person nor an agent has to translate. The mapping is the library's
+  (`next_actions_commands`, § 1), not the CLI's:
+
+  | Verb | Printed as |
+  |---|---|
+  | `upload:<slot>` | `iota-hub drafts files add <id> <slot> <path>` |
+  | `run_checks` | `iota-hub drafts check <id>` |
+  | `poll` | `iota-hub drafts show <id>` |
+  | `submit` | `iota-hub drafts submit <id>` |
+  | `dismiss_or_fix` | one `iota-hub drafts dismiss <id> <fingerprint> --note "…"` per **open** finding, then the `files add` alternative — fixing the file is the other way out |
+  | `confirm_asteroid_id`, `resolve_event_files_conflict` | a sentence saying to finish it in the web app: *decision*, because the public API has no verb for either (API spec § 5) |
+  | anything else | `<verb>: see iota-hub guide` — a verb a client does not know is never silently dropped |
 - Errors print the API's `code` and `hint`.
 
 ## 14. The shared fixture folder

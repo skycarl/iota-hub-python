@@ -55,13 +55,17 @@ class Transport:
         self.api_root = f"{self.base_url}{API_PREFIX}"
         self.max_retries = max_retries
         self.user_agent = user_agent or f"iota-hub-python/{__version__}"
-        self._sleep = sleep
-        self._client = httpx.Client(timeout=timeout, transport=transport)
+        #: Injectable so tests never wait (conventions § 6).
+        self.sleep = sleep
+        #: The shared httpx client. It carries **no** API key of its own:
+        #: :meth:`request` adds the header per call, so a presigned S3 URL
+        #: (upload or download) can use this same client safely.
+        self.client = httpx.Client(timeout=timeout, transport=transport)
 
     # -- lifecycle ---------------------------------------------------------
 
     def close(self) -> None:
-        self._client.close()
+        self.client.close()
 
     def __enter__(self) -> Transport:
         return self
@@ -100,7 +104,7 @@ class Transport:
         attempt = 0
         while True:
             try:
-                response = self._client.request(
+                response = self.client.request(
                     method, url, json=json, params=query, headers=headers
                 )
             except httpx.HTTPError as exc:
@@ -108,7 +112,7 @@ class Transport:
                     raise TransportError(
                         f"{method} {url} failed: {exc}", cause=exc
                     ) from exc
-                self._sleep(_backoff(attempt))
+                self.sleep(_backoff(attempt))
                 attempt += 1
                 continue
 
@@ -118,7 +122,7 @@ class Transport:
                 raise IotaHubError.from_response(response)
 
             retry_after = parse_retry_after(response.headers.get("Retry-After"))
-            self._sleep(retry_after if retry_after is not None else _backoff(attempt))
+            self.sleep(retry_after if retry_after is not None else _backoff(attempt))
             attempt += 1
 
     # -- S3 uploads --------------------------------------------------------
@@ -139,7 +143,7 @@ class Transport:
             content = Path(path_or_bytes).read_bytes()
 
         try:
-            response = self._client.post(
+            response = self.client.post(
                 target.upload_url,
                 data=dict(target.fields),
                 files={"file": (target.filename, content)},

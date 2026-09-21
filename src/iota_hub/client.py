@@ -30,9 +30,10 @@ from .models import (
     PublicObservationList,
     PublicUploadTarget,
 )
+from .workflow import WorkflowMixin
 
 
-class Client:
+class Client(WorkflowMixin):
     """A connection to one IOTA Hub deployment, authenticated by one API key.
 
     ``base_url`` is the API base; ``/public/v1`` is appended (design D16).
@@ -320,12 +321,11 @@ class Client:
                 return
 
     # --------------------------------------------------------------------
-    # The workflow layer (design D15, docs/client-conventions.md) belongs
-    # here: submit_folder / submit_files, wait_for_checks, download_files.
-    # It is hand-written on top of the methods above and lives in
-    # ``iota_hub/workflow.py``; mix it into this class
-    # (``class Client(WorkflowMixin):``) so callers see one object.
-    # Nothing above this line may grow a policy decision.
+    # The workflow layer (design D15, docs/client-conventions.md) is mixed in
+    # from ``iota_hub/workflow.py``: submit_folder / submit_files,
+    # wait_for_checks, replace_file, download_files. It is hand-written on top
+    # of the methods above, and nothing above this line may grow a policy
+    # decision.
     # --------------------------------------------------------------------
 
 
