@@ -59,6 +59,9 @@ USAGE_CODES = frozenset(
         "missing_files",
         "invalid_extension",
         "not_a_directory",
+        "blocked_attachment",
+        "attachment_too_large",
+        "too_many_attachments",
         "unknown_profile",
         "confirmation_required",
     }
@@ -77,12 +80,13 @@ NOT_READY_CODES = frozenset(
 
 
 class SlotName(str, Enum):
-    """The file slots the public API accepts."""
+    """The file slots the public API accepts, plus ``attachment``."""
 
     report = "report"
     lightcurve = "lightcurve"
     log = "log"
     vizier = "vizier"
+    attachment = "attachment"
 
 
 class ResourceKind(str, Enum):
@@ -336,6 +340,13 @@ def _render_observation(observation: PublicObservation) -> None:
         _out("Files:")
         for slot, file in present.items():
             _out(f"  {slot:<12}{file.filename} ({file.size_bytes} bytes)")
+    if observation.attachments:
+        _out("Attachments:")
+        for attachment in observation.attachments:
+            _out(
+                f"  {attachment.attachment_id}  {attachment.filename} "
+                f"({attachment.size_bytes} bytes)"
+            )
     if observation.checks is not None:
         _render_checks(observation.checks)
     _render_next(observation)
@@ -380,7 +391,9 @@ def _sub(help_text: str) -> typer.Typer:
 app = _sub("Submit and inspect IOTA Hub occultation observations.")
 auth_app = _sub("Store, inspect and forget the API key for a profile.")
 drafts_app = _sub("Work on unsubmitted drafts.")
-drafts_files_app = _sub("Replace or clear one file slot on a draft.")
+drafts_files_app = _sub(
+    "Replace or clear one file slot on a draft, or add or remove an attachment."
+)
 observations_app = _sub("Read observations.")
 events_app = _sub("Read events.")
 files_app = _sub("Download observation or event files.")
@@ -437,7 +450,9 @@ def _shared_options() -> list[inspect.Parameter]:
 IdArgument = Annotated[str, typer.Argument(metavar="ID")]
 SlotArgument = Annotated[
     SlotName,
-    typer.Argument(metavar="SLOT", help="report, lightcurve, log or vizier."),
+    typer.Argument(
+        metavar="SLOT", help="report, lightcurve, log, vizier or attachment."
+    ),
 ]
 YesOption = Annotated[bool, typer.Option("--yes", help="Do not ask for confirmation.")]
 TimeoutOption = Annotated[
@@ -540,19 +555,41 @@ def submit(
         Path | None,
         typer.Option("--vizier", help="Use this file for the vizier slot (.dat)."),
     ] = None,
+    attach: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--attach",
+            metavar="PATH",
+            help="Also upload this file as an attachment. Repeatable.",
+        ),
+    ] = None,
+    no_attachments: Annotated[
+        bool,
+        typer.Option(
+            "--no-attachments",
+            help="Do not upload the folder's other files as attachments.",
+        ),
+    ] = False,
 ) -> None:
     """Submit one folder: map, upload, finalize, wait for the checks, submit.
+
+    Files the four slots do not take (plots, raw .lc output, notes) are uploaded
+    as attachments; hidden files and subfolders never are. The attachment
+    limits (25 files, 50 MB each, no executables or scripts) are checked before
+    anything is created.
 
     Exits 4 when the draft came back with open findings or something missing,
     so the whole job is one command a script can branch on.
 
     Example: iota-hub submit ./20180305_9721_Doty_Observer_POS --draft
     """
-    overrides: dict[str, Path | None] = {
+    overrides: dict[str, Any] = {
         "report": report,
         "lightcurve": lightcurve,
         "log": log,
         "vizier": vizier,
+        "attachments": not no_attachments,
+        "attach": tuple(attach or ()),
     }
     if dry_run:
         _dry_run(directory, overrides)
@@ -573,7 +610,7 @@ def submit(
         raise typer.Exit(4)
 
 
-def _dry_run(directory: Path, overrides: dict[str, Path | None]) -> None:
+def _dry_run(directory: Path, overrides: dict[str, Any]) -> None:
     """The mapping, the sizes and the target, without touching the network."""
     target = _target_only()
     mapping = map_folder(directory, **overrides)
@@ -586,6 +623,10 @@ def _dry_run(directory: Path, overrides: dict[str, Path | None]) -> None:
         }
         for slot, path in mapping.slots.items()
     ]
+    attachments = [
+        {"filename": path.name, "path": str(path), "size": path.stat().st_size}
+        for path in mapping.attachments
+    ]
     ignored = [path.name for path in mapping.ignored]
     if _OPTIONS.json:
         _emit(
@@ -593,6 +634,7 @@ def _dry_run(directory: Path, overrides: dict[str, Path | None]) -> None:
                 "target": target,
                 "directory": str(mapping.directory),
                 "uploads": uploads,
+                "attachments": attachments,
                 "ignored": ignored,
             }
         )
@@ -605,10 +647,14 @@ def _dry_run(directory: Path, overrides: dict[str, Path | None]) -> None:
         [
             ["  " + upload["slot"], str(upload["filename"]), str(upload["size"])]
             for upload in uploads
+        ]
+        + [
+            ["  attachment", str(item["filename"]), str(item["size"])]
+            for item in attachments
         ],
     )
     if ignored:
-        _out(f"Not uploaded (no public slot): {', '.join(ignored)}")
+        _out(f"Not uploaded (--no-attachments): {', '.join(ignored)}")
 
 
 def _emit_submit(result: SubmitResult) -> None:
@@ -621,6 +667,7 @@ def _emit_submit(result: SubmitResult) -> None:
                 "outcome": result.outcome,
                 "submitted": result.submitted,
                 "uploads": result.uploads,
+                "attachments": result.attachments,
                 "ignored": ignored,
                 "next_commands": next_actions_commands(observation),
                 "observation": observation.model_dump(mode="json"),
@@ -633,8 +680,10 @@ def _emit_submit(result: SubmitResult) -> None:
     _out("Uploaded:")
     for slot, filename in result.uploads.items():
         _out(f"  {slot:<12}{filename}")
+    for filename in result.attachments:
+        _out(f"  {'attachment':<12}{filename}")
     if ignored:
-        _out(f"Not uploaded (no public slot): {', '.join(ignored)}")
+        _out(f"Not uploaded (--no-attachments): {', '.join(ignored)}")
     if result.outcome == "needs_attention":
         _render_readiness(observation)
         if observation.checks is not None:
@@ -999,15 +1048,24 @@ def drafts_files_add(
     slot: SlotArgument,
     path: Annotated[Path, typer.Argument(metavar="PATH")],
 ) -> None:
-    """Put a new file in one slot of a draft: init, upload, finalize.
+    """Put a new file in one slot of a draft, or add one attachment.
+
+    A fixed slot is replaced; `attachment` adds one more (the limits are 25
+    per observation, 50 MB each, no executables or scripts).
 
     Example: iota-hub drafts files add obs_01JABCDEF lightcurve ./fixed.csv
+    Example: iota-hub drafts files add obs_01JABCDEF attachment ./plot.png
     """
     settings = _settings()
     with _make_client(settings) as client:
-        observation = client.replace_file(
-            observation_id, slot.value, path, on_progress=_progress
-        )
+        if slot is SlotName.attachment:
+            observation = client.add_attachment(
+                observation_id, path, on_progress=_progress
+            )
+        else:
+            observation = client.replace_file(
+                observation_id, slot.value, path, on_progress=_progress
+            )
     _emit_observation(observation)
 
 
@@ -1016,16 +1074,42 @@ def drafts_files_add(
 def drafts_files_rm(
     observation_id: IdArgument,
     slot: SlotArgument,
+    attachment_id: Annotated[
+        str | None,
+        typer.Argument(
+            metavar="[ATTACHMENT_ID]",
+            help="With SLOT attachment: which one (see `drafts show`).",
+        ),
+    ] = None,
     yes: YesOption = False,
 ) -> None:
-    """Clear one file slot on a draft.
+    """Clear one file slot on a draft, or remove one attachment by its id.
 
     Example: iota-hub drafts files rm obs_01JABCDEF vizier --yes
+    Example: iota-hub drafts files rm obs_01JABCDEF attachment 3f1c2b9e-... --yes
     """
-    _confirm(f"Remove the {slot.value} file from {observation_id}?", yes)
+    if slot is SlotName.attachment and not attachment_id:
+        raise typer.BadParameter(
+            "removing an attachment needs its id; `iota-hub drafts show ID` "
+            "lists them.",
+            param_hint="ATTACHMENT_ID",
+        )
+    if slot is not SlotName.attachment and attachment_id:
+        raise typer.BadParameter(
+            "only the attachment slot takes an id.", param_hint="ATTACHMENT_ID"
+        )
+    what = (
+        f"attachment {attachment_id}"
+        if slot is SlotName.attachment
+        else f"the {slot.value} file"
+    )
+    _confirm(f"Remove {what} from {observation_id}?", yes)
     settings = _settings()
     with _make_client(settings) as client:
-        observation = client.delete_file(observation_id, slot.value)
+        if slot is SlotName.attachment:
+            observation = client.delete_attachment(observation_id, str(attachment_id))
+        else:
+            observation = client.delete_file(observation_id, slot.value)
     _emit_observation(observation)
 
 

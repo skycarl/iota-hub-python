@@ -42,16 +42,35 @@ def test_vizier_is_optional_and_mapped_when_present(tmp_path):
     assert mapping.ignored == []
 
 
-def test_everything_else_is_ignored_not_uploaded(tmp_path):
+def test_everything_else_becomes_an_attachment(tmp_path):
     folder = copy_observation(tmp_path / "obs")
     (folder / "_notes.txt").write_text("for the reviewer\n")
     (folder / "finder_chart.png").write_bytes(b"\x89PNG")
+    (folder / "X_Tangra.lc").write_text("lc\n")
     (folder / ".DS_Store").write_bytes(b"junk")
     (folder / "raw").mkdir()
+    (folder / "raw" / "frame.fits").write_bytes(b"x")
 
     mapping = map_folder(folder)
 
     assert set(mapping.slots) == {"report", "lightcurve", "log"}
+    # Hidden files and subdirectories are never attached.
+    assert [path.name for path in mapping.attachments] == [
+        "X_Tangra.lc",
+        "_notes.txt",
+        "finder_chart.png",
+    ]
+    assert mapping.ignored == []
+
+
+def test_no_attachments_leaves_them_out_and_reports_them(tmp_path):
+    folder = copy_observation(tmp_path / "obs")
+    (folder / "_notes.txt").write_text("for the reviewer\n")
+    (folder / "finder_chart.png").write_bytes(b"\x89PNG")
+
+    mapping = map_folder(folder, attachments=False)
+
+    assert mapping.attachments == []
     assert sorted(path.name for path in mapping.ignored) == [
         "_notes.txt",
         "finder_chart.png",
@@ -148,7 +167,7 @@ def test_an_explicit_path_wins_over_the_rule(tmp_path):
     mapping = map_folder(folder, lightcurve=chosen)
 
     assert mapping.slots["lightcurve"] == chosen
-    assert [path.name for path in mapping.ignored] == [
+    assert [path.name for path in mapping.attachments] == [
         "20180305_9721_Doty_Observer_POS.csv"
     ]
 
@@ -181,3 +200,103 @@ def test_an_explicit_path_that_is_not_there(tmp_path):
         map_folder(folder, log=folder / "absent_log.txt")
 
     assert excinfo.value.code == "missing_files"
+
+
+# -- attachments ------------------------------------------------------------
+
+
+def test_attach_adds_a_file_from_elsewhere_once(tmp_path):
+    folder = copy_observation(tmp_path / "obs")
+    (folder / "plot.png").write_bytes(b"png")
+    outside = tmp_path / "extra.pdf"
+    outside.write_bytes(b"%PDF")
+
+    mapping = map_folder(
+        folder,
+        attach=[outside, folder / "plot.png", folder / "../obs/plot.png"],
+    )
+
+    assert [path.name for path in mapping.attachments] == ["plot.png", "extra.pdf"]
+
+
+def test_attach_is_honoured_with_no_attachments(tmp_path):
+    folder = copy_observation(tmp_path / "obs")
+    (folder / "plot.png").write_bytes(b"png")
+    outside = tmp_path / "extra.pdf"
+    outside.write_bytes(b"%PDF")
+
+    mapping = map_folder(folder, attachments=False, attach=[outside])
+
+    assert [path.name for path in mapping.attachments] == ["extra.pdf"]
+    assert [path.name for path in mapping.ignored] == ["plot.png"]
+
+
+def test_attach_of_a_missing_file_is_missing_files(tmp_path):
+    folder = copy_observation(tmp_path / "obs")
+
+    with pytest.raises(MappingError) as excinfo:
+        map_folder(folder, attach=[tmp_path / "nope.png"])
+
+    assert excinfo.value.code == "missing_files"
+
+
+@pytest.mark.parametrize("name", ["reduce.py", "setup.EXE", "run.bat .", "lib.so"])
+def test_a_blocked_type_fails_the_whole_folder_and_names_it(tmp_path, name):
+    folder = copy_observation(tmp_path / "obs")
+    (folder / "plot.png").write_bytes(b"png")
+    (folder / name).write_bytes(b"x")
+
+    with pytest.raises(MappingError) as excinfo:
+        map_folder(folder)
+
+    error = excinfo.value
+    assert error.code == "blocked_attachment"
+    assert error.details["files"] == [name]
+    assert name in error.message
+    assert "--no-attachments" in error.hint
+    # The same folder maps once the attachments are left out.
+    assert map_folder(folder, attachments=False).ignored
+
+
+def test_an_oversized_attachment_names_the_file_and_the_limit(tmp_path, monkeypatch):
+    from iota_hub import files
+
+    monkeypatch.setattr(files, "ATTACHMENT_MAX_BYTES", 10)
+    folder = copy_observation(tmp_path / "obs")
+    (folder / "small.png").write_bytes(b"x" * 10)
+    (folder / "big.lc").write_bytes(b"x" * 11)
+
+    with pytest.raises(MappingError) as excinfo:
+        map_folder(folder)
+
+    error = excinfo.value
+    assert error.code == "attachment_too_large"
+    assert error.details == {"files": ["big.lc"], "max_size_bytes": 10}
+    assert "big.lc" in error.message
+
+
+def test_too_many_attachments_names_them_and_the_limit(tmp_path):
+    from iota_hub.files import MAX_ATTACHMENTS
+
+    folder = copy_observation(tmp_path / "obs")
+    for index in range(MAX_ATTACHMENTS + 1):
+        (folder / f"plot_{index:02d}.png").write_bytes(b"png")
+
+    with pytest.raises(MappingError) as excinfo:
+        map_folder(folder)
+
+    error = excinfo.value
+    assert error.code == "too_many_attachments"
+    assert error.details["max_allowed"] == MAX_ATTACHMENTS
+    assert error.details["count"] == MAX_ATTACHMENTS + 1
+    assert len(error.details["files"]) == MAX_ATTACHMENTS + 1
+
+
+def test_exactly_the_maximum_is_accepted(tmp_path):
+    from iota_hub.files import MAX_ATTACHMENTS
+
+    folder = copy_observation(tmp_path / "obs")
+    for index in range(MAX_ATTACHMENTS):
+        (folder / f"plot_{index:02d}.png").write_bytes(b"png")
+
+    assert len(map_folder(folder).attachments) == MAX_ATTACHMENTS

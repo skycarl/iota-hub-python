@@ -10,13 +10,19 @@ the two change together.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ._http import sha256_base64
 from .errors import IotaHubError
-from .files import SLOTS, FolderMapping, map_folder
+from .files import (
+    ATTACHMENT_SLOT,
+    SLOTS,
+    FolderMapping,
+    check_attachments,
+    map_folder,
+)
 from .models import (
     PublicDeclaredFile,
     PublicEventFileLink,
@@ -59,6 +65,7 @@ class SubmitResult:
     submitted: bool
     outcome: str
     uploads: dict[str, str] = field(default_factory=dict)
+    attachments: list[str] = field(default_factory=list)
     ignored: list[Path] = field(default_factory=list)
 
     @property
@@ -75,6 +82,7 @@ class WorkflowMixin:
         self,
         files: Mapping[str, str | Path],
         *,
+        attachments: Sequence[str | Path] = (),
         auto_submit_when_clean: bool = False,
         wait: bool = True,
         submit: bool = True,
@@ -89,8 +97,14 @@ class WorkflowMixin:
         ``ready``. A draft that is not ready is left alone for the caller to
         fix (the findings are on the returned observation); it is never
         deleted, because a partial draft is recoverable in the web app.
+
+        ``attachments`` are declared after the slots, as ``slot:
+        "attachment"``, and checked against the attachment rules before
+        anything is sent (:func:`iota_hub.files.check_attachments`).
         """
         paths = _paths(files)
+        extras = [Path(path) for path in attachments]
+        check_attachments(extras)
         declared = [
             PublicDeclaredFile(
                 slot=slot,
@@ -98,9 +112,10 @@ class WorkflowMixin:
                 size=path.stat().st_size,
                 sha256=sha256_base64(path),
             )
-            for slot, path in paths.items()
+            for slot, path in [*paths.items(), *((ATTACHMENT_SLOT, p) for p in extras)]
         ]
         uploads = {slot: path.name for slot, path in paths.items()}
+        attached = [path.name for path in extras]
 
         _say(on_progress, f"Creating draft ({len(declared)} files)...")
         created = self.create_draft(
@@ -110,19 +125,30 @@ class WorkflowMixin:
         )
         observation_id = created.observation.observation_id
 
+        # The API answers one target per declared file, in declared order; the
+        # attachment targets are paired with the attachment paths by position.
+        pending_extras = iter(extras)
         total = len(created.uploads)
         for index, target in enumerate(created.uploads, start=1):
-            _say(on_progress, f"Uploading {target.slot} ({index}/{total})...")
-            self._upload(
-                observation_id, target, paths[target.slot], on_progress=on_progress
-            )
+            if target.slot == ATTACHMENT_SLOT:
+                path = next(pending_extras)
+                label = f"attachment {path.name}"
+            else:
+                path = paths[target.slot]
+                label = target.slot
+            _say(on_progress, f"Uploading {label} ({index}/{total})...")
+            self._upload(observation_id, target, path, on_progress=on_progress)
 
         _say(on_progress, "Finalizing draft...")
         observation = self.finalize_draft(
             observation_id, idempotency_key=_idempotency_key()
         )
+
+        def result(observation: PublicObservation, submitted: bool, outcome: str):
+            return SubmitResult(observation, submitted, outcome, uploads, attached)
+
         if not wait:
-            return SubmitResult(observation, False, "draft", uploads)
+            return result(observation, False, "draft")
 
         observation = self.wait_for_checks(
             observation_id, timeout=timeout, on_progress=on_progress
@@ -130,11 +156,11 @@ class WorkflowMixin:
         # ``auto_submit_when_clean`` means the validation worker may have
         # submitted it while we polled; that is a success, not an oversight.
         if observation.submission_status == "submitted":
-            return SubmitResult(observation, True, "submitted", uploads)
+            return result(observation, True, "submitted")
         if not _is_ready(observation):
-            return SubmitResult(observation, False, "needs_attention", uploads)
+            return result(observation, False, "needs_attention")
         if not submit:
-            return SubmitResult(observation, False, "ready", uploads)
+            return result(observation, False, "ready")
 
         _say(on_progress, "Submitting...")
         observation = self.submit_draft(
@@ -142,7 +168,7 @@ class WorkflowMixin:
             version=observation.version,
             idempotency_key=_idempotency_key(),
         )
-        return SubmitResult(observation, True, "submitted", uploads)
+        return result(observation, True, "submitted")
 
     def submit_folder(
         self,
@@ -152,13 +178,15 @@ class WorkflowMixin:
         lightcurve: str | Path | None = None,
         log: str | Path | None = None,
         vizier: str | Path | None = None,
+        attachments: bool = True,
+        attach: Sequence[str | Path] = (),
         **kwargs: object,
     ) -> SubmitResult:
-        """Map one directory to slots (``iota_hub.files``) and submit it.
+        """Map one directory to slots and attachments (``iota_hub.files``), submit.
 
-        The files the mapping did not use come back on
-        :attr:`SubmitResult.ignored` — they are not uploaded, and the public
-        surface has no attachment slot to put them in.
+        Every file the slots did not take is uploaded as an attachment;
+        ``attachments=False`` leaves them out, and they come back on
+        :attr:`SubmitResult.ignored`. ``attach`` adds files from elsewhere.
         """
         mapping: FolderMapping = map_folder(
             directory,
@@ -166,8 +194,14 @@ class WorkflowMixin:
             lightcurve=lightcurve,
             log=log,
             vizier=vizier,
+            attachments=attachments,
+            attach=tuple(attach),
         )
-        result = self.submit_files(mapping.slots, **kwargs)  # type: ignore[arg-type]
+        result = self.submit_files(
+            mapping.slots,  # type: ignore[arg-type]
+            attachments=mapping.attachments,
+            **kwargs,  # type: ignore[arg-type]
+        )
         result.ignored = mapping.ignored
         return result
 
@@ -237,6 +271,33 @@ class WorkflowMixin:
             observation_id,
             slot,
             file_key=target.file_key,
+            filename=file.name,
+            idempotency_key=_idempotency_key(),
+        )
+
+    def add_attachment(
+        self,
+        observation_id: str,
+        path: str | Path,
+        *,
+        on_progress: Progress | None = None,
+    ) -> PublicObservation:
+        """Add one attachment: check the rules, init, upload, finalize.
+
+        The blocklist and size are checked before any call; the count is the
+        server's to enforce, since it depends on what the draft already holds.
+        """
+        file = Path(path)
+        check_attachments([file])
+        _say(on_progress, f"Uploading attachment {file.name}...")
+        target = self.init_attachment_upload(
+            observation_id, filename=file.name, sha256=sha256_base64(file)
+        )
+        self.http.upload_to_s3(target, file)
+        return self.finalize_attachment_upload(
+            observation_id,
+            file_key=target.file_key,
+            attachment_id=str(target.attachment_id),
             filename=file.name,
             idempotency_key=_idempotency_key(),
         )
@@ -319,6 +380,23 @@ class WorkflowMixin:
             return
         except IotaHubError:
             _say(on_progress, f"Retrying {target.slot} with a fresh upload target...")
+
+        if target.slot == ATTACHMENT_SLOT:
+            fresh = self.init_attachment_upload(
+                observation_id, filename=path.name, sha256=sha256_base64(path)
+            )
+            self.http.upload_to_s3(fresh, path)
+            self.finalize_attachment_upload(
+                observation_id,
+                file_key=fresh.file_key,
+                attachment_id=str(fresh.attachment_id),
+                filename=path.name,
+                idempotency_key=_idempotency_key(),
+            )
+            # The declaration the expired target belonged to would otherwise
+            # keep the collapsed finalize answering ``upload_missing``.
+            self.delete_attachment(observation_id, str(target.attachment_id))
+            return
 
         fresh = self.init_file_upload(
             observation_id, target.slot, filename=path.name, sha256=sha256_base64(path)

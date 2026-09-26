@@ -42,6 +42,9 @@ replacement):
 - `wait_for_checks(observation_id, …)` — § 8,
 - `replace_file(observation_id, slot, path)` — the fix loop's init → upload →
   finalize, in one call,
+- `add_attachment(observation_id, path)` — the same for one attachment (§ 11a);
+  removing one is the transport's `delete_attachment(observation_id,
+  attachment_id)`,
 - `download_files("observation" | "event", id, dest, …)` — list the files,
   optionally filter by `slot` — **any** slot the listing names, not only the
   four upload slots (an event carries `damit`, `ground_track`, `attachment`) —
@@ -56,8 +59,8 @@ replacement):
   an embedder prints the same guidance the CLI does.
 
 `submit_folder` / `submit_files` return one result object carrying the last
-observation it read, `submitted`, the uploaded `{slot: filename}`, the files
-the mapping ignored, and an **`outcome`** — the vocabulary a script branches on:
+observation it read, `submitted`, the uploaded `{slot: filename}`, the uploaded
+attachment filenames, the files the mapping ignored, and an **`outcome`** — the vocabulary a script branches on:
 
 | `outcome` | Meaning |
 |---|---|
@@ -364,6 +367,9 @@ and the CLI maps each one to an exit code (§ 12):
 | `missing_files` | a required slot has no candidate, or an explicit path is not there; `details.missing` |
 | `invalid_extension` | an explicit path has the wrong extension for its slot |
 | `not_a_directory` | the folder to submit is not a directory |
+| `blocked_attachment` | an attachment has a type the API refuses (§ 11a); `details.files`, `details.blocked_extensions` |
+| `attachment_too_large` | an attachment is over the 50 MB cap (§ 11a); `details.files`, `details.max_size_bytes` |
+| `too_many_attachments` | more than 25 attachments (§ 11a); `details.files`, `details.count`, `details.max_allowed` |
 | `missing_api_key` | nothing configured a key (§ 3) — the auth category |
 | `unknown_profile` | a profile was named and the config file has no such profile |
 | `invalid_config` | the config file is not valid TOML, or a profile name, base URL or key carries something that cannot be stored in it (§ 3) |
@@ -400,11 +406,44 @@ naming convention (`YYYYMMDD_<number>_<name>_<lastname>_POS|NEG[-X]`,
   "contains `log`" part is the client's own disambiguator between two `.txt`
   files, not a server rule — the server's allow-list is the extension
   (`observation_file_validation.py`) — so `--log notes.txt` is accepted.
-- Anything else — `_notes.txt`, `.png`, a second CSV's companions — is listed as
-  **not uploaded**, with a note that it can be attached in the web app; the
-  public surface has no attachment slot.
+- Anything else — `_notes.txt`, `.png`, `_Tangra.lc`, a second CSV's
+  companions — is an **attachment** (§ 11a), in listing order. `--no-attachments`
+  (library: `attachments=False`) leaves them out; they are then reported as
+  `ignored` ("not uploaded"). `--attach PATH` (repeatable; library: `attach=`)
+  adds a file from anywhere, with or without `--no-attachments`; a path already
+  mapped or already attached is not added twice.
 - One observation per directory in v1. A folder with several stations
   (`_POS-1`, `_POS-2`) is the two-reports error, and a documented follow-up.
+
+## 11a. Attachments
+
+The API's attachment rules (`specs/public-api.md` § 4.3) are mirrored as
+constants and **checked client-side before any request**, so a folder the API
+would refuse fails whole, with nothing created:
+
+| Rule | Value | Code (usage, exit `2`) | `details` |
+|---|---|---|---|
+| Blocked extension (trailing dots and spaces stripped, case-insensitive) | `.exe .bat .cmd .sh .ps1 .js .py .php .pl .rb .jar .msi .dll .so` | `blocked_attachment` | `files`, `blocked_extensions` |
+| Per-file size | 50 MB (`52428800` bytes) | `attachment_too_large` | `files`, `max_size_bytes` |
+| Per-observation count | 25 | `too_many_attachments` | `files`, `count`, `max_allowed` |
+
+Each error names **every** offending file and suggests `--no-attachments`. The
+server enforces the same three and has the last word; if the constants drift,
+its `422` is what the caller sees (exit `1`).
+
+- Declared as `{slot: "attachment", filename, size, sha256}` after the fixed
+  slots. The create response carries one target per declared file, in declared
+  order; attachment targets are paired with the attachment paths **by
+  position**, and each carries its `attachment_id`.
+- An attachment target that fails to upload is re-initialized once through
+  `attachments/upload/init`, uploaded, committed with
+  `attachments/upload/finalize`, and the old declaration is removed with
+  `DELETE …/attachments/{old attachment_id}` — otherwise the collapsed finalize
+  would keep answering `409 upload_missing` for it (§ 6).
+- Fix loop: `drafts files add ID attachment PATH` adds one (blocklist and size
+  checked first; the count is the server's, since it depends on what the draft
+  holds), `drafts files rm ID attachment ATTACHMENT_ID` removes one. The ids are
+  on the observation's `attachments[]` and in `drafts show`.
 
 ## 12. CLI exit codes
 
@@ -420,8 +459,9 @@ Scripts and agents branch on these.
 | `5` | rate limited | the rate-limit category, after retries are exhausted |
 
 The client-invented codes of § 10 map on: the mapping errors
-(`ambiguous_files`, `missing_files`, `invalid_extension`, `not_a_directory`)
-and `unknown_profile` and `confirmation_required` are **usage**, `2`;
+(`ambiguous_files`, `missing_files`, `invalid_extension`, `not_a_directory`,
+and the attachment rules `blocked_attachment`, `attachment_too_large`,
+`too_many_attachments`) and `unknown_profile` and `confirmation_required` are **usage**, `2`;
 `missing_api_key` is **auth**, `3`;
 `timeout`, and an `outcome` of `needs_attention`, are **not ready**, `4`;
 `upload_failed`, `download_failed`, `file_exists` and `invalid_config` are
@@ -515,8 +555,8 @@ shapes are part of semver (a major bump to change one):
 
 | Command | Document |
 |---|---|
-| `submit` | `{observation_id, outcome, submitted, uploads: {slot: filename}, ignored: [filename], next_commands: [...], observation: {...}}` |
-| `submit --dry-run` | `{target, directory, uploads: [{slot, filename, path, size}], ignored: [filename]}` — and no request is sent, so it needs no key |
+| `submit` | `{observation_id, outcome, submitted, uploads: {slot: filename}, attachments: [filename], ignored: [filename], next_commands: [...], observation: {...}}` — the attachment ids are on `observation.attachments[]` |
+| `submit --dry-run` | `{target, directory, uploads: [{slot, filename, path, size}], attachments: [{filename, path, size}], ignored: [filename]}` — and no request is sent, so it needs no key; the attachment rules are checked, so a folder `submit` would refuse fails here too |
 | `drafts show`, `drafts check`, `drafts files add`, `drafts files rm`, `drafts submit`, `observations show` | the `PublicObservation` |
 | `drafts dismiss` | the `PublicChecks` the dismissal returned |
 | `events show` | the `PublicEvent` |

@@ -6,6 +6,10 @@ One observation lives in one directory, named to the observer convention
 and nothing else: no content sniffing, no classification. When a rule does not
 pick exactly one file, that is an error naming the candidates and the flag that
 settles it — a wrong guess costs an observer a bad submission.
+
+Every file the four slots do not take becomes an **attachment**, under the
+server's attachment rules (``specs/public-api.md`` § 4.3), checked here before
+anything is created so a folder the API would refuse fails before any call.
 """
 
 from __future__ import annotations
@@ -32,22 +36,53 @@ EXTENSIONS: dict[str, tuple[str, ...]] = {
 #: The CLI flag that overrides the rule for a slot, named in every error.
 FLAGS = {slot: f"--{slot}" for slot in SLOTS}
 
+#: The declared ``slot`` of an attachment. It repeats; the four above do not.
+ATTACHMENT_SLOT = "attachment"
+
+#: The server's attachment rules (``file_limits`` and
+#: ``BLOCKED_ATTACHMENT_EXTENSIONS`` in the API). Checked client-side only to
+#: fail fast: the server enforces the same three and has the last word.
+MAX_ATTACHMENTS = 25
+ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
+BLOCKED_ATTACHMENT_EXTENSIONS = frozenset(
+    {
+        ".exe",
+        ".bat",
+        ".cmd",
+        ".sh",
+        ".ps1",
+        ".js",
+        ".py",
+        ".php",
+        ".pl",
+        ".rb",
+        ".jar",
+        ".msi",
+        ".dll",
+        ".so",
+    }
+)
+
 
 class MappingError(IotaHubError):
     """A folder the rules cannot map to exactly one observation.
 
     Codes: ``ambiguous_files`` (two candidates for one slot),
     ``missing_files`` (a required slot has none), ``invalid_extension`` (an
-    explicit override has the wrong extension) and ``not_a_directory``.
+    explicit override has the wrong extension), ``not_a_directory``, and the
+    attachment rules: ``blocked_attachment``, ``attachment_too_large`` and
+    ``too_many_attachments``.
     """
 
 
 @dataclass
 class FolderMapping:
-    """What a directory maps to: the slots filled, and what was left alone."""
+    """What a directory maps to: the slots filled, the attachments, and what
+    was left alone (only with ``attachments=False``)."""
 
     directory: Path
     slots: dict[str, Path] = field(default_factory=dict)
+    attachments: list[Path] = field(default_factory=list)
     ignored: list[Path] = field(default_factory=list)
 
     def missing_required(self) -> list[str]:
@@ -62,8 +97,10 @@ def map_folder(
     lightcurve: str | Path | None = None,
     log: str | Path | None = None,
     vizier: str | Path | None = None,
+    attachments: bool = True,
+    attach: list[str | Path] | tuple[str | Path, ...] = (),
 ) -> FolderMapping:
-    """Map one directory to slots, or raise :class:`MappingError`.
+    """Map one directory to slots and attachments, or raise :class:`MappingError`.
 
     | Slot | Rule |
     |---|---|
@@ -77,6 +114,11 @@ def map_folder(
     rule for its slot and is checked only for its extension — the ``log`` name
     rule exists to tell two ``.txt`` files apart, and a caller who names the
     file has already done that.
+
+    Every other file in the listing is an attachment; ``attachments=False``
+    leaves them out and reports them on ``ignored`` instead. ``attach`` adds
+    files from anywhere (honoured either way). The attachment rules are then
+    checked for all of them at once (:func:`check_attachments`).
     """
     base = Path(directory)
     if not base.is_dir():
@@ -110,15 +152,94 @@ def map_folder(
             slots[slot] = candidates[0]
             claimed.add(candidates[0].resolve())
 
+    leftovers = [entry for entry in entries if entry.resolve() not in claimed]
     mapping = FolderMapping(
         directory=base,
         slots=slots,
-        ignored=[entry for entry in entries if entry.resolve() not in claimed],
+        attachments=leftovers if attachments else [],
+        ignored=[] if attachments else leftovers,
     )
     missing = mapping.missing_required()
     if missing:
         raise _missing(base, missing)
+
+    seen = {path.resolve() for path in mapping.attachments}
+    for value in attach:
+        path = Path(value)
+        if not path.is_file():
+            raise MappingError(
+                "missing_files",
+                f"No such file to attach: {path}",
+                hint="Check the path passed to --attach.",
+                details={"path": str(path)},
+            )
+        if path.resolve() in seen or path.resolve() in claimed:
+            continue
+        seen.add(path.resolve())
+        mapping.attachments.append(path)
+    check_attachments(mapping.attachments)
     return mapping
+
+
+def check_attachments(paths: list[Path], *, already_attached: int = 0) -> None:
+    """Apply the server's attachment rules to ``paths``, naming every offender.
+
+    Blocked extensions first (trailing dots and spaces stripped, as the server
+    does), then the per-file size, then the count. Each error lists all the
+    files it applies to, so one run tells the observer everything to fix.
+    """
+    blocked = [path for path in paths if _blocked_extension(path.name)]
+    if blocked:
+        names = ", ".join(path.name for path in blocked)
+        raise MappingError(
+            "blocked_attachment",
+            f"The API refuses these file types as attachments: {names}.",
+            hint=(
+                "Move them out of the folder, or pass --no-attachments to upload "
+                "only the report, light curve, log and VizieR files."
+            ),
+            details={
+                "files": [path.name for path in blocked],
+                "blocked_extensions": sorted(BLOCKED_ATTACHMENT_EXTENSIONS),
+            },
+        )
+    too_large = [path for path in paths if path.stat().st_size > ATTACHMENT_MAX_BYTES]
+    if too_large:
+        names = ", ".join(
+            f"{path.name} ({path.stat().st_size} bytes)" for path in too_large
+        )
+        raise MappingError(
+            "attachment_too_large",
+            f"Attachments may be at most {ATTACHMENT_MAX_BYTES} bytes (50 MB): "
+            f"{names}.",
+            hint="Move them out of the folder, or pass --no-attachments.",
+            details={
+                "files": [path.name for path in too_large],
+                "max_size_bytes": ATTACHMENT_MAX_BYTES,
+            },
+        )
+    total = already_attached + len(paths)
+    if total > MAX_ATTACHMENTS:
+        raise MappingError(
+            "too_many_attachments",
+            f"{total} attachments; an observation takes at most "
+            f"{MAX_ATTACHMENTS}. Attachments: "
+            f"{', '.join(path.name for path in paths)}.",
+            hint="Move some out of the folder, or pass --no-attachments.",
+            details={
+                "files": [path.name for path in paths],
+                "count": total,
+                "max_allowed": MAX_ATTACHMENTS,
+            },
+        )
+
+
+def _blocked_extension(filename: str) -> str | None:
+    """The blocked extension ``filename`` ends in, if any (the server's rule)."""
+    name = filename.lower().rstrip(". ")
+    return next(
+        (ext for ext in BLOCKED_ATTACHMENT_EXTENSIONS if name.endswith(ext)), None
+    )
 
 
 # -- rules ------------------------------------------------------------------

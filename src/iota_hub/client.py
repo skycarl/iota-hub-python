@@ -29,6 +29,7 @@ from .models import (
     PublicEventFileList,
     PublicEventList,
     PublicFileList,
+    PublicFinalizeAttachmentRequest,
     PublicFinalizeUploadRequest,
     PublicInitUploadRequest,
     PublicObservation,
@@ -151,6 +152,53 @@ class Client(WorkflowMixin):
         """``public_delete_file`` — clear one slot."""
         response = self.http.request(
             "DELETE", f"/observations/{_seg(observation_id)}/files/{_seg(slot)}"
+        )
+        return PublicObservation.model_validate(response.json())
+
+    def init_attachment_upload(
+        self,
+        observation_id: str,
+        *,
+        filename: str,
+        sha256: str | None = None,
+    ) -> PublicUploadTarget:
+        """``public_init_attachment_upload`` — presign one more attachment."""
+        response = self.http.request(
+            "POST",
+            f"/observations/{_seg(observation_id)}/attachments/upload/init",
+            json=_body(PublicInitUploadRequest(filename=filename, sha256=sha256)),
+        )
+        return PublicUploadTarget.model_validate(response.json())
+
+    def finalize_attachment_upload(
+        self,
+        observation_id: str,
+        *,
+        file_key: str,
+        attachment_id: str,
+        filename: str,
+        idempotency_key: str | None = None,
+    ) -> PublicObservation:
+        """``public_finalize_attachment_upload`` — commit one uploaded attachment."""
+        response = self.http.request(
+            "POST",
+            f"/observations/{_seg(observation_id)}/attachments/upload/finalize",
+            json=_body(
+                PublicFinalizeAttachmentRequest(
+                    file_key=file_key, attachment_id=attachment_id, filename=filename
+                )
+            ),
+            idempotency_key=idempotency_key,
+        )
+        return PublicObservation.model_validate(response.json())
+
+    def delete_attachment(
+        self, observation_id: str, attachment_id: str
+    ) -> PublicObservation:
+        """``public_delete_attachment`` — remove one attachment by id."""
+        response = self.http.request(
+            "DELETE",
+            f"/observations/{_seg(observation_id)}/attachments/{_seg(attachment_id)}",
         )
         return PublicObservation.model_validate(response.json())
 

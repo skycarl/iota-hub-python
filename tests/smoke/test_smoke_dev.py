@@ -93,13 +93,28 @@ def test_submit_folder_upload_list_and_download(client: Client, tmp_path: Path) 
         replaced = client.replace_file(observation_id, "lightcurve", LIGHTCURVE)
         assert replaced.observation_id == observation_id
 
+        # Attachments: add one through the fix loop, then remove it by id.
+        extra_dir = tmp_path / "extra"
+        extra_dir.mkdir()
+        extra = extra_dir / "smoke_plot.png"
+        extra.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        attached = client.add_attachment(observation_id, extra)
+        ids = [
+            a.attachment_id for a in attached.attachments if a.filename == extra.name
+        ]
+        assert len(ids) == 1
+        removed = client.delete_attachment(observation_id, ids[0])
+        assert all(a.attachment_id != ids[0] for a in removed.attachments)
+
         drafts = [
             draft.observation_id
             for draft in client.iter_observations(submission_status="draft")
         ]
         assert observation_id in drafts
 
-        written = client.download_files("observation", observation_id, tmp_path)
+        written = client.download_files(
+            "observation", observation_id, tmp_path / "downloads"
+        )
         assert len(written) == 3
         assert all(path.exists() and path.stat().st_size > 0 for path in written)
     finally:

@@ -87,8 +87,13 @@ already carries the signal.
 
 The listing is non-recursive and skips subdirectories and dotfiles; extensions
 match case-insensitively, so `.CSV` is a light curve. Anything the rules do not
-claim is reported as "not uploaded" and left alone: the public surface has no
-attachment slot, so attach those in the web app if a reviewer needs them.
+claim (a PyOTE plot, a raw Tangra `.lc`, notes) is uploaded as an **attachment**,
+as in the web app's "Optional Attachments": at most 25 per observation, 50 MB
+each, and no executables or scripts (`.exe`, `.bat`, `.sh`, `.ps1`, `.py`, `.js`,
+...). Those limits are checked before anything is created; a folder that breaks
+one fails with exit code `2`, naming every offending file.
+`--no-attachments` uploads only the four slots (the rest is reported as "not
+uploaded"), and `--attach PATH` (repeatable) adds a file from elsewhere.
 Ambiguity is an error, never a guess - two candidates for one slot, or none for
 a required one, stops the command, names the files, and names the flag that
 settles it:
@@ -100,8 +105,9 @@ checked for the slot's extension only, so `--log notes.txt` is accepted. One
 observation per directory: a folder holding several stations (`_POS-1`,
 `_POS-2`) is reported as two reports, and is not supported in v1.
 
-Library: `client.submit_folder(dir, lightcurve=..., wait=True, submit=True)`;
-also `submit_files({"report": path, ...})` and `iota_hub.files.map_folder(dir)`.
+Library: `client.submit_folder(dir, lightcurve=..., attachments=True, attach=[...],
+wait=True, submit=True)`; also `submit_files({"report": path, ...},
+attachments=[...])` and `iota_hub.files.map_folder(dir)`.
 HTTP: `POST /observations/drafts`, a presigned multipart POST to S3 per file,
 `POST /observations/{id}/finalize`, `GET /observations/{id}` until the run is
 terminal, `POST /observations/{id}/submit`. See /developers/guide.md.
@@ -134,8 +140,8 @@ be translated. Two actions have no public API verb and must be finished in the
 web app: confirming an unnumbered asteroid id, and resolving an event-files
 conflict. The tool says so rather than pretending otherwise.
 
-Library: `SubmitResult` carries `.outcome`, `.observation`, `.uploads` and
-`.ignored`; `iota_hub.workflow.next_actions_commands(obs)` returns the commands.
+Library: `SubmitResult` carries `.outcome`, `.observation`, `.uploads`,
+`.attachments` and `.ignored`; `iota_hub.workflow.next_actions_commands(obs)` returns the commands.
 HTTP: `GET /observations/{id}`, the self-describing resource - read `readiness`,
 `checks` and `next_actions`. See /developers/guide.md.
 
@@ -145,6 +151,8 @@ HTTP: `GET /observations/{id}`, the self-describing resource - read `readiness`,
     iota-hub drafts show <id>                             # state and findings
     iota-hub drafts files add <id> lightcurve <path>      # replace a file
     iota-hub drafts files rm <id> vizier                  # clear a slot
+    iota-hub drafts files add <id> attachment <path>      # add an attachment
+    iota-hub drafts files rm <id> attachment <attachment_id>  # remove one
     iota-hub drafts dismiss <id> <fingerprint> --note "why this is acceptable"
     iota-hub drafts dismiss <id> <fingerprint> --undo     # undo a dismissal
     iota-hub drafts check <id>                            # start a check run

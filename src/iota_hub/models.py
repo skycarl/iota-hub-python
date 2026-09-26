@@ -21,6 +21,9 @@ from pydantic import BaseModel, ConfigDict, Field
 #: The file slots a client may fill. Closed: the server rejects anything else.
 Slot = Literal["report", "lightcurve", "log", "vizier"]
 
+#: What a draft-create may declare: a fixed slot, or an attachment (repeatable).
+DeclaredSlot = Literal["report", "lightcurve", "log", "vizier", "attachment"]
+
 
 class _Public(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -34,7 +37,7 @@ class _Public(BaseModel):
 class PublicDeclaredFile(_Public):
     """One file declared up front when creating a draft."""
 
-    slot: Slot
+    slot: DeclaredSlot
     filename: str
     size: int
     sha256: str | None = None
@@ -58,6 +61,14 @@ class PublicFinalizeUploadRequest(_Public):
     """Body of ``POST …/files/{slot}/upload/finalize``."""
 
     file_key: str
+    filename: str
+
+
+class PublicFinalizeAttachmentRequest(_Public):
+    """Body of ``POST …/attachments/upload/finalize``."""
+
+    file_key: str
+    attachment_id: str
     filename: str
 
 
@@ -105,6 +116,17 @@ class PublicUploadTarget(_Public):
     upload_url: str
     fields: dict[str, str] = Field(default_factory=dict)
     file_key: str
+    attachment_id: str | None = None
+
+
+class PublicAttachment(_Public):
+    """One optional attachment on an observation, removable by its id."""
+
+    attachment_id: str
+    slot: str = "attachment"
+    filename: str
+    size_bytes: int
+    uploaded_at: str
 
 
 # --------------------------------------------------------------------------
@@ -215,6 +237,7 @@ class PublicObservation(_Public):
     observer_user_id: str
     metadata: PublicObservationMetadata
     files: dict[str, PublicFileVersion | None] = Field(default_factory=dict)
+    attachments: list[PublicAttachment] = Field(default_factory=list)
     readiness: PublicReadiness | None = None
     checks: PublicChecks | None = None
     next_actions: list[str] = Field(default_factory=list)
@@ -243,6 +266,7 @@ class PublicFileLink(_Public):
     size_bytes: int
     url: str
     expires_in: int
+    attachment_id: str | None = None
 
 
 class PublicFileList(_Public):

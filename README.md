@@ -28,10 +28,11 @@ and then run `iota-hub` instead of `uvx iota-hub`.
 A clean run looks about like this (progress on stderr, the result on stdout):
 
 ```
-Creating draft (3 files)...
-Uploading report (1/3)...
-Uploading lightcurve (2/3)...
-Uploading log (3/3)...
+Creating draft (4 files)...
+Uploading report (1/4)...
+Uploading lightcurve (2/4)...
+Uploading log (3/4)...
+Uploading attachment field_notes.png (4/4)...
 Finalizing draft...
 Waiting for checks...
 
@@ -39,8 +40,8 @@ Submitted obs_01HZY4A1K2QX
   report      20180305_9721_Doty_Observer_POS.xlsx
   lightcurve  20180305_9721_Doty_Observer_POS.csv
   log         20180305_9721_Doty_Observer_POS_pyote_log.txt
+  attachment  field_notes.png
   checks      complete, 0 open findings
-  not uploaded: field_notes.png (attach it in the web app if you need it)
 ```
 
 `submit` is the whole job: it creates a draft, uploads each file straight to
@@ -80,9 +81,23 @@ is no classification and no content sniffing:
 The listing is non-recursive and skips subdirectories and dotfiles; extensions
 match case-insensitively, so `.CSV` is a light curve.
 
-Anything the rules do not claim — `field_notes.txt`, a `.png`, a second CSV's
-companions — is listed as **not uploaded** and left alone. The public API has no
-attachment slot; attach those in the web app if the reviewer needs them.
+Anything the rules do not claim — `field_notes.txt`, a PyOTE `.png`, a raw
+Tangra `_Tangra.lc` — is uploaded as an **attachment**, just like the web app's
+"Optional Attachments". The web app's limits apply, and are checked before
+anything is created, so a folder that breaks one fails whole (exit code `2`)
+with every offending file named:
+
+- at most **25** attachments per observation,
+- at most **50 MB** each,
+- no executables or scripts (`.exe`, `.bat`, `.cmd`, `.sh`, `.ps1`, `.js`,
+  `.py`, `.php`, `.pl`, `.rb`, `.jar`, `.msi`, `.dll`, `.so`).
+
+`--no-attachments` uploads only the four slots and lists the rest as **not
+uploaded**; `--attach PATH` (repeatable) adds a file from outside the folder.
+`--dry-run` shows the attachments too. Afterwards,
+`iota-hub drafts files add <id> attachment <path>` adds one and
+`iota-hub drafts files rm <id> attachment <attachment_id>` removes one (the ids
+are in `iota-hub drafts show <id>`).
 
 **Ambiguity is an error, never a guess.** Two candidates for one slot, or none
 for a required one, stops the command with the names of the files involved and

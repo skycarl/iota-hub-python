@@ -139,6 +139,68 @@ def test_finalize_file_upload(client, mock_api):
     assert isinstance(observation, models.PublicObservation)
 
 
+def test_init_attachment_upload(client, mock_api):
+    mock_api.json(
+        "POST",
+        "/public/v1/observations/obs_1/attachments/upload/init",
+        {
+            "slot": "attachment",
+            "filename": "plot.png",
+            "upload_url": "https://s3.example.test/bucket",
+            "fields": {"key": "staging/obs_1/attachment_a1.png"},
+            "file_key": "staging/obs_1/attachment_a1.png",
+            "attachment_id": "a1",
+        },
+    )
+    target = client.init_attachment_upload("obs_1", filename="plot.png", sha256="abc=")
+
+    assert body_of(sent(mock_api)) == {"filename": "plot.png", "sha256": "abc="}
+    assert target.attachment_id == "a1"
+
+
+def test_finalize_attachment_upload(client, mock_api):
+    mock_api.json(
+        "POST",
+        "/public/v1/observations/obs_1/attachments/upload/finalize",
+        {
+            **OBSERVATION,
+            "attachments": [
+                {
+                    "attachment_id": "a1",
+                    "slot": "attachment",
+                    "filename": "plot.png",
+                    "size_bytes": 3,
+                    "uploaded_at": "2026-01-01T00:00:00Z",
+                }
+            ],
+        },
+    )
+    observation = client.finalize_attachment_upload(
+        "obs_1",
+        file_key="staging/k",
+        attachment_id="a1",
+        filename="plot.png",
+        idempotency_key="key-9",
+    )
+
+    request = sent(mock_api)
+    assert body_of(request) == {
+        "file_key": "staging/k",
+        "attachment_id": "a1",
+        "filename": "plot.png",
+    }
+    assert request.headers["Idempotency-Key"] == "key-9"
+    assert [a.filename for a in observation.attachments] == ["plot.png"]
+
+
+def test_delete_attachment(client, mock_api):
+    mock_api.json("DELETE", "/public/v1/observations/obs_1/attachments/a1", OBSERVATION)
+    observation = client.delete_attachment("obs_1", "a1")
+
+    assert sent(mock_api).method == "DELETE"
+    assert observation.attachments == []
+
+
 def test_delete_file(client, mock_api):
     mock_api.json("DELETE", "/public/v1/observations/obs_1/files/vizier", OBSERVATION)
     observation = client.delete_file("obs_1", "vizier")
@@ -357,7 +419,7 @@ def test_every_operation_id_has_a_method():
         for path in document["paths"].values()
         for operation in path.values()
     ]
-    assert len(operations) == 16
+    assert len(operations) == 19
     for operation_id in operations:
         assert operation_id.startswith("public_")
         name = operation_id[len("public_") :]

@@ -314,10 +314,175 @@ def test_submit_folder_reports_what_it_did_not_upload(client, mock_api, tmp_path
     )
     mock_api.json("POST", SUBMIT, observation(submission_status="submitted"))
 
-    result = client.submit_folder(folder)
+    result = client.submit_folder(folder, attachments=False)
 
     assert result.outcome == "submitted"
     assert [path.name for path in result.ignored] == ["_notes.txt"]
+    assert result.attachments == []
+    declared = body_of(requests_to(mock_api, DRAFTS)[0])["files"]
+    assert [item["slot"] for item in declared] == ["report", "lightcurve", "log"]
+
+
+def attachment_target(
+    filename, attachment_id, *, url=f"https://s3.example.test{BUCKET}"
+):
+    target = upload_target(
+        "attachment", filename, url=url, key=f"staging/{OBS_ID}/att_{attachment_id}"
+    )
+    target["attachment_id"] = attachment_id
+    return target
+
+
+def test_submit_folder_uploads_the_leftovers_as_attachments(client, mock_api, tmp_path):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    for source in FILES.values():
+        (folder / source.name).write_bytes(source.read_bytes())
+    (folder / "X.pyote.png").write_bytes(b"png-bytes")
+    (folder / "X_Tangra.lc").write_bytes(b"lc-bytes")
+    (folder / ".hidden").write_bytes(b"never")
+
+    mock_api.json(
+        "POST",
+        DRAFTS,
+        {
+            "observation": observation(next_actions=[]),
+            "uploads": [
+                *(upload_target(slot, FILES[slot].name) for slot in FILES),
+                attachment_target("X.pyote.png", "att-1"),
+                attachment_target("X_Tangra.lc", "att-2"),
+            ],
+        },
+        status=201,
+    )
+    script_upload(mock_api)
+    attached = [
+        {
+            "attachment_id": "att-1",
+            "filename": "X.pyote.png",
+            "size_bytes": 9,
+            "uploaded_at": "2026-01-01T00:00:00Z",
+        },
+        {
+            "attachment_id": "att-2",
+            "filename": "X_Tangra.lc",
+            "size_bytes": 8,
+            "uploaded_at": "2026-01-01T00:00:00Z",
+        },
+    ]
+    mock_api.json("POST", FINALIZE, observation(attachments=attached))
+    mock_api.json(
+        "GET",
+        GET,
+        observation(
+            checks={"run_id": "r1", "status": "complete"},
+            readiness=readiness(),
+            attachments=attached,
+        ),
+    )
+
+    messages: list[str] = []
+    result = client.submit_folder(folder, submit=False, on_progress=messages.append)
+
+    assert result.outcome == "ready"
+    assert result.attachments == ["X.pyote.png", "X_Tangra.lc"]
+    assert result.ignored == []
+    assert [a.attachment_id for a in result.observation.attachments] == [
+        "att-1",
+        "att-2",
+    ]
+
+    declared = body_of(requests_to(mock_api, DRAFTS)[0])["files"]
+    assert [item["slot"] for item in declared] == [
+        "report",
+        "lightcurve",
+        "log",
+        "attachment",
+        "attachment",
+    ]
+    png = folder / "X.pyote.png"
+    assert declared[3] == {
+        "slot": "attachment",
+        "filename": "X.pyote.png",
+        "size": png.stat().st_size,
+        "sha256": sha256_base64(png),
+    }
+    # Each attachment target got its own file, paired by position.
+    posts = requests_to(mock_api, BUCKET)
+    assert len(posts) == 5
+    assert b"png-bytes" in posts[3].content
+    assert b"lc-bytes" in posts[4].content
+    assert "Uploading attachment X_Tangra.lc (5/5)..." in messages
+
+
+def test_submit_files_checks_attachment_limits_before_any_call(
+    client, mock_api, tmp_path
+):
+    blocked = tmp_path / "reduce.py"
+    blocked.write_text("print()\n")
+
+    with pytest.raises(IotaHubError) as excinfo:
+        client.submit_files(FILES, attachments=[blocked])
+
+    assert excinfo.value.code == "blocked_attachment"
+    assert mock_api.requests == []
+
+
+ATTACH_INIT = f"/public/v1/observations/{OBS_ID}/attachments/upload/init"
+ATTACH_FINALIZE = f"/public/v1/observations/{OBS_ID}/attachments/upload/finalize"
+
+
+def test_an_expired_attachment_target_is_replaced_and_the_old_one_dropped(
+    client, mock_api, tmp_path
+):
+    plot = tmp_path / "plot.png"
+    plot.write_bytes(b"png")
+    mock_api.json(
+        "POST",
+        DRAFTS,
+        {
+            "observation": observation(next_actions=[]),
+            "uploads": [
+                *(upload_target(slot, FILES[slot].name) for slot in FILES),
+                attachment_target("plot.png", "att-old"),
+            ],
+        },
+        status=201,
+    )
+    script_upload(
+        mock_api,
+        httpx.Response(204),
+        httpx.Response(204),
+        httpx.Response(204),
+        httpx.Response(403, text="<Error>AccessDenied</Error>"),
+    )
+    mock_api.json(
+        "POST",
+        ATTACH_INIT,
+        attachment_target(
+            "plot.png", "att-new", url=f"https://s3.example.test{SECOND_BUCKET}"
+        ),
+    )
+    script_upload(mock_api, httpx.Response(204), path=SECOND_BUCKET)
+    mock_api.json("POST", ATTACH_FINALIZE, observation())
+    mock_api.json(
+        "DELETE", f"/public/v1/observations/{OBS_ID}/attachments/att-old", observation()
+    )
+    mock_api.json("POST", FINALIZE, observation())
+
+    result = client.submit_files(FILES, attachments=[plot], wait=False)
+
+    assert result.outcome == "draft"
+    assert body_of(requests_to(mock_api, ATTACH_FINALIZE)[0]) == {
+        "file_key": f"staging/{OBS_ID}/att_att-new",
+        "attachment_id": "att-new",
+        "filename": "plot.png",
+    }
+    # The stale declaration is dropped before the collapsed finalize.
+    paths = [request.url.path for request in mock_api.requests]
+    assert paths.index(
+        f"/public/v1/observations/{OBS_ID}/attachments/att-old"
+    ) < paths.index(FINALIZE)
 
 
 # -- polling ----------------------------------------------------------------
@@ -458,6 +623,41 @@ def test_replace_file_inits_uploads_and_finalizes(client, mock_api):
     assert UUID4.match(
         requests_to(mock_api, FINALIZE_LIGHTCURVE)[0].headers["Idempotency-Key"]
     )
+
+
+def test_add_attachment_inits_uploads_and_finalizes(client, mock_api, tmp_path):
+    plot = tmp_path / "plot.png"
+    plot.write_bytes(b"png")
+    mock_api.json("POST", ATTACH_INIT, attachment_target("plot.png", "att-1"))
+    script_upload(mock_api)
+    mock_api.json("POST", ATTACH_FINALIZE, observation(version=7))
+
+    result = client.add_attachment(OBS_ID, plot)
+
+    assert result.version == 7
+    assert body_of(requests_to(mock_api, ATTACH_INIT)[0]) == {
+        "filename": "plot.png",
+        "sha256": sha256_base64(plot),
+    }
+    assert body_of(requests_to(mock_api, ATTACH_FINALIZE)[0])["attachment_id"] == (
+        "att-1"
+    )
+    assert UUID4.match(
+        requests_to(mock_api, ATTACH_FINALIZE)[0].headers["Idempotency-Key"]
+    )
+
+
+def test_add_attachment_refuses_a_blocked_type_without_calling(
+    client, mock_api, tmp_path
+):
+    script = tmp_path / "setup.exe"
+    script.write_bytes(b"MZ")
+
+    with pytest.raises(IotaHubError) as excinfo:
+        client.add_attachment(OBS_ID, script)
+
+    assert excinfo.value.code == "blocked_attachment"
+    assert mock_api.requests == []
 
 
 # -- downloads --------------------------------------------------------------

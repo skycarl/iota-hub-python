@@ -57,6 +57,8 @@ API says is available; run them as printed rather than paraphrasing them.
 iota-hub drafts show <id>                          # current state and findings
 iota-hub drafts files add <id> lightcurve <path>   # replace a file
 iota-hub drafts files rm <id> vizier               # clear a slot
+iota-hub drafts files add <id> attachment <path>   # add an attachment
+iota-hub drafts files rm <id> attachment <attachment_id>  # remove one (ids in drafts show)
 iota-hub drafts dismiss <id> <fingerprint> --note "why this is acceptable"
 iota-hub drafts dismiss <id> <fingerprint> --undo  # undo a dismissal
 iota-hub drafts check <id>                         # start a check run
@@ -79,7 +81,7 @@ Branch on these, not on the text.
 | ---- | ---------------------------------------------------------- |
 | `0`  | success                                                     |
 | `1`  | error (including server and network failures)               |
-| `2`  | usage: bad flags, or an ambiguous or incomplete file mapping |
+| `2`  | usage: bad flags, an ambiguous or incomplete file mapping, or an attachment the API would refuse |
 | `3`  | auth: no key, or the API rejected it                        |
 | `4`  | open findings / not ready — the fix loop above              |
 | `5`  | rate limited after the built-in retries                     |
@@ -101,8 +103,13 @@ JSON too: `usage_error`, exit code `2`.
 - An ambiguous mapping (two `.csv` files, no `.xlsx`) is exit code `2`. Do not
   pick one — show the observer the candidates and use the explicit flag they
   name (`--report`, `--lightcurve`, `--log`, `--vizier`).
-- Files the mapping does not claim are reported as "not uploaded". That is
-  expected; the public API has no attachment slot. Say so rather than retrying.
+- Files the slots do not claim are uploaded as **attachments** (25 max, 50 MB
+  each, no executables or scripts). If `submit` exits `2` with
+  `blocked_attachment`, `attachment_too_large` or `too_many_attachments`, show
+  the observer the named files and ask: move them out of the folder, or re-run
+  with `--no-attachments`. Do not delete or move their files yourself.
+- Use `submit --dry-run` to show the observer what would be uploaded,
+  attachments included, before a real run.
 
 ## More
 

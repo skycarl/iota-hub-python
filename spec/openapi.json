@@ -14,7 +14,7 @@
   },
   "servers": [
     {
-      "url": "/api/public/v1",
+      "url": "https://d7gigln4gk.execute-api.us-west-2.amazonaws.com/dev/api/public/v1",
       "description": "The environment serving this document. Until the production release, only the development deployment serves the public API, and that is where third-party developers build: sign up there, create a key, and point your client at this base URL. The production base URL is published at release."
     }
   ],
@@ -36,7 +36,7 @@
           "Public API v1"
         ],
         "summary": "Create a draft and presign its uploads",
-        "description": "Create a draft observation and, in the same call, presign one upload target per declared file. POST each file straight to S3 with the returned `upload_url` and `fields`, then call `finalize`.\n\nIdentity fields (observer, asteroid, star, time, result) are not accepted: they are read from the report spreadsheet when the `report` slot is finalized.",
+        "description": "Create a draft observation and, in the same call, presign one upload target per declared file. POST each file straight to S3 with the returned `upload_url` and `fields`, then call `finalize`.\n\nIdentity fields (observer, asteroid, star, time, result) are not accepted: they are read from the report spreadsheet when the `report` slot is finalized.\n\nDeclare any other file (plots, raw `.lc` output, notes) with `slot: \"attachment\"`, repeated once per file. Attachments follow the web app's rules: at most 25 per observation, 50 MB each, and executable/script extensions are refused. Each attachment target carries the `attachment_id` it will be stored under.",
         "operationId": "public_create_draft",
         "parameters": [
           {
@@ -149,7 +149,7 @@
             }
           },
           "422": {
-            "description": "`file_too_large` (`details.slot`), `validation_error` (unknown slot, duplicate slot, bad extension)",
+            "description": "`file_too_large` (`details.slot`), `validation_error` (unknown slot, duplicate slot, bad extension, blocked attachment type, too many attachments)",
             "content": {
               "application/json": {
                 "example": {
@@ -638,6 +638,358 @@
                 "example": {
                   "code": "not_found",
                   "message": "Observation not found",
+                  "hint": "Check the id, and that the resource is visible to your account."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/observations/{observation_id}/attachments/upload/init": {
+      "post": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Presign one attachment upload",
+        "description": "Presign an upload for one more attachment. The target's `attachment_id` is what the finalize call and a later removal take.\n\nSame rules as the web app: at most 25 attachments per observation (`422 validation_error`, `details.max_allowed`), 50 MB each (enforced by S3 against the presigned policy), and executable/script extensions are refused (`422 validation_error`, `details.blocked_extension`).",
+        "operationId": "public_init_attachment_upload",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicInitUploadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Upload target for the new attachment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicUploadTarget"
+                },
+                "example": {
+                  "slot": "attachment",
+                  "filename": "pyote_plot.png",
+                  "upload_url": "https://prod-iota-hub-storage.s3.amazonaws.com/",
+                  "fields": {
+                    "key": "staging/obs_01HZY4A1/attachment_3f1c2b9e_1742025600.png",
+                    "policy": "eyJleHBpcmF0aW9uIjoi...",
+                    "x-amz-signature": "1a2b3c..."
+                  },
+                  "file_key": "staging/obs_01HZY4A1/attachment_3f1c2b9e_1742025600.png",
+                  "attachment_id": "3f1c2b9e-8d4a-4c1e-9f7a-2b6d5e8c1a90"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_found",
+                  "message": "Observation not found",
+                  "hint": "Check the id, and that the resource is visible to your account."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/observations/{observation_id}/attachments/upload/finalize": {
+      "post": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Commit one attachment upload",
+        "description": "Commit a staged attachment onto the observation. The stored size is the committed object's real size. Attachments are not read by the observer checks, so adding one never makes a check run stale.",
+        "operationId": "public_finalize_attachment_upload",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Client-generated key making this call safe to retry. A replay returns the first call's response and does no second write. Keys expire after 24 hours.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Client-generated key making this call safe to retry. A replay returns the first call's response and does no second write. Keys expire after 24 hours."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicFinalizeAttachmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Attachment committed; the updated observation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicObservation"
+                },
+                "example": {
+                  "observation_id": "obs_01HZY4A1",
+                  "submission_status": "draft",
+                  "created_at": "2026-03-15T08:02:00Z",
+                  "updated_at": "2026-03-15T08:11:00Z",
+                  "version": 6,
+                  "created_via": "api",
+                  "observer_user_id": "usr_observer_1",
+                  "metadata": {
+                    "observer_name": "A. Observer",
+                    "observer_email": "observer@example.org",
+                    "asteroid_id": "1036",
+                    "asteroid_name": "Ganymed",
+                    "star_catalog": "GAIA",
+                    "star_id": "1234567890123456789",
+                    "observed_at_utc": "2026-03-14T04:12:07Z",
+                    "result_type": "POS",
+                    "confirm_unnumbered_asteroid_id": false,
+                    "bypass_required_files": false
+                  },
+                  "files": {
+                    "report": {
+                      "slot": "report",
+                      "filename": "report.xlsx",
+                      "size_bytes": 51234,
+                      "uploaded_at": "2026-03-15T08:10:00Z"
+                    }
+                  },
+                  "readiness": {
+                    "state": "checking",
+                    "missing_required": [],
+                    "open_findings": 0,
+                    "dismissed_findings": 0,
+                    "checks_current": false,
+                    "event_files_blocked": false,
+                    "latest_run_id": "vrun_01HZY5B2"
+                  },
+                  "checks": {
+                    "run_id": "vrun_01HZY5B2",
+                    "status": "running",
+                    "checks_current": false,
+                    "open_findings": 0,
+                    "dismissed_findings": 0,
+                    "findings": []
+                  },
+                  "next_actions": [
+                    "poll"
+                  ],
+                  "report_parse": {
+                    "status": "parsed"
+                  },
+                  "attachments": [
+                    {
+                      "attachment_id": "3f1c2b9e-8d4a-4c1e-9f7a-2b6d5e8c1a90",
+                      "slot": "attachment",
+                      "filename": "pyote_plot.png",
+                      "size_bytes": 90211,
+                      "uploaded_at": "2026-03-15T08:12:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_found",
+                  "message": "Observation not found",
+                  "hint": "Check the id, and that the resource is visible to your account."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Problem details with a stable `code`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      }
+    },
+    "/public/v1/observations/{observation_id}/attachments/{attachment_id}": {
+      "delete": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Remove one attachment",
+        "description": "Remove an attachment by its `attachment_id`. An attachment that was declared at create but never finalized is simply forgotten, so the collapsed `finalize` stops waiting for it.",
+        "operationId": "public_delete_attachment",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          },
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Attachment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachment removed; the updated observation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicObservation"
+                },
+                "example": {
+                  "observation_id": "obs_01HZY4A1",
+                  "submission_status": "draft",
+                  "created_at": "2026-03-15T08:02:00Z",
+                  "updated_at": "2026-03-15T08:11:00Z",
+                  "version": 6,
+                  "created_via": "api",
+                  "observer_user_id": "usr_observer_1",
+                  "metadata": {
+                    "observer_name": "A. Observer",
+                    "observer_email": "observer@example.org",
+                    "asteroid_id": "1036",
+                    "asteroid_name": "Ganymed",
+                    "star_catalog": "GAIA",
+                    "star_id": "1234567890123456789",
+                    "observed_at_utc": "2026-03-14T04:12:07Z",
+                    "result_type": "POS",
+                    "confirm_unnumbered_asteroid_id": false,
+                    "bypass_required_files": false
+                  },
+                  "files": {
+                    "report": {
+                      "slot": "report",
+                      "filename": "report.xlsx",
+                      "size_bytes": 51234,
+                      "uploaded_at": "2026-03-15T08:10:00Z"
+                    }
+                  },
+                  "readiness": {
+                    "state": "checking",
+                    "missing_required": [],
+                    "open_findings": 0,
+                    "dismissed_findings": 0,
+                    "checks_current": false,
+                    "event_files_blocked": false,
+                    "latest_run_id": "vrun_01HZY5B2"
+                  },
+                  "checks": {
+                    "run_id": "vrun_01HZY5B2",
+                    "status": "running",
+                    "checks_current": false,
+                    "open_findings": 0,
+                    "dismissed_findings": 0,
+                    "findings": []
+                  },
+                  "next_actions": [
+                    "poll"
+                  ],
+                  "report_parse": {
+                    "status": "parsed"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found` — no such observation or attachment",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_found",
+                  "message": "Attachment not found",
                   "hint": "Check the id, and that the resource is visible to your account."
                 }
               }
@@ -2087,6 +2439,45 @@
   },
   "components": {
     "schemas": {
+      "PublicAttachment": {
+        "properties": {
+          "attachment_id": {
+            "type": "string",
+            "title": "Attachment Id",
+            "description": "Id to remove this attachment by"
+          },
+          "slot": {
+            "type": "string",
+            "title": "Slot",
+            "description": "Always 'attachment'",
+            "default": "attachment"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "Original filename as uploaded"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes",
+            "description": "Size of the file in bytes"
+          },
+          "uploaded_at": {
+            "type": "string",
+            "title": "Uploaded At",
+            "description": "ISO 8601 upload timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attachment_id",
+          "filename",
+          "size_bytes",
+          "uploaded_at"
+        ],
+        "title": "PublicAttachment",
+        "description": "One optional attachment on an observation.\n\nSame shape as :class:`PublicFileVersion` plus the id a client removes it\nby (``DELETE /public/v1/observations/{id}/attachments/{attachment_id}``)."
+      },
       "PublicChecks": {
         "properties": {
           "run_id": {
@@ -2142,10 +2533,11 @@
               "report",
               "lightcurve",
               "log",
-              "vizier"
+              "vizier",
+              "attachment"
             ],
             "title": "Slot",
-            "description": "Which slot this file fills"
+            "description": "Which slot this file fills. `attachment` may repeat; each of the four fixed slots at most once."
           },
           "filename": {
             "type": "string",
@@ -2282,6 +2674,11 @@
                 "filename": "pyote.log",
                 "size": 18422,
                 "slot": "log"
+              },
+              {
+                "filename": "pyote_plot.png",
+                "size": 90211,
+                "slot": "attachment"
               }
             ]
           }
@@ -2658,6 +3055,18 @@
             "type": "integer",
             "title": "Expires In",
             "description": "Seconds until the URL expires"
+          },
+          "attachment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Id",
+            "description": "The attachment's id; null for the fixed slots"
           }
         },
         "type": "object",
@@ -2755,6 +3164,42 @@
         ],
         "title": "PublicFileVersion",
         "description": "The current file in one slot, as the public API describes it.\n\nDeliberately omits the internal version history, S3 keys, uploader ids and\ntombstone bookkeeping: a client gets the download URL from the ``/files``\nendpoint, not from here."
+      },
+      "PublicFinalizeAttachmentRequest": {
+        "properties": {
+          "file_key": {
+            "type": "string",
+            "title": "File Key",
+            "description": "The `file_key` the init call returned"
+          },
+          "attachment_id": {
+            "type": "string",
+            "title": "Attachment Id",
+            "description": "The `attachment_id` the init call returned"
+          },
+          "filename": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Filename",
+            "description": "Filename, with extension"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "file_key",
+          "attachment_id",
+          "filename"
+        ],
+        "title": "PublicFinalizeAttachmentRequest",
+        "description": "Body of ``POST …/attachments/upload/finalize``.",
+        "examples": [
+          {
+            "attachment_id": "3f1c2b9e-8d4a-4c1e-9f7a-2b6d5e8c1a90",
+            "file_key": "staging/obs_01HZY4A1/attachment_3f1c…_1742025600.png",
+            "filename": "pyote_plot.png"
+          }
+        ]
       },
       "PublicFinalizeUploadRequest": {
         "properties": {
@@ -2987,6 +3432,14 @@
             "type": "object",
             "title": "Files",
             "description": "Current file per slot (report, lightcurve, log, vizier); null for an empty slot."
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/PublicAttachment"
+            },
+            "type": "array",
+            "title": "Attachments",
+            "description": "Optional attachments (any file the four slots do not take), in upload order. Empty when there are none, or when the caller may not see this observation's files."
           },
           "readiness": {
             "anyOf": [
@@ -3344,6 +3797,18 @@
             "type": "string",
             "title": "File Key",
             "description": "Opaque key identifying this upload"
+          },
+          "attachment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachment Id",
+            "description": "For an `attachment` target, the id the attachment will carry (pass it to the attachment finalize); null for the fixed slots."
           }
         },
         "type": "object",

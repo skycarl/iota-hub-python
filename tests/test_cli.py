@@ -245,7 +245,74 @@ def test_dry_run_json_shape(runner: CliRunner, tmp_path: Path) -> None:
         "lightcurve",
         "log",
     ]
-    assert payload["ignored"] == ["field_notes.png"]
+    assert payload["attachments"] == [
+        {
+            "filename": "field_notes.png",
+            "path": str(folder / "field_notes.png"),
+            "size": 3,
+        }
+    ]
+    assert payload["ignored"] == []
+
+
+def test_dry_run_lists_attachments_and_no_attachments_ignores_them(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    for source in (REPORT, LIGHTCURVE, LOG):
+        (folder / source.name).write_bytes(source.read_bytes())
+    (folder / "X_Tangra.lc").write_bytes(b"lc")
+
+    result = run(runner, "submit", str(folder), "--dry-run")
+    assert result.exit_code == 0
+    assert "attachment  X_Tangra.lc" in result.stdout
+
+    result = run(runner, "submit", str(folder), "--dry-run", "--no-attachments")
+    assert result.exit_code == 0
+    assert "X_Tangra.lc" not in result.stdout.split("Not uploaded")[0]
+    assert "Not uploaded (--no-attachments): X_Tangra.lc" in result.stdout
+
+
+def test_attach_adds_a_file_to_the_dry_run(runner: CliRunner, tmp_path: Path) -> None:
+    extra = tmp_path / "plot.png"
+    extra.write_bytes(b"png")
+    result = run(
+        runner,
+        "--json",
+        "submit",
+        str(OBSERVATION_DIR),
+        "--dry-run",
+        "--attach",
+        str(extra),
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert [item["filename"] for item in payload["attachments"]] == ["plot.png"]
+
+
+def test_a_blocked_attachment_fails_fast_with_exit_2(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    for source in (REPORT, LIGHTCURVE, LOG):
+        (folder / source.name).write_bytes(source.read_bytes())
+    (folder / "reduce.py").write_text("print()\n")
+
+    result = run(runner, "--json", "submit", str(folder))
+    assert result.exit_code == 2
+    assert mock_api.requests == []
+    error = json.loads(result.stderr[result.stderr.index("{") :])
+    assert error["code"] == "blocked_attachment"
+    assert error["details"]["files"] == ["reduce.py"]
+
+    # The dry run refuses the same folder, and --no-attachments settles it.
+    assert run(runner, "submit", str(folder), "--dry-run").exit_code == 2
+    assert (
+        run(runner, "submit", str(folder), "--dry-run", "--no-attachments").exit_code
+        == 0
+    )
 
 
 # -- submit -----------------------------------------------------------------
@@ -291,6 +358,7 @@ def test_submit_json_is_one_document(runner: CliRunner, mock_api: MockAPI) -> No
         "outcome",
         "submitted",
         "uploads",
+        "attachments",
         "ignored",
         "next_commands",
         "observation",
@@ -714,6 +782,64 @@ def test_drafts_files_rm_with_yes(runner: CliRunner, mock_api: MockAPI) -> None:
     mock_api.json("DELETE", f"{GET}/files/vizier", observation())
     result = run(runner, "drafts", "files", "rm", OBS_ID, "vizier", "--yes")
     assert result.exit_code == 0
+
+
+def test_drafts_files_add_attachment(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    plot = tmp_path / "plot.png"
+    plot.write_bytes(b"png")
+    target = upload_target("attachment", "plot.png")
+    target["attachment_id"] = "att-1"
+    mock_api.json("POST", f"{GET}/attachments/upload/init", target)
+    mock_api.add("POST", BUCKET, httpx.Response(204))
+    mock_api.json(
+        "POST",
+        f"{GET}/attachments/upload/finalize",
+        observation(
+            attachments=[
+                {
+                    "attachment_id": "att-1",
+                    "slot": "attachment",
+                    "filename": "plot.png",
+                    "size_bytes": 3,
+                    "uploaded_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+        ),
+    )
+    result = run(runner, "drafts", "files", "add", OBS_ID, "attachment", str(plot))
+    assert result.exit_code == 0, result.output
+    assert "Attachments:" in result.stdout
+    assert "att-1  plot.png (3 bytes)" in result.stdout
+
+
+def test_drafts_files_rm_attachment_needs_its_id(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    result = run(runner, "drafts", "files", "rm", OBS_ID, "attachment", "--yes")
+    assert result.exit_code == 2
+    assert mock_api.requests == []
+    result = run(runner, "drafts", "files", "rm", OBS_ID, "vizier", "x", "--yes")
+    assert result.exit_code == 2
+    assert mock_api.requests == []
+
+
+def test_drafts_files_rm_attachment(runner: CliRunner, mock_api: MockAPI) -> None:
+    mock_api.json("DELETE", f"{GET}/attachments/att-1", observation())
+    result = run(
+        runner,
+        "--json",
+        "drafts",
+        "files",
+        "rm",
+        OBS_ID,
+        "attachment",
+        "att-1",
+        "--yes",
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["attachments"] == []
 
 
 def test_an_unknown_slot_is_rejected_before_any_call(
