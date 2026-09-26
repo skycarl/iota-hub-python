@@ -25,6 +25,7 @@ from .models import (
     PublicDismissRequest,
     PublicDraftCreated,
     PublicDraftCreateRequest,
+    PublicDraftUpdateRequest,
     PublicEvent,
     PublicEventFileList,
     PublicEventList,
@@ -229,6 +230,40 @@ class Client(WorkflowMixin):
             f"/validation/findings/{_seg(fingerprint)}/dismiss",
         )
         return PublicChecks.model_validate(response.json())
+
+    def update_draft(
+        self,
+        observation_id: str,
+        *,
+        version: int,
+        owc_link_choice: str | None = None,
+        owc_event: str | None = None,
+        confirm_unnumbered_asteroid_id: bool | None = None,
+        comments: str | None = None,
+        bypass_required_files: bool | None = None,
+    ) -> PublicObservation:
+        """``public_update_draft`` -- set the client-owned fields of a draft.
+
+        Only the arguments given (not ``None``) are sent; the rest are left as
+        they are on the server.
+        """
+        fields = {
+            "owc_link_choice": owc_link_choice,
+            "owc_event": owc_event,
+            "confirm_unnumbered_asteroid_id": confirm_unnumbered_asteroid_id,
+            "comments": comments,
+            "bypass_required_files": bypass_required_files,
+        }
+        request = PublicDraftUpdateRequest(
+            version=version,
+            **{name: value for name, value in fields.items() if value is not None},
+        )
+        response = self.http.request(
+            "PATCH",
+            f"/observations/{_seg(observation_id)}",
+            json=request.model_dump(mode="json", exclude_unset=True),
+        )
+        return PublicObservation.model_validate(response.json())
 
     def submit_draft(
         self,

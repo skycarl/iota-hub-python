@@ -361,6 +361,8 @@ def test_submit_json_is_one_document(runner: CliRunner, mock_api: MockAPI) -> No
         "attachments",
         "ignored",
         "next_commands",
+        "skipped_checks",
+        "owc_commands",
         "observation",
     }
     assert payload["observation_id"] == OBS_ID
@@ -1312,3 +1314,210 @@ def test_a_usage_error_without_json_is_clicks_own_message(
         cli_module.main()
     assert exit_info.value.code == 2
     assert "Missing argument 'ID'." in capsys.readouterr().err
+
+
+# -- skipped checks and the OWC link (warn, never block) ----------------------
+
+OWC_A = "2018-9721-12345-678901-T0001"
+OWC_B = "2018-9721-12345-678901-T0002"
+SKIPPED_11 = {
+    "check_number": 11,
+    "code": "observation_predicted_time",
+    "name": "Near predicted time",
+    "status": "skipped",
+    "reason": "No OWC match: 2 candidates - pick one.",
+}
+
+
+def ambiguous_owc(choice=None):
+    return {
+        "choice": choice,
+        "owc_event_id": None,
+        "owc_event_url": None,
+        "resolution": {
+            "status": "ambiguous",
+            "reason": "2 OWC events match this asteroid and date.",
+            "candidates": [
+                {
+                    "owc_event_id": OWC_A,
+                    "owc_event_url": f"https://cloud.occultwatcher.net/event/{OWC_A}",
+                    "asteroid": "(9721) Doty",
+                    "star": "TYC 1",
+                    "star_mag": 11.2,
+                },
+                {
+                    "owc_event_id": OWC_B,
+                    "owc_event_url": f"https://cloud.occultwatcher.net/event/{OWC_B}",
+                },
+            ],
+        },
+    }
+
+
+def test_submit_warns_about_skipped_checks_and_the_owc_link_but_does_not_block(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    """A ready draft with check 11 skipped is still submitted -- loudly."""
+    script_submit(
+        mock_api,
+        observation(
+            readiness=ready(),
+            checks=checks(skipped=[SKIPPED_11]),
+            owc=ambiguous_owc(),
+        ),
+    )
+    mock_api.json("POST", SUBMIT, observation(submission_status="submitted"))
+
+    result = run(runner, "submit", str(OBSERVATION_DIR))
+
+    assert result.exit_code == 0, result.output
+    assert "WARNING: 1 check did not run" in result.stderr
+    assert "[11] Near predicted time: No OWC match: 2 candidates" in result.stderr
+    assert "WARNING: no OWC link (ambiguous)" in result.stderr
+    assert f"iota-hub drafts owc {OBS_ID} --pick {OWC_A}" in result.stderr
+    assert f"iota-hub drafts owc {OBS_ID} --none" in result.stderr
+    assert "WARNING" not in result.stdout
+
+
+def test_submit_json_carries_the_skipped_checks_and_owc_commands(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    script_submit(
+        mock_api,
+        observation(
+            readiness=ready(),
+            checks=checks(skipped=[SKIPPED_11]),
+            owc=ambiguous_owc(),
+        ),
+    )
+
+    result = run(runner, "--json", "submit", "--draft", str(OBSERVATION_DIR))
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["outcome"] == "ready"
+    assert payload["skipped_checks"] == [SKIPPED_11]
+    assert payload["owc_commands"] == [
+        f"iota-hub drafts owc {OBS_ID} --pick {OWC_A}",
+        f"iota-hub drafts owc {OBS_ID} --pick {OWC_B}",
+        f"iota-hub drafts owc {OBS_ID} --link <owc-url-or-id>",
+        f"iota-hub drafts owc {OBS_ID} --none",
+    ]
+    assert "WARNING: 1 check did not run" in result.stderr
+
+
+def test_a_settled_owc_link_is_not_warned_about(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    script_submit(
+        mock_api,
+        observation(readiness=ready(), checks=checks(), owc=ambiguous_owc("picked")),
+    )
+
+    result = run(runner, "submit", "--draft", str(OBSERVATION_DIR))
+
+    assert result.exit_code == 0, result.output
+    assert "WARNING" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected"),
+    [
+        (["--pick", OWC_A], {"owc_link_choice": "picked", "owc_event": OWC_A}),
+        (
+            ["--link", f"https://cloud.occultwatcher.net/event/{OWC_B}"],
+            {
+                "owc_link_choice": "pasted",
+                "owc_event": f"https://cloud.occultwatcher.net/event/{OWC_B}",
+            },
+        ),
+        (["--none"], {"owc_link_choice": "proceed_unlinked"}),
+    ],
+)
+def test_drafts_owc_patches_the_choice_with_the_version_it_read(
+    runner: CliRunner, mock_api: MockAPI, flags, expected
+) -> None:
+    mock_api.json("GET", GET, observation(owc=ambiguous_owc()))
+    mock_api.json("PATCH", GET, observation(version=5, owc=ambiguous_owc("picked")))
+
+    result = run(runner, "--json", "drafts", "owc", OBS_ID, *flags)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(mock_api.last_request.content) == {"version": 4, **expected}
+    assert json.loads(result.stdout)["owc"]["choice"] == "picked"
+
+
+@pytest.mark.parametrize("flags", [[], ["--pick", OWC_A, "--none"]])
+def test_drafts_owc_needs_exactly_one_choice(
+    runner: CliRunner, mock_api: MockAPI, flags
+) -> None:
+    result = run(runner, "drafts", "owc", OBS_ID, *flags)
+
+    assert result.exit_code == 2
+    assert mock_api.requests == []
+
+
+def test_drafts_confirm_asteroid(runner: CliRunner, mock_api: MockAPI) -> None:
+    mock_api.json("GET", GET, observation())
+    mock_api.json("PATCH", GET, observation(version=5))
+
+    result = run(runner, "drafts", "confirm-asteroid", OBS_ID)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(mock_api.last_request.content) == {
+        "version": 4,
+        "confirm_unnumbered_asteroid_id": True,
+    }
+
+
+def test_drafts_comment(runner: CliRunner, mock_api: MockAPI) -> None:
+    mock_api.json("GET", GET, observation())
+    mock_api.json("PATCH", GET, observation(version=5))
+
+    result = run(runner, "drafts", "comment", OBS_ID, "Clouds after R.")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(mock_api.last_request.content) == {
+        "version": 4,
+        "comments": "Clouds after R.",
+    }
+
+
+def test_a_rejected_pasted_link_is_the_apis_code(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json("GET", GET, observation())
+    mock_api.json(
+        "PATCH",
+        GET,
+        {
+            "code": "owc_link_mismatch",
+            "message": "The OWC event you linked does not match your report.",
+            "hint": "Link the right event.",
+            "details": {"violations": [{"field": "asteroid_number"}]},
+        },
+        status=422,
+    )
+
+    result = run(runner, "--json", "drafts", "owc", OBS_ID, "--link", OWC_A)
+
+    assert result.exit_code == 1
+    error = json.loads(result.stderr[result.stderr.index("{") :])
+    assert error["code"] == "owc_link_mismatch"
+
+
+def test_show_renders_the_owc_state_and_the_skipped_checks(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "GET",
+        GET,
+        observation(checks=checks(skipped=[SKIPPED_11]), owc=ambiguous_owc()),
+    )
+
+    result = run(runner, "drafts", "show", OBS_ID)
+
+    assert result.exit_code == 0, result.output
+    assert "OWC:          unresolved (ambiguous)" in result.stdout
+    assert OWC_A in result.stdout
+    assert "Skipped (did not run):" in result.stdout

@@ -135,13 +135,36 @@ the report will not parse. Each finding carries `check_number`, `code`, `name`,
 Human output prints the literal next command for every action the API says is
 available (`iota-hub drafts files add <id> lightcurve <path>`,
 `iota-hub drafts dismiss <id> <fingerprint> --note "..."`,
-`iota-hub drafts check <id>`, `iota-hub drafts submit <id>`), so nothing has to
-be translated. Two actions have no public API verb and must be finished in the
-web app: confirming an unnumbered asteroid id, and resolving an event-files
-conflict. The tool says so rather than pretending otherwise.
+`iota-hub drafts confirm-asteroid <id>`, `iota-hub drafts check <id>`,
+`iota-hub drafts submit <id>`), so nothing has to be translated. One action
+has no public API verb and must be finished in the web app: resolving an
+event-files conflict. The tool says so rather than pretending otherwise.
+
+### Skipped checks and the OWC link
+
+A check that could not run is **skipped**, and a skipped check never blocks
+submit - so `submit` says so loudly. Once the checks are done it prints a
+`WARNING` block on stderr listing every skipped check with its reason
+(`checks.skipped[]` on the observation, `skipped_checks` in `submit --json`).
+
+The usual one is check 11, "Near predicted time", which compares against the
+Occult Watcher Cloud prediction. The Hub finds the OWC event itself after the
+report is uploaded (`owc.resolution` on the observation). When it cannot choose
+- several candidates, one that disagrees with the report, or none - the
+warning lists the candidates and the commands that settle it:
+
+    iota-hub drafts owc <id> --pick <owc_event_id>    # one of the candidates
+    iota-hub drafts owc <id> --link <url-or-id>       # any OWC event, checked
+    iota-hub drafts owc <id> --none                   # deliberately no link
+
+This is optional: `submit` goes ahead either way. Use `submit --draft` to settle
+it first. A pasted link that disagrees with the report is refused
+(`owc_link_mismatch`).
 
 Library: `SubmitResult` carries `.outcome`, `.observation`, `.uploads`,
-`.attachments` and `.ignored`; `iota_hub.workflow.next_actions_commands(obs)` returns the commands.
+`.attachments`, `.ignored`, `.skipped_checks` and `.owc_commands`;
+`iota_hub.workflow.next_actions_commands(obs)` returns the commands and
+`check_warnings(obs)` the warning block.
 HTTP: `GET /observations/{id}`, the self-describing resource - read `readiness`,
 `checks` and `next_actions`. See /developers/guide.md.
 
@@ -155,6 +178,9 @@ HTTP: `GET /observations/{id}`, the self-describing resource - read `readiness`,
     iota-hub drafts files rm <id> attachment <attachment_id>  # remove one
     iota-hub drafts dismiss <id> <fingerprint> --note "why this is acceptable"
     iota-hub drafts dismiss <id> <fingerprint> --undo     # undo a dismissal
+    iota-hub drafts owc <id> --pick <owc_event_id>        # settle the OWC link
+    iota-hub drafts confirm-asteroid <id>                 # unnumbered id is deliberate
+    iota-hub drafts comment <id> "text"                   # comment for the reviewer
     iota-hub drafts check <id>                            # start a check run
     iota-hub drafts submit <id>                           # submit when clean
     iota-hub drafts delete <id> --yes                     # throw a draft away
@@ -172,11 +198,14 @@ HTTP: `GET /observations/{id}`, the self-describing resource - read `readiness`,
 
 Library: `client.replace_file(id, slot, path)`, `delete_file`,
 `dismiss_finding(id, fingerprint, note)`, `undo_dismissal`, `run_checks`,
-`wait_for_checks`, `submit_draft(id, version=...)`, `delete_draft`.
+`wait_for_checks`, `update_draft(id, version=..., owc_link_choice=...,
+owc_event=..., confirm_unnumbered_asteroid_id=..., comments=...)`,
+`submit_draft(id, version=...)`, `delete_draft`.
 HTTP: `POST /observations/{id}/files/{slot}/upload/init` and `.../finalize`,
 `DELETE /observations/{id}/files/{slot}`,
 `POST /observations/{id}/validation/findings/{fingerprint}/dismiss` (`DELETE`
 to undo), `POST /observations/{id}/validation/runs`,
+`PATCH /observations/{id}` (the OWC link and the other client-owned fields),
 `POST /observations/{id}/submit`, `DELETE /observations/{id}`. See
 /developers/guide.md.
 

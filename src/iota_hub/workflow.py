@@ -29,6 +29,8 @@ from .models import (
     PublicFileLink,
     PublicFinding,
     PublicObservation,
+    PublicOWCCandidate,
+    PublicSkippedCheck,
     PublicUploadTarget,
 )
 
@@ -67,6 +69,10 @@ class SubmitResult:
     uploads: dict[str, str] = field(default_factory=dict)
     attachments: list[str] = field(default_factory=list)
     ignored: list[Path] = field(default_factory=list)
+    #: Taken from the draft as the checks left it, before any submit: the
+    #: submitted observation no longer carries a draft's check run.
+    skipped_checks: list[PublicSkippedCheck] = field(default_factory=list)
+    owc_commands: list[str] = field(default_factory=list)
 
     @property
     def observation_id(self) -> str:
@@ -144,8 +150,18 @@ class WorkflowMixin:
             observation_id, idempotency_key=_idempotency_key()
         )
 
+        checked: PublicObservation | None = None
+
         def result(observation: PublicObservation, submitted: bool, outcome: str):
-            return SubmitResult(observation, submitted, outcome, uploads, attached)
+            return SubmitResult(
+                observation,
+                submitted,
+                outcome,
+                uploads,
+                attached,
+                skipped_checks=skipped_checks(checked) if checked else [],
+                owc_commands=owc_commands(checked) if checked else [],
+            )
 
         if not wait:
             return result(observation, False, "draft")
@@ -153,6 +169,11 @@ class WorkflowMixin:
         observation = self.wait_for_checks(
             observation_id, timeout=timeout, on_progress=on_progress
         )
+        checked = observation
+        # Warn, never block (conventions section 8a): a skipped check and an
+        # unresolved OWC link are said out loud, and the submit goes ahead.
+        for line in check_warnings(observation):
+            _say(on_progress, line)
         # ``auto_submit_when_clean`` means the validation worker may have
         # submitted it while we polled; that is a success, not an oversight.
         if observation.submission_status == "submitted":
@@ -475,15 +496,108 @@ def _commands_for(
         )
         return commands
     if verb == "confirm_asteroid_id":
-        return [
-            "Confirm the asteroid id in the web app: the public API has no verb for it."
-        ]
+        return [f"iota-hub drafts confirm-asteroid {observation_id}"]
     if verb == "resolve_event_files_conflict":
         return [
             "Resolve the staged event-files conflict in the web app: the "
             "public API has no verb for it."
         ]
     return [f"{verb}: see iota-hub guide"]
+
+
+# --------------------------------------------------------------------------
+# Skipped checks and the OWC link: warn, never block
+# --------------------------------------------------------------------------
+
+#: The OWC choices under which a draft is linked, or deliberately not.
+SETTLED_OWC_CHOICES = frozenset({"matched", "picked", "pasted", "proceed_unlinked"})
+
+
+def skipped_checks(observation: PublicObservation) -> list[PublicSkippedCheck]:
+    """The checks of the latest run that did not run (conventions section 8a).
+
+    A skipped check never blocks submit, so a ``ready`` draft can still have
+    some; a client has to say so, loudly, or nobody learns the check did not
+    happen.
+    """
+    if observation.checks is None:
+        return []
+    return list(observation.checks.skipped)
+
+
+def owc_unresolved(observation: PublicObservation) -> bool:
+    """True when a draft has no OWC link and no deliberate "no link".
+
+    Only a draft can be resolved from here, and only once the server has had
+    its own go (``owc.resolution`` present): before that there is nothing to
+    choose from.
+    """
+    owc = observation.owc
+    return (
+        observation.submission_status == "draft"
+        and owc is not None
+        and owc.resolution is not None
+        and owc.choice not in SETTLED_OWC_CHOICES
+    )
+
+
+def owc_commands(observation: PublicObservation) -> list[str]:
+    """The literal commands that settle an unresolved OWC link, or ``[]``."""
+    if not owc_unresolved(observation):
+        return []
+    observation_id = observation.observation_id
+    resolution = observation.owc.resolution  # type: ignore[union-attr]
+    commands = [
+        f"iota-hub drafts owc {observation_id} --pick {candidate.owc_event_id}"
+        for candidate in resolution.candidates  # type: ignore[union-attr]
+    ]
+    commands.append(f"iota-hub drafts owc {observation_id} --link <owc-url-or-id>")
+    commands.append(f"iota-hub drafts owc {observation_id} --none")
+    return commands
+
+
+def check_warnings(observation: PublicObservation) -> list[str]:
+    """The loud block to print once a check run is over, or ``[]``.
+
+    Every skipped check with its reason, then an unresolved OWC link with its
+    candidates and the commands that settle it. Plain ASCII apart from what
+    the server's own reasons carry.
+    """
+    lines: list[str] = []
+    skipped = skipped_checks(observation)
+    if skipped:
+        noun = "check" if len(skipped) == 1 else "checks"
+        lines.append(
+            f"WARNING: {len(skipped)} {noun} did not run on "
+            f"{observation.observation_id}:"
+        )
+        lines.extend(
+            f"  [{check.check_number}] {check.name}: {check.reason}"
+            for check in skipped
+        )
+    if owc_unresolved(observation):
+        resolution = observation.owc.resolution  # type: ignore[union-attr]
+        reason = f": {resolution.reason}" if resolution.reason else ""  # type: ignore[union-attr]
+        lines.append(f"WARNING: no OWC link ({resolution.status}){reason}")  # type: ignore[union-attr]
+        candidates = resolution.candidates  # type: ignore[union-attr]
+        if candidates:
+            lines.append("  Candidates:")
+            lines.extend(f"    {candidate_line(c)}" for c in candidates)
+        lines.append("  To settle it (optional -- it never blocks submit):")
+        lines.extend(f"    {command}" for command in owc_commands(observation))
+    return lines
+
+
+def candidate_line(candidate: PublicOWCCandidate) -> str:
+    """One OWC candidate on one line: id, asteroid, star, magnitude, time."""
+    parts = [
+        candidate.owc_event_id,
+        candidate.asteroid or "-",
+        candidate.star or "-",
+        f"mag {candidate.star_mag:.2f}" if candidate.star_mag is not None else "",
+        candidate.closest_approach_utc or "",
+    ]
+    return "  ".join(part for part in parts if part)
 
 
 def _open_findings(observation: PublicObservation) -> list[PublicFinding]:

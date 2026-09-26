@@ -40,7 +40,13 @@ from .config import ENV_BASE_URL, Settings
 from .errors import AuthError, ConflictError, IotaHubError, RateLimitError
 from .files import map_folder
 from .models import PublicChecks, PublicEvent, PublicObservation
-from .workflow import POLL_TIMEOUT, SubmitResult, next_actions_commands
+from .workflow import (
+    POLL_TIMEOUT,
+    SubmitResult,
+    candidate_line,
+    check_warnings,
+    next_actions_commands,
+)
 
 #: Printed by ``guide`` when the bundled guide is not in the install (D18).
 GUIDE_FALLBACK = (
@@ -303,6 +309,37 @@ def _render_checks(checks: PublicChecks) -> None:
         f"{checks.open_findings} open, {checks.dismissed_findings} dismissed",
     )
     _render_findings(checks)
+    if checks.skipped:
+        _out("Skipped (did not run):")
+        for check in checks.skipped:
+            _out(
+                f"  [{check.check_number}] {check.name} ({check.code}): {check.reason}"
+            )
+
+
+def _render_owc(observation: PublicObservation) -> None:
+    owc = observation.owc
+    if owc is None:
+        return
+    if owc.owc_event_id:
+        _field("OWC", f"{owc.choice}: {owc.owc_event_url or owc.owc_event_id}")
+    elif owc.choice == "proceed_unlinked":
+        _field("OWC", "no link (proceed_unlinked)")
+    elif owc.resolution is not None:
+        reason = f" - {owc.resolution.reason}" if owc.resolution.reason else ""
+        _field("OWC", f"unresolved ({owc.resolution.status}){reason}")
+        for candidate in owc.resolution.candidates:
+            _out(f"  {candidate_line(candidate)}")
+
+
+def _warn_checks(observation: PublicObservation) -> None:
+    """The loud block after a wait (``check_warnings``), on stderr in every mode.
+
+    A diagnostic like the progress lines, so a ``--json`` stdout stays one
+    document -- which carries the same facts. Warns, never blocks.
+    """
+    for line in check_warnings(observation):
+        _err(line)
 
 
 def _render_next(observation: PublicObservation) -> None:
@@ -334,6 +371,7 @@ def _render_observation(observation: PublicObservation) -> None:
     _field("Observed", _or_dash(metadata.observed_at_utc))
     _field("Updated", observation.updated_at)
     _render_readiness(observation)
+    _render_owc(observation)
 
     present = {slot: file for slot, file in observation.files.items() if file}
     if present:
@@ -670,6 +708,10 @@ def _emit_submit(result: SubmitResult) -> None:
                 "attachments": result.attachments,
                 "ignored": ignored,
                 "next_commands": next_actions_commands(observation),
+                "skipped_checks": [
+                    check.model_dump(mode="json") for check in result.skipped_checks
+                ],
+                "owc_commands": result.owc_commands,
                 "observation": observation.model_dump(mode="json"),
             }
         )
@@ -906,6 +948,7 @@ def drafts_check(
             observation = client.wait_for_checks(
                 observation_id, timeout=timeout, on_progress=_progress
             )
+            _warn_checks(observation)
     _emit_observation(observation)
 
 
@@ -972,6 +1015,103 @@ def _not_ready(observation: PublicObservation) -> IotaHubError:
             "readiness": readiness.model_dump(mode="json") if readiness else None,
         },
     )
+
+
+@drafts_app.command("owc")
+@handle_errors
+def drafts_owc(
+    observation_id: IdArgument,
+    pick: Annotated[
+        str | None,
+        typer.Option(
+            "--pick",
+            metavar="OWC_EVENT_ID",
+            help="Link one of the candidates `drafts show` lists.",
+        ),
+    ] = None,
+    link: Annotated[
+        str | None,
+        typer.Option(
+            "--link",
+            metavar="URL_OR_ID",
+            help="Link any OWC event; checked against OWC and the report.",
+        ),
+    ] = None,
+    none: Annotated[
+        bool, typer.Option("--none", help="Submit without an OWC link, deliberately.")
+    ] = False,
+) -> None:
+    """Settle a draft's OWC link when the Hub could not choose one itself.
+
+    The Hub matches the OWC event on its own after the report is uploaded;
+    this is for the cases it leaves open (several candidates, a mismatch, not
+    found). Exactly one of --pick, --link, --none.
+
+    Example: iota-hub drafts owc obs_01JABCDEF --pick 1917-2448-97311-649282-U033649
+    """
+    chosen = [flag for flag, value in (("--pick", pick), ("--link", link)) if value]
+    if none:
+        chosen.append("--none")
+    if len(chosen) != 1:
+        raise typer.BadParameter(
+            "give exactly one of --pick, --link or --none.", param_hint="--pick"
+        )
+    if pick:
+        choice, event = "picked", pick
+    elif link:
+        choice, event = "pasted", link
+    else:
+        choice, event = "proceed_unlinked", None
+    settings = _settings()
+    with _make_client(settings) as client:
+        current = client.get_observation(observation_id)
+        observation = client.update_draft(
+            observation_id,
+            version=current.version,
+            owc_link_choice=choice,
+            owc_event=event,
+        )
+    _emit_observation(observation)
+
+
+@drafts_app.command("confirm-asteroid")
+@handle_errors
+def drafts_confirm_asteroid(observation_id: IdArgument) -> None:
+    """Confirm that a draft's non-numeric asteroid id is deliberate.
+
+    A comet or an unnumbered designation is fine; the Hub only asks so that a
+    numbered asteroid entered without its number is caught.
+
+    Example: iota-hub drafts confirm-asteroid obs_01JABCDEF
+    """
+    settings = _settings()
+    with _make_client(settings) as client:
+        current = client.get_observation(observation_id)
+        observation = client.update_draft(
+            observation_id,
+            version=current.version,
+            confirm_unnumbered_asteroid_id=True,
+        )
+    _emit_observation(observation)
+
+
+@drafts_app.command("comment")
+@handle_errors
+def drafts_comment(
+    observation_id: IdArgument,
+    text: Annotated[str, typer.Argument(metavar="TEXT")],
+) -> None:
+    """Set the free-text comment a reviewer reads on a draft.
+
+    Example: iota-hub drafts comment obs_01JABCDEF "Clouds after R."
+    """
+    settings = _settings()
+    with _make_client(settings) as client:
+        current = client.get_observation(observation_id)
+        observation = client.update_draft(
+            observation_id, version=current.version, comments=text
+        )
+    _emit_observation(observation)
 
 
 @drafts_app.command("delete")

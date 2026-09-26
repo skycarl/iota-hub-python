@@ -57,10 +57,15 @@ replacement):
 - `next_actions_commands(observation)` — the API's verbs as the literal
   commands that answer them (§ 13). It lives in the *library*, not the CLI, so
   an embedder prints the same guidance the CLI does.
+- `skipped_checks(observation)`, `owc_unresolved(observation)`,
+  `owc_commands(observation)` and `check_warnings(observation)` — § 8a, in the
+  library for the same reason.
 
 `submit_folder` / `submit_files` return one result object carrying the last
 observation it read, `submitted`, the uploaded `{slot: filename}`, the uploaded
-attachment filenames, the files the mapping ignored, and an **`outcome`** — the vocabulary a script branches on:
+attachment filenames, the files the mapping ignored, the **skipped checks** and
+**OWC commands** of § 8a (taken from the draft as the checks left it — a
+submitted observation no longer carries the draft's run), and an **`outcome`** — the vocabulary a script branches on:
 
 | `outcome` | Meaning |
 |---|---|
@@ -297,6 +302,36 @@ to what is left of the budget, and one last poll follows it.
 A timeout raises `timeout`, carrying `observation_id`, `timeout` and the last
 `checks_status` in `details`; it never submits and never deletes. `next_actions`
 is what to do next: act on the verbs, ignore any verb you do not recognize.
+
+## 8a. Skipped checks and the OWC link: warn, never block
+
+A check that could not run is listed in `checks.skipped[]` (`check_number`,
+`code`, `name`, `status`, `reason`). A skipped check **never** blocks submit —
+readiness ignores it — so a `ready` draft can still have some, and a client that
+only reads `findings` would never learn the check did not happen. *Decision:*
+once a wait ends, the workflow reports every skipped check through
+`on_progress` as a `WARNING` block (`check_warnings`), and `submit` goes ahead
+exactly as it would have. The block goes wherever progress goes — stderr, for
+the CLI, in every mode — and the same facts are data in `--json` (§ 13).
+
+The usual skipped check is observer check 11, which needs an Occult Watcher
+Cloud link. The server matches the OWC event itself after the report lands
+(`owc.resolution`); when it could not choose (`ambiguous`, `mismatch`,
+`not_found`, `error`) and the draft has no choice yet, the link is
+**unresolved** (`owc_unresolved`: a draft, a resolution present, and `owc.choice`
+not one of `matched`, `picked`, `pasted`, `proceed_unlinked`). The warning then
+lists the candidates and the literal commands that settle it
+(`owc_commands`): one `iota-hub drafts owc <id> --pick <owc_event_id>` per
+candidate, then `--link <owc-url-or-id>` and `--none`. Settling it is
+optional; the exit code does not change (§ 12).
+
+The commands map onto `PATCH /observations/{id}` (`update_draft` in the
+transport): `--pick` is `owc_link_choice: "picked"`, `--link` is `"pasted"`,
+`--none` is `"proceed_unlinked"`. `drafts confirm-asteroid` sets
+`confirm_unnumbered_asteroid_id: true` and `drafts comment` sets `comments`.
+Each reads the observation first for its `version` and sends only the field it
+sets; a `409 stale_version` is reported, not retried — the draft changed, so
+re-read it and decide again.
 
 ## 9. Idempotency
 
@@ -538,7 +573,8 @@ instead of exiting `1`, which is what the API's own hint says to do. With
   | `poll` | `iota-hub drafts show <id>` |
   | `submit` | `iota-hub drafts submit <id>` |
   | `dismiss_or_fix` | one `iota-hub drafts dismiss <id> <fingerprint> --note "…"` per **open** finding, then the `files add` alternative — fixing the file is the other way out |
-  | `confirm_asteroid_id`, `resolve_event_files_conflict` | a sentence saying to finish it in the web app: *decision*, because the public API has no verb for either (API spec § 5) |
+  | `confirm_asteroid_id` | `iota-hub drafts confirm-asteroid <id>` (`PATCH` with `confirm_unnumbered_asteroid_id`, § 8a) |
+  | `resolve_event_files_conflict` | a sentence saying to finish it in the web app: *decision*, because the public API has no verb for it (API spec § 5) |
   | anything else | `<verb>: see iota-hub guide` — a verb a client does not know is never silently dropped |
 - Errors print the API's `code` and `hint`, as
   `error: <code>: <message>` then `hint: <hint>`, both on stderr, plus
@@ -556,9 +592,9 @@ shapes are part of semver (a major bump to change one):
 
 | Command | Document |
 |---|---|
-| `submit` | `{observation_id, outcome, submitted, uploads: {slot: filename}, attachments: [filename], ignored: [filename], next_commands: [...], observation: {...}}` — the attachment ids are on `observation.attachments[]` |
+| `submit` | `{observation_id, outcome, submitted, uploads: {slot: filename}, attachments: [filename], ignored: [filename], next_commands: [...], skipped_checks: [{check_number, code, name, status, reason}], owc_commands: [...], observation: {...}}` — the attachment ids are on `observation.attachments[]`; `skipped_checks` and `owc_commands` are § 8a's, from the draft as the checks left it |
 | `submit --dry-run` | `{target, directory, uploads: [{slot, filename, path, size}], attachments: [{filename, path, size}], ignored: [filename]}` — and no request is sent, so it needs no key; the attachment rules are checked, so a folder `submit` would refuse fails here too |
-| `drafts show`, `drafts check`, `drafts files add`, `drafts files rm`, `drafts submit`, `observations show` | the `PublicObservation` |
+| `drafts show`, `drafts check`, `drafts files add`, `drafts files rm`, `drafts owc`, `drafts confirm-asteroid`, `drafts comment`, `drafts submit`, `observations show` | the `PublicObservation` |
 | `drafts dismiss` | the `PublicChecks` the dismissal returned |
 | `events show` | the `PublicEvent` |
 | `drafts list` | `{items: [...]}` — it follows the cursor itself (the open-draft cap is 100), so there is no `next_cursor` to report |

@@ -893,9 +893,11 @@ def test_dismiss_or_fix_lists_one_command_per_open_finding():
 
 
 def test_web_only_verbs_say_so_and_unknown_verbs_point_at_the_guide():
-    for verb in ("confirm_asteroid_id", "resolve_event_files_conflict"):
-        (command,) = next_actions_commands(with_actions(verb))
-        assert "web app" in command
+    (command,) = next_actions_commands(with_actions("resolve_event_files_conflict"))
+    assert "web app" in command
+    assert next_actions_commands(with_actions("confirm_asteroid_id")) == [
+        f"iota-hub drafts confirm-asteroid {OBS_ID}"
+    ]
 
     assert next_actions_commands(with_actions("teleport")) == [
         "teleport: see iota-hub guide"

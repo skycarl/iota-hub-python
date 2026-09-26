@@ -84,6 +84,25 @@ class PublicSubmitRequest(_Public):
     version: int
 
 
+#: What ``PATCH /observations/{id}`` may set the OWC link to. Closed: the
+#: server refuses anything else (``matched`` is the server's own).
+OWCChoice = Literal["picked", "pasted", "proceed_unlinked"]
+
+
+class PublicDraftUpdateRequest(_Public):
+    """Body of ``PATCH /observations/{id}`` -- the client-owned fields.
+
+    Sent with ``exclude_unset``: a field not given is left unchanged.
+    """
+
+    version: int
+    owc_link_choice: OWCChoice | None = None
+    owc_event: str | None = None
+    confirm_unnumbered_asteroid_id: bool | None = None
+    comments: str | None = None
+    bypass_required_files: bool | None = None
+
+
 # --------------------------------------------------------------------------
 # Shared pieces
 # --------------------------------------------------------------------------
@@ -171,6 +190,16 @@ class PublicFinding(_Public):
     dismissal: PublicDismissal | None = None
 
 
+class PublicSkippedCheck(_Public):
+    """A check that did not run on this draft, and why. Never blocks submit."""
+
+    check_number: int
+    code: str
+    name: str
+    status: str
+    reason: str
+
+
 class PublicChecks(_Public):
     """The latest observer-check run on a draft."""
 
@@ -180,6 +209,56 @@ class PublicChecks(_Public):
     open_findings: int = 0
     dismissed_findings: int = 0
     findings: list[PublicFinding] = Field(default_factory=list)
+    skipped: list[PublicSkippedCheck] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# The OWC link
+# --------------------------------------------------------------------------
+
+
+class PublicOWCCandidate(_Public):
+    """One Occult Watcher Cloud event the report could belong to."""
+
+    owc_event_id: str
+    owc_event_url: str
+    asteroid: str | None = None
+    star: str | None = None
+    star_mag: float | None = None
+    closest_approach_utc: str | None = None
+    mag_drop: float | None = None
+
+
+class PublicOWCMismatch(_Public):
+    """One clear disagreement between the report and an OWC event."""
+
+    field: str
+    report_value: str
+    owc_value: str
+
+
+class PublicOWCResolution(_Public):
+    """What the server's own OWC match found for the report.
+
+    ``status``: ``matched``, ``not_found``, ``ambiguous``, ``mismatch``,
+    ``error`` or ``skipped`` -- an open set, like every status here.
+    """
+
+    status: str
+    reason: str | None = None
+    owc_event_id: str | None = None
+    candidates: list[PublicOWCCandidate] = Field(default_factory=list)
+    mismatches: list[PublicOWCMismatch] = Field(default_factory=list)
+    resolved_at: str | None = None
+
+
+class PublicOWC(_Public):
+    """The observation's link to an OWC event, and on a draft the server's match."""
+
+    choice: str | None = None
+    owc_event_id: str | None = None
+    owc_event_url: str | None = None
+    resolution: PublicOWCResolution | None = None
 
 
 # --------------------------------------------------------------------------
@@ -242,6 +321,7 @@ class PublicObservation(_Public):
     checks: PublicChecks | None = None
     next_actions: list[str] = Field(default_factory=list)
     report_parse: PublicReportParse | None = None
+    owc: PublicOWC | None = None
 
 
 class PublicObservationList(_Public):

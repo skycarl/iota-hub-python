@@ -47,7 +47,16 @@ finding has:
 - `severity`, `evidence`, `doc_url` for context.
 
 `readiness.missing_required` lists anything still missing (a file slot, or an
-identity field parsed from the report). `next_commands` (in `submit --json`) and the
+identity field parsed from the report).
+
+**Always report skipped checks.** `skipped_checks` in the `submit --json`
+document (and `checks.skipped[]` on the observation) lists every check that did
+not run, with its reason. They never block submit, so a `submitted` or `ready`
+outcome can still have them — tell the observer which checks did not run and
+why. When `owc_commands` is not empty, the Hub could not choose the Occult Watcher
+Cloud event itself: show the observer the candidates (`observation.owc.resolution.candidates`)
+and let them choose — never pick one yourself. Then run the command they chose
+(`iota-hub drafts owc <id> --pick <owc_event_id>`, `--link <url>`, or `--none`). `next_commands` (in `submit --json`) and the
 "Next:" lines of human output are the literal next commands for each action the
 API says is available; run them as printed rather than paraphrasing them.
 
@@ -61,6 +70,9 @@ iota-hub drafts files add <id> attachment <path>   # add an attachment
 iota-hub drafts files rm <id> attachment <attachment_id>  # remove one (ids in drafts show)
 iota-hub drafts dismiss <id> <fingerprint> --note "why this is acceptable"
 iota-hub drafts dismiss <id> <fingerprint> --undo  # undo a dismissal
+iota-hub drafts owc <id> --pick <owc_event_id>     # settle the OWC link (or --link URL, --none)
+iota-hub drafts confirm-asteroid <id>              # a non-numeric asteroid id is deliberate
+iota-hub drafts comment <id> "text"                # the comment a reviewer reads
 iota-hub drafts check <id>                         # start a check run
 iota-hub drafts submit <id>                        # submit when clean
 ```
@@ -96,6 +108,9 @@ JSON too: `usage_error`, exit code `2`.
 - **Never dismiss a finding without a reason the observer gave you.** The note
   is a permanent, attributed record; do not invent one.
 - **Never delete a draft** (`drafts delete`) without asking the observer first.
+- **Never choose an OWC event or confirm an asteroid id for the observer.**
+  `drafts owc` and `drafts confirm-asteroid` record the observer's decision;
+  ask them.
 - Use `iota-hub submit --draft` when the observer wants to review the
   observation in the web app before it is submitted.
 - If a `Target: <base URL>` line appears on stderr, the command is **not**

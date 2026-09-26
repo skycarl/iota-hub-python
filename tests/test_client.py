@@ -419,7 +419,7 @@ def test_every_operation_id_has_a_method():
         for path in document["paths"].values()
         for operation in path.values()
     ]
-    assert len(operations) == 19
+    assert len(operations) == 20
     for operation_id in operations:
         assert operation_id.startswith("public_")
         name = operation_id[len("public_") :]
@@ -438,3 +438,57 @@ def _event(event_id: str) -> dict:
         "created_at": "2026-01-01T00:00:00Z",
         "updated_at": "2026-01-01T00:00:00Z",
     }
+
+
+def test_update_draft_sends_only_the_fields_given(client, mock_api):
+    """``PATCH`` semantics: a field not given is left alone on the server."""
+    path = "/public/v1/observations/obs_1"
+    mock_api.json("PATCH", path, OBSERVATION)
+
+    client.update_draft(
+        "obs_1", version=7, owc_link_choice="picked", owc_event="2018-9721-1-2-T1"
+    )
+
+    assert mock_api.last_request.method == "PATCH"
+    assert json.loads(mock_api.last_request.content) == {
+        "version": 7,
+        "owc_link_choice": "picked",
+        "owc_event": "2018-9721-1-2-T1",
+    }
+
+
+def test_the_owc_and_skipped_fields_parse(client, mock_api):
+    path = "/public/v1/observations/obs_1"
+    mock_api.json(
+        "GET",
+        path,
+        {
+            **OBSERVATION,
+            "checks": {
+                "run_id": "r1",
+                "status": "complete",
+                "skipped": [
+                    {
+                        "check_number": 11,
+                        "code": "observation_predicted_time",
+                        "name": "Near predicted time",
+                        "status": "skipped",
+                        "reason": "No OWC match.",
+                        "a_future_field": 1,
+                    }
+                ],
+            },
+            "owc": {
+                "choice": "matched",
+                "owc_event_id": "2018-9721-1-2-T1",
+                "owc_event_url": "https://cloud.occultwatcher.net/event/2018-9721-1-2-T1",
+                "resolution": {"status": "matched", "candidates": []},
+            },
+        },
+    )
+
+    observation = client.get_observation("obs_1")
+
+    assert observation.checks.skipped[0].check_number == 11
+    assert observation.owc.choice == "matched"
+    assert observation.owc.resolution.status == "matched"

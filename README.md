@@ -53,6 +53,16 @@ printed with the exact commands that resolve them, and the exit code is `4`.
 Nothing is ever guessed and nothing is ever thrown away — a draft it could not
 submit is recoverable in the web app.
 
+**Skipped checks are said out loud.** A check that could not run never blocks
+submit, so after "Waiting for checks..." `submit` prints a `WARNING` block on
+stderr naming every skipped check and why. The usual one is check 11 (near the
+predicted time), which needs an Occult Watcher Cloud link: the Hub matches the
+OWC event itself after the upload, and when it cannot choose (several
+candidates, a mismatch, nothing found) the block lists the candidates and the
+commands to settle it — `iota-hub drafts owc <id> --pick <owc_event_id>`,
+`--link <url>` or `--none`. Use `submit --draft` if you want to settle it
+before submitting.
+
 Useful variations:
 
 - `iota-hub submit --draft` — do everything except the final submit, so you can
@@ -188,6 +198,10 @@ no OS keyring integration.
 - The literal next command for every action the API says is available is
   printed in human output and returned as `next_commands` in `submit --json`,
   so neither a person nor an agent has to translate a verb into a command.
+- `submit --json` also carries `skipped_checks` (every check that did not run,
+  with its reason) and `owc_commands` (the commands that settle an unresolved
+  OWC link; empty when there is nothing to settle). Neither changes the exit
+  code: they warn, they never block.
 
 ## Python library
 

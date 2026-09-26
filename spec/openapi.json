@@ -264,14 +264,16 @@
                     "checks_current": false,
                     "open_findings": 0,
                     "dismissed_findings": 0,
-                    "findings": []
+                    "findings": [],
+                    "skipped": []
                   },
                   "next_actions": [
                     "poll"
                   ],
                   "report_parse": {
                     "status": "parsed"
-                  }
+                  },
+                  "owc": {}
                 }
               }
             }
@@ -519,14 +521,16 @@
                     "checks_current": false,
                     "open_findings": 0,
                     "dismissed_findings": 0,
-                    "findings": []
+                    "findings": [],
+                    "skipped": []
                   },
                   "next_actions": [
                     "poll"
                   ],
                   "report_parse": {
                     "status": "parsed"
-                  }
+                  },
+                  "owc": {}
                 }
               }
             }
@@ -841,7 +845,8 @@
                     "checks_current": false,
                     "open_findings": 0,
                     "dismissed_findings": 0,
-                    "findings": []
+                    "findings": [],
+                    "skipped": []
                   },
                   "next_actions": [
                     "poll"
@@ -849,6 +854,7 @@
                   "report_parse": {
                     "status": "parsed"
                   },
+                  "owc": {},
                   "attachments": [
                     {
                       "attachment_id": "3f1c2b9e-8d4a-4c1e-9f7a-2b6d5e8c1a90",
@@ -971,14 +977,16 @@
                     "checks_current": false,
                     "open_findings": 0,
                     "dismissed_findings": 0,
-                    "findings": []
+                    "findings": [],
+                    "skipped": []
                   },
                   "next_actions": [
                     "poll"
                   ],
                   "report_parse": {
                     "status": "parsed"
-                  }
+                  },
+                  "owc": {}
                 }
               }
             }
@@ -1046,7 +1054,8 @@
                   "checks_current": false,
                   "open_findings": 0,
                   "dismissed_findings": 0,
-                  "findings": []
+                  "findings": [],
+                  "skipped": []
                 }
               }
             }
@@ -1186,6 +1195,15 @@
                         "via": "api"
                       }
                     }
+                  ],
+                  "skipped": [
+                    {
+                      "check_number": 11,
+                      "code": "observation_predicted_time",
+                      "name": "Near predicted time",
+                      "status": "skipped",
+                      "reason": "No OWC match: 2 candidates — pick one."
+                    }
                   ]
                 }
               }
@@ -1289,6 +1307,15 @@
                         }
                       ]
                     }
+                  ],
+                  "skipped": [
+                    {
+                      "check_number": 11,
+                      "code": "observation_predicted_time",
+                      "name": "Near predicted time",
+                      "status": "skipped",
+                      "reason": "No OWC match: 2 candidates — pick one."
+                    }
                   ]
                 }
               }
@@ -1330,7 +1357,7 @@
           "Public API v1"
         ],
         "summary": "Submit a draft",
-        "description": "Submit the draft: match or create its event, attach, and flip it to `submitted`.\n\nStable codes: `422 missing_required` (`details.missing_required`), `409 open_findings` (`details.open_findings`), `409 checks_stale`, `409 already_submitted`, `409 stale_version`, `409 event_files_conflict`.",
+        "description": "Submit the draft: match or create its event, attach, and flip it to `submitted`.\n\nStable codes: `422 missing_required` (`details.missing_required`), `409 open_findings` (`details.open_findings`), `409 checks_stale`, `409 already_submitted`, `409 stale_version`, `409 event_files_conflict`, `422 owc_link_mismatch` (a pasted OWC link that disagrees with the report; `details.violations`).\n\nAn unresolved OWC link never blocks submit — but observer check 11 is then skipped (see `checks.skipped`).",
         "operationId": "public_submit_draft",
         "parameters": [
           {
@@ -1409,7 +1436,8 @@
                       "uploaded_at": "2026-03-15T08:10:00Z"
                     }
                   },
-                  "next_actions": []
+                  "next_actions": [],
+                  "owc": {}
                 }
               }
             }
@@ -1472,6 +1500,196 @@
       }
     },
     "/public/v1/observations/{observation_id}": {
+      "patch": {
+        "tags": [
+          "Public API v1"
+        ],
+        "summary": "Set a draft's client-owned fields",
+        "description": "Set what the observer decides on a draft: the OWC link (`owc_link_choice` + `owc_event`), the unnumbered-asteroid confirmation, comments, and the required-files bypass. Omitted fields are unchanged. Any change starts a new check run.\n\nThe server auto-matches the OWC event itself after the report is finalized; read `owc.resolution` for the outcome. Use this call when it could not choose: `picked` takes an id from `owc.resolution.candidates`, `pasted` takes any OWC id or URL and is validated against OWC and against the report, `proceed_unlinked` records a deliberate \"no link\".\n\nStable codes: `409 stale_version`, `422 report_derived_fields` (`details.fields`), `422 owc_not_a_candidate`, `422 owc_link_unparseable`, `422 owc_link_not_found`, `422 owc_link_mismatch` (`details.violations`), `503 owc_unavailable`.",
+        "operationId": "public_update_draft",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Observation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicDraftUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated draft",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicObservation"
+                },
+                "example": {
+                  "observation_id": "obs_01HZY4A1",
+                  "submission_status": "draft",
+                  "created_at": "2026-03-15T08:02:00Z",
+                  "updated_at": "2026-03-15T08:11:00Z",
+                  "version": 7,
+                  "created_via": "api",
+                  "observer_user_id": "usr_observer_1",
+                  "metadata": {
+                    "observer_name": "A. Observer",
+                    "observer_email": "observer@example.org",
+                    "asteroid_id": "1036",
+                    "asteroid_name": "Ganymed",
+                    "star_catalog": "GAIA",
+                    "star_id": "1234567890123456789",
+                    "observed_at_utc": "2026-03-14T04:12:07Z",
+                    "result_type": "POS",
+                    "confirm_unnumbered_asteroid_id": false,
+                    "bypass_required_files": false
+                  },
+                  "files": {
+                    "report": {
+                      "slot": "report",
+                      "filename": "report.xlsx",
+                      "size_bytes": 51234,
+                      "uploaded_at": "2026-03-15T08:10:00Z"
+                    }
+                  },
+                  "readiness": {
+                    "state": "checking",
+                    "missing_required": [],
+                    "open_findings": 0,
+                    "dismissed_findings": 0,
+                    "checks_current": false,
+                    "event_files_blocked": false,
+                    "latest_run_id": "vrun_01HZY5B2"
+                  },
+                  "checks": {
+                    "run_id": "vrun_01HZY5B2",
+                    "status": "running",
+                    "checks_current": false,
+                    "open_findings": 0,
+                    "dismissed_findings": 0,
+                    "findings": [],
+                    "skipped": []
+                  },
+                  "next_actions": [
+                    "poll"
+                  ],
+                  "report_parse": {
+                    "status": "parsed"
+                  },
+                  "owc": {
+                    "choice": "picked",
+                    "owc_event_id": "1917-2448-97311-649282-U033649",
+                    "owc_event_url": "https://cloud.occultwatcher.net/event/1917-2448-97311-649282-U033649",
+                    "resolution": {
+                      "status": "ambiguous",
+                      "reason": "2 OWC events match this asteroid and date.",
+                      "candidates": [
+                        {
+                          "owc_event_id": "1917-2448-97311-649282-U033649",
+                          "owc_event_url": "https://cloud.occultwatcher.net/event/1917-2448-97311-649282-U033649",
+                          "asteroid": "(2448) Sholokhov",
+                          "star": "UCAC4 544-028351",
+                          "star_mag": 12.41,
+                          "closest_approach_utc": "2026-Mar-15, 04:59:12",
+                          "mag_drop": 3.2
+                        },
+                        {
+                          "owc_event_id": "1917-2448-97311-649282-U033650",
+                          "owc_event_url": "https://cloud.occultwatcher.net/event/1917-2448-97311-649282-U033650",
+                          "asteroid": "(2448) Sholokhov",
+                          "star": "TYC 1234-00567-1",
+                          "star_mag": 12.39,
+                          "closest_approach_utc": "2026-Mar-15, 04:59:12",
+                          "mag_drop": 3.2
+                        }
+                      ],
+                      "mismatches": [],
+                      "resolved_at": "2026-03-15T08:10:04Z"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "not_found",
+                  "message": "Draft not found",
+                  "hint": "Check the id, and that the resource is visible to your account."
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`stale_version`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "stale_version",
+                  "message": "Draft was modified elsewhere. Refresh and try again.",
+                  "hint": "The observation changed since you read it. Re-read it and retry with the new 'version'.",
+                  "details": {
+                    "expected_version": 6,
+                    "current_version": 7
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`report_derived_fields`, `owc_not_a_candidate`, `owc_link_unparseable`, `owc_link_not_found`, `owc_link_mismatch` or `validation_error`",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "report_derived_fields",
+                  "message": "These fields come from the uploaded report and cannot be set directly: asteroid_id.",
+                  "hint": "These fields come from the report spreadsheet. Upload a corrected report instead — finalizing the report slot rewrites them.",
+                  "details": {
+                    "fields": [
+                      "asteroid_id"
+                    ]
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`owc_unavailable` — OWC could not validate a pasted link",
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "owc_unavailable",
+                  "message": "OWC could not be reached to validate the link.",
+                  "hint": "Occult Watcher Cloud could not be reached to validate the link. Retry shortly, or proceed without an OWC link."
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ]
+      },
       "delete": {
         "tags": [
           "Public API v1"
@@ -2515,6 +2733,14 @@
             "type": "array",
             "title": "Findings",
             "description": "Every finding across every check in the run, in check order"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/PublicSkippedCheck"
+            },
+            "type": "array",
+            "title": "Skipped",
+            "description": "Checks that did not run, with the reason, in check order. They never block submit — which is exactly why a client should show them: a `ready` draft may still have skipped checks."
           }
         },
         "type": "object",
@@ -2705,6 +2931,99 @@
         ],
         "title": "PublicDraftCreated",
         "description": "Response to the collapsed draft-create call (design § 4 step 1)."
+      },
+      "PublicDraftUpdateRequest": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "title": "Version",
+            "description": "The version you last read. A mismatch answers 409 stale_version so a concurrent change is never overwritten unseen."
+          },
+          "owc_link_choice": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "picked",
+                  "pasted",
+                  "proceed_unlinked"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owc Link Choice",
+            "description": "'picked' — link one of `owc.resolution.candidates` (give its id in `owc_event`); 'pasted' — link any OWC event by id or URL (validated against OWC and against the report); 'proceed_unlinked' — submit without an OWC link."
+          },
+          "owc_event": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owc Event",
+            "description": "OWC event id or URL; required with 'picked' and 'pasted'"
+          },
+          "confirm_unnumbered_asteroid_id": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Unnumbered Asteroid Id",
+            "description": "Confirm that a non-numeric asteroid id is deliberate"
+          },
+          "comments": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comments",
+            "description": "Free-text notes for the reviewer"
+          },
+          "bypass_required_files": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bypass Required Files",
+            "description": "Take the alternative-processing-software bypass: lightcurve and log are then not required for a POS/UNSURE submit."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "title": "PublicDraftUpdateRequest",
+        "description": "Body of ``PATCH /public/v1/observations/{id}`` — the client-owned fields.\n\nOnly what the observer decides: the OWC link, the unnumbered-asteroid\nconfirmation, comments and the required-files bypass. A field left out is\nunchanged. The eight report-derived fields are ``422\nreport_derived_fields`` — upload a corrected report instead.",
+        "examples": [
+          {
+            "owc_event": "1917-2448-97311-649282-U033649",
+            "owc_link_choice": "picked",
+            "version": 7
+          },
+          {
+            "confirm_unnumbered_asteroid_id": true,
+            "version": 8
+          }
+        ]
       },
       "PublicError": {
         "properties": {
@@ -3352,6 +3671,235 @@
           }
         ]
       },
+      "PublicOWC": {
+        "properties": {
+          "choice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice",
+            "description": "'matched' (the server's auto-match, or a confirmed match), 'picked' (a candidate chosen), 'pasted' (a link supplied), 'proceed_unlinked' (deliberately no link), or null (unresolved)."
+          },
+          "owc_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owc Event Id",
+            "description": "The linked OWC event, when there is one"
+          },
+          "owc_event_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owc Event Url",
+            "description": "The linked event on Occult Watcher Cloud"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicOWCResolution"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Drafts only: the server's auto-match outcome. Null until the first check run after the report is finalized has resolved it."
+          }
+        },
+        "type": "object",
+        "title": "PublicOWC",
+        "description": "The observation's link to an Occult Watcher Cloud event."
+      },
+      "PublicOWCCandidate": {
+        "properties": {
+          "owc_event_id": {
+            "type": "string",
+            "title": "Owc Event Id",
+            "description": "OWC event id"
+          },
+          "owc_event_url": {
+            "type": "string",
+            "title": "Owc Event Url",
+            "description": "The event on Occult Watcher Cloud"
+          },
+          "asteroid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asteroid",
+            "description": "OWC's asteroid label"
+          },
+          "star": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Star",
+            "description": "OWC's star designation"
+          },
+          "star_mag": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Star Mag",
+            "description": "Star magnitude"
+          },
+          "closest_approach_utc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closest Approach Utc",
+            "description": "Closest approach, as OWC formats it"
+          },
+          "mag_drop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mag Drop",
+            "description": "Magnitude drop"
+          }
+        },
+        "type": "object",
+        "required": [
+          "owc_event_id",
+          "owc_event_url"
+        ],
+        "title": "PublicOWCCandidate",
+        "description": "One OWC event the draft's report could belong to."
+      },
+      "PublicOWCMismatch": {
+        "properties": {
+          "field": {
+            "type": "string",
+            "title": "Field",
+            "description": "'asteroid_name', 'star' or 'date'"
+          },
+          "report_value": {
+            "type": "string",
+            "title": "Report Value",
+            "description": "What the report says"
+          },
+          "owc_value": {
+            "type": "string",
+            "title": "Owc Value",
+            "description": "What OWC says"
+          }
+        },
+        "type": "object",
+        "required": [
+          "field",
+          "report_value",
+          "owc_value"
+        ],
+        "title": "PublicOWCMismatch",
+        "description": "One clear disagreement between the report and an OWC event."
+      },
+      "PublicOWCResolution": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "'matched' (selected automatically), 'not_found', 'ambiguous' (see candidates), 'mismatch' (one event found, but it disagrees with the report — see mismatches), 'error' (OWC unreachable; the next check run retries) or 'skipped' (not a numbered asteroid)."
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "Explanation"
+          },
+          "owc_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owc Event Id",
+            "description": "The event the matcher chose ('matched' or 'mismatch')"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/PublicOWCCandidate"
+            },
+            "type": "array",
+            "title": "Candidates",
+            "description": "The OWC events considered"
+          },
+          "mismatches": {
+            "items": {
+              "$ref": "#/components/schemas/PublicOWCMismatch"
+            },
+            "type": "array",
+            "title": "Mismatches",
+            "description": "Set when status is 'mismatch'"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At",
+            "description": "ISO 8601 timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "PublicOWCResolution",
+        "description": "What the server's OWC auto-match found for the report."
+      },
       "PublicObservation": {
         "properties": {
           "observation_id": {
@@ -3470,6 +4018,17 @@
             "type": "array",
             "title": "Next Actions",
             "description": "Stable verbs for what to do next"
+          },
+          "owc": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicOWC"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The Occult Watcher Cloud link and, on a draft, the server's auto-match outcome. Unresolved never blocks submit, but observer check 11 is skipped without a link."
           },
           "report_parse": {
             "anyOf": [
@@ -3746,6 +4305,45 @@
         ],
         "title": "PublicReportParse",
         "description": "Outcome of the server-side parse of the ``report`` slot."
+      },
+      "PublicSkippedCheck": {
+        "properties": {
+          "check_number": {
+            "type": "integer",
+            "title": "Check Number",
+            "description": "Observer catalog number of the check; 0 for a check the current catalog no longer knows."
+          },
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "Stable check identifier (the check_id)"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Observer-facing name of the check"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "'skipped' (a precondition was unmet) or 'error' (the check crashed and produced no verdict)."
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "description": "Why the check did not run"
+          }
+        },
+        "type": "object",
+        "required": [
+          "check_number",
+          "code",
+          "name",
+          "status",
+          "reason"
+        ],
+        "title": "PublicSkippedCheck",
+        "description": "An observer check that did not run on this draft, and why.\n\nA skipped check never blocks submit, so a client that only reads\n``findings`` would never learn the check did not happen. This is where it\ndoes."
       },
       "PublicSubmitRequest": {
         "properties": {
