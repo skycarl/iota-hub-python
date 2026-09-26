@@ -407,7 +407,8 @@ naming convention (`YYYYMMDD_<number>_<name>_<lastname>_POS|NEG[-X]`,
   files, not a server rule — the server's allow-list is the extension
   (`observation_file_validation.py`) — so `--log notes.txt` is accepted.
 - Anything else — `_notes.txt`, `.png`, `_Tangra.lc`, a second CSV's
-  companions — is an **attachment** (§ 11a), in listing order. `--no-attachments`
+  companions — is an **attachment** (§ 11a), in filename order (by codepoint,
+  so the same on every platform). `--no-attachments`
   (library: `attachments=False`) leaves them out; they are then reported as
   `ignored` ("not uploaded"). `--attach PATH` (repeatable; library: `attach=`)
   adds a file from anywhere, with or without `--no-attachments`; a path already

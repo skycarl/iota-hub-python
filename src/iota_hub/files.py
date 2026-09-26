@@ -130,10 +130,15 @@ def map_folder(
         )
 
     overrides = _overrides(report=report, lightcurve=lightcurve, log=log, vizier=vizier)
+    # Sorted by name, codepoint order: ``Path`` ordering is case-insensitive
+    # on Windows, and the attachments are declared in this order everywhere.
     entries = sorted(
-        entry
-        for entry in base.iterdir()
-        if entry.is_file() and not entry.name.startswith(".")
+        (
+            entry
+            for entry in base.iterdir()
+            if entry.is_file() and not entry.name.startswith(".")
+        ),
+        key=lambda entry: entry.name,
     )
 
     slots: dict[str, Path] = {}

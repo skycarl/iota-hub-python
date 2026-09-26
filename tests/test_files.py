@@ -240,7 +240,7 @@ def test_attach_of_a_missing_file_is_missing_files(tmp_path):
     assert excinfo.value.code == "missing_files"
 
 
-@pytest.mark.parametrize("name", ["reduce.py", "setup.EXE", "run.bat .", "lib.so"])
+@pytest.mark.parametrize("name", ["reduce.py", "setup.EXE", "lib.so"])
 def test_a_blocked_type_fails_the_whole_folder_and_names_it(tmp_path, name):
     folder = copy_observation(tmp_path / "obs")
     (folder / "plot.png").write_bytes(b"png")
@@ -256,6 +256,21 @@ def test_a_blocked_type_fails_the_whole_folder_and_names_it(tmp_path, name):
     assert "--no-attachments" in error.hint
     # The same folder maps once the attachments are left out.
     assert map_folder(folder, attachments=False).ignored
+
+
+def test_trailing_dots_and_spaces_do_not_hide_a_blocked_type():
+    """The server strips them (Windows does on save); so does the check.
+
+    Checked on a bare path: Windows would strip the name on disk already.
+    """
+    from pathlib import Path
+
+    from iota_hub.files import check_attachments
+
+    with pytest.raises(MappingError) as excinfo:
+        check_attachments([Path("run.bat .")])
+
+    assert excinfo.value.code == "blocked_attachment"
 
 
 def test_an_oversized_attachment_names_the_file_and_the_limit(tmp_path, monkeypatch):
