@@ -297,12 +297,13 @@
             "type": "integer"
           },
           "slot": {
-            "description": "Which slot this file fills. `attachment` may repeat; each of the four fixed slots at most once.",
+            "description": "Which slot this file fills. `attachment` may repeat; each of the five fixed slots at most once (`aperture_record` is optional: a PyMovie `.pymovie` or Tangra `.lc`).",
             "enum": [
               "report",
               "lightcurve",
               "log",
               "vizier",
+              "aperture_record",
               "attachment"
             ],
             "title": "Slot",
@@ -399,6 +400,11 @@
                 "filename": "pyote.log",
                 "size": 18422,
                 "slot": "log"
+              },
+              {
+                "filename": "lightcurve.pymovie",
+                "size": 187654321,
+                "slot": "aperture_record"
               },
               {
                 "filename": "pyote_plot.png",
@@ -1439,7 +1445,7 @@
             "type": "integer"
           },
           "attachments": {
-            "description": "Optional attachments (any file the four slots do not take), in upload order. Empty when there are none, or when the caller may not see this observation's files.",
+            "description": "Optional attachments (any file the fixed slots do not take), in upload order. Empty when there are none, or when the caller may not see this observation's files.",
             "items": {
               "$ref": "#/components/schemas/PublicAttachment"
             },
@@ -1491,7 +1497,7 @@
                 }
               ]
             },
-            "description": "Current file per slot (report, lightcurve, log, vizier); null for an empty slot.",
+            "description": "Current file per slot (report, lightcurve, log, vizier); null for an empty slot. The optional aperture_record slot is listed only when it holds a file.",
             "title": "Files",
             "type": "object"
           },
@@ -2010,7 +2016,7 @@
       "email": "support@iota-hub.org",
       "name": "IOTA Hub Support"
     },
-    "description": "The versioned public surface of IOTA Hub, for scripts and agents: create an observation draft, upload its files, run the observer checks, fix or dismiss findings, submit \u2014 plus read access to events, observations and their files.\n\nAuthentication is the `X-API-Key` header alone. A key acts as its owner: it can never do or see more than that person can in the web app. There is no CORS on this surface, so keys stay out of browsers \u2014 call it from a script, not from a page.\n\nThe quickstart, error table and limits are at /developers.",
+    "description": "The versioned public surface of IOTA Hub, for scripts and agents: create an observation draft, upload its files, run the observer checks, fix or dismiss findings, submit \u2014 plus read access to events, observations and their files.\n\nAuthentication is the `X-API-Key` header alone. A key acts as its owner: it can never do or see more than that person can in the web app. There is no CORS on this surface, so keys stay out of browsers \u2014 call it from a script, not from a page.\n\nThe quickstart, error table and limits are at /developers/api; keys are managed at /developers.",
     "license": {
       "name": "MIT"
     },
@@ -2862,7 +2868,7 @@
     },
     "/public/v1/observations/drafts": {
       "post": {
-        "description": "Create a draft observation and, in the same call, presign one upload target per declared file. POST each file straight to S3 with the returned `upload_url` and `fields`, then call `finalize`.\n\nIdentity fields (observer, asteroid, star, time, result) are not accepted: they are read from the report spreadsheet when the `report` slot is finalized.\n\nDeclare any other file (plots, raw `.lc` output, notes) with `slot: \"attachment\"`, repeated once per file. Attachments follow the web app's rules: at most 25 per observation, 50 MB each, and executable/script extensions are refused. Each attachment target carries the `attachment_id` it will be stored under.",
+        "description": "Create a draft observation and, in the same call, presign one upload target per declared file. POST each file straight to S3 with the returned `upload_url` and `fields`, then call `finalize`.\n\nIdentity fields (observer, asteroid, star, time, result) are not accepted: they are read from the report spreadsheet when the `report` slot is finalized.\n\nThe optional `aperture_record` slot takes a PyMovie `.pymovie` aperture record or a Tangra `.lc` file, up to 500 MB.\n\nDeclare any other file (plots, notes) with `slot: \"attachment\"`, repeated once per file. Attachments follow the web app's rules: at most 25 per observation, 50 MB each, and executable/script extensions are refused. Each attachment target carries the `attachment_id` it will be stored under.",
         "operationId": "public_create_draft",
         "parameters": [
           {
@@ -4099,7 +4105,7 @@
                 }
               }
             },
-            "description": "`identity_changed` (amend) or `validation_error`"
+            "description": "`identity_changed` (amend) or `validation_error` (including a `.pymovie` aperture record without PyMovie's signature, `details.code` `INVALID_MAGIC_BYTES`)"
           }
         },
         "security": [
@@ -4352,12 +4358,22 @@
           "422": {
             "content": {
               "application/json": {
+                "example": {
+                  "code": "validation_error",
+                  "details": {
+                    "code": "INVALID_MAGIC_BYTES",
+                    "filename": "lightcurve.pymovie",
+                    "slot": "aperture_record"
+                  },
+                  "hint": "The request body did not match the documented schema; see 'details'.",
+                  "message": "The .pymovie file is not a PyMovie aperture record: it does not start with the PYMOVIE file signature."
+                },
                 "schema": {
                   "$ref": "#/components/schemas/PublicError"
                 }
               }
             },
-            "description": "Problem details with a stable `code`"
+            "description": "`validation_error` \u2014 a `.pymovie` aperture record without PyMovie's signature (`details.code` `INVALID_MAGIC_BYTES`); nothing is committed"
           }
         },
         "security": [
