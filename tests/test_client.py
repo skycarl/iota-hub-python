@@ -419,7 +419,7 @@ def test_every_operation_id_has_a_method():
         for path in document["paths"].values()
         for operation in path.values()
     ]
-    assert len(operations) == 20
+    assert len(operations) == 21
     for operation_id in operations:
         assert operation_id.startswith("public_")
         name = operation_id[len("public_") :]

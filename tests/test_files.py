@@ -46,7 +46,7 @@ def test_everything_else_becomes_an_attachment(tmp_path):
     folder = copy_observation(tmp_path / "obs")
     (folder / "_notes.txt").write_text("for the reviewer\n")
     (folder / "finder_chart.png").write_bytes(b"\x89PNG")
-    (folder / "X_Tangra.lc").write_text("lc\n")
+    (folder / "X_Tangra.xml").write_text("lc\n")
     (folder / ".DS_Store").write_bytes(b"junk")
     (folder / "raw").mkdir()
     (folder / "raw" / "frame.fits").write_bytes(b"x")
@@ -56,7 +56,7 @@ def test_everything_else_becomes_an_attachment(tmp_path):
     assert set(mapping.slots) == {"report", "lightcurve", "log"}
     # Hidden files and subdirectories are never attached.
     assert [path.name for path in mapping.attachments] == [
-        "X_Tangra.lc",
+        "X_Tangra.xml",
         "_notes.txt",
         "finder_chart.png",
     ]
@@ -279,15 +279,15 @@ def test_an_oversized_attachment_names_the_file_and_the_limit(tmp_path, monkeypa
     monkeypatch.setattr(files, "ATTACHMENT_MAX_BYTES", 10)
     folder = copy_observation(tmp_path / "obs")
     (folder / "small.png").write_bytes(b"x" * 10)
-    (folder / "big.lc").write_bytes(b"x" * 11)
+    (folder / "big.bin").write_bytes(b"x" * 11)
 
     with pytest.raises(MappingError) as excinfo:
         map_folder(folder)
 
     error = excinfo.value
     assert error.code == "attachment_too_large"
-    assert error.details == {"files": ["big.lc"], "max_size_bytes": 10}
-    assert "big.lc" in error.message
+    assert error.details == {"files": ["big.bin"], "max_size_bytes": 10}
+    assert "big.bin" in error.message
 
 
 def test_too_many_attachments_names_them_and_the_limit(tmp_path):
@@ -315,3 +315,120 @@ def test_exactly_the_maximum_is_accepted(tmp_path):
         (folder / f"plot_{index:02d}.png").write_bytes(b"png")
 
     assert len(map_folder(folder).attachments) == MAX_ATTACHMENTS
+
+
+# -- the JSON report, the aperture record and the log override ---------------
+
+
+def without_the_spreadsheet(destination):
+    folder = copy_observation(destination)
+    (folder / "20180305_9721_Doty_Observer_POS.xlsx").unlink()
+    return folder
+
+
+def test_a_json_report_fills_the_report_slot(tmp_path):
+    folder = without_the_spreadsheet(tmp_path / "obs")
+    (folder / "20180305_9721_Doty_Observer+.json").write_text("{}")
+
+    mapping = map_folder(folder)
+
+    assert mapping.slots["report"].name == "20180305_9721_Doty_Observer+.json"
+    assert mapping.attachments == []
+
+
+def test_a_spreadsheet_and_a_json_report_are_ambiguous(tmp_path):
+    folder = copy_observation(tmp_path / "obs")
+    (folder / "report.json").write_text("{}")
+
+    with pytest.raises(MappingError) as excinfo:
+        map_folder(folder)
+
+    error = excinfo.value
+    assert error.code == "ambiguous_files"
+    assert error.details == {
+        "slot": "report",
+        "candidates": ["20180305_9721_Doty_Observer_POS.xlsx", "report.json"],
+    }
+    assert "--report PATH" in error.hint
+
+
+def test_a_missing_report_names_the_json_format_too(tmp_path):
+    folder = without_the_spreadsheet(tmp_path / "obs")
+
+    with pytest.raises(MappingError) as excinfo:
+        map_folder(folder)
+
+    assert excinfo.value.details["missing"] == ["report"]
+    assert ".xlsx, .xls or .json" in excinfo.value.message
+
+
+@pytest.mark.parametrize("name", ["X_Tangra.lc", "X.pymovie", "X.PYMOVIE"])
+def test_an_aperture_record_fills_its_own_slot_not_an_attachment(tmp_path, name):
+    folder = copy_observation(tmp_path / "obs")
+    (folder / name).write_bytes(b"PYMOVIE\x00")
+
+    mapping = map_folder(folder)
+
+    assert mapping.slots["aperture_record"].name == name
+    assert mapping.attachments == []
+
+
+def test_the_aperture_record_is_never_required():
+    mapping = map_folder(OBSERVATION)
+
+    assert "aperture_record" not in mapping.slots
+    assert mapping.missing_required() == []
+
+
+def test_two_aperture_records_are_ambiguous_and_name_the_flag(tmp_path):
+    folder = copy_observation(tmp_path / "obs")
+    (folder / "X_Tangra.lc").write_bytes(b"lc")
+    (folder / "X.pymovie").write_bytes(b"PYMOVIE\x00")
+
+    with pytest.raises(MappingError) as excinfo:
+        map_folder(folder)
+
+    error = excinfo.value
+    assert error.code == "ambiguous_files"
+    assert error.details["slot"] == "aperture_record"
+    assert "--aperture-record PATH" in error.hint
+
+
+def test_an_explicit_aperture_record_is_checked_for_its_extension(tmp_path):
+    folder = copy_observation(tmp_path / "obs")
+    wrong = folder / "frames.fits"
+    wrong.write_bytes(b"x")
+
+    with pytest.raises(MappingError) as excinfo:
+        map_folder(folder, aperture_record=wrong)
+
+    error = excinfo.value
+    assert error.code == "invalid_extension"
+    assert error.details["allowed_extensions"] == [".lc", ".pymovie"]
+    assert "--aperture-record" in error.hint
+
+
+def test_an_explicit_aperture_record_wins_over_the_rule(tmp_path):
+    folder = copy_observation(tmp_path / "obs")
+    (folder / "X_Tangra.lc").write_bytes(b"lc")
+    (folder / "X.pymovie").write_bytes(b"PYMOVIE\x00")
+
+    mapping = map_folder(folder, aperture_record=folder / "X.pymovie")
+
+    assert mapping.slots["aperture_record"].name == "X.pymovie"
+    assert [path.name for path in mapping.attachments] == ["X_Tangra.lc"]
+
+
+def test_an_explicit_log_may_be_any_txt(tmp_path):
+    """The 'log' name rule only tells two .txt files apart in a folder."""
+    folder = copy_observation(tmp_path / "obs")
+    (folder / "20180305_9721_Doty_Observer_POS_pyote_log.txt").unlink()
+    fit = folder / "tangra_fit.txt"
+    fit.write_text("fit\n")
+
+    with pytest.raises(MappingError):
+        map_folder(folder)  # the folder rule still wants 'log' in the name
+    mapping = map_folder(folder, log=fit)
+
+    assert mapping.slots["log"] == fit
+    assert mapping.attachments == []

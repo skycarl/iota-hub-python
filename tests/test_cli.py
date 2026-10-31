@@ -25,6 +25,7 @@ from iota_hub.errors import (
     ConflictError,
     IotaHubError,
     RateLimitError,
+    RequestError,
     TransportError,
 )
 
@@ -145,7 +146,9 @@ def upload_target(slot: str, filename: str):
     }
 
 
-def script_submit(mock_api: MockAPI, final: dict) -> None:
+def script_submit(
+    mock_api: MockAPI, final: dict, *, finalized: dict | None = None
+) -> None:
     """Create, three uploads, finalize, one poll that is already terminal."""
     mock_api.json(
         "POST",
@@ -161,7 +164,7 @@ def script_submit(mock_api: MockAPI, final: dict) -> None:
         status=201,
     )
     mock_api.add("POST", BUCKET, httpx.Response(204))
-    mock_api.json("POST", FINALIZE, observation())
+    mock_api.json("POST", FINALIZE, finalized or observation())
     mock_api.json("GET", GET, final)
 
 
@@ -192,6 +195,12 @@ def run(runner: CliRunner, *args: str, **kwargs):
         (ConflictError("event_files_conflict", "collision", status=409), 4),
         (IotaHubError("missing_required", "no lightcurve", status=422), 4),
         (RateLimitError("rate_limited", "slow down", status=429), 5),
+        # The amend refusals: a report for another observation is the wrong
+        # file for this one (usage, like invalid_extension); the owner's lock
+        # is a plain conflict -- waiting will not lift it.
+        (RequestError("identity_changed", "other star", status=422), 2),
+        (ConflictError("already_processed", "in review", status=409), 1),
+        (ConflictError("already_submitted", "cannot delete", status=409), 1),
     ],
 )
 def test_exit_code_for(error: IotaHubError, expected: int) -> None:
@@ -262,16 +271,16 @@ def test_dry_run_lists_attachments_and_no_attachments_ignores_them(
     folder.mkdir()
     for source in (REPORT, LIGHTCURVE, LOG):
         (folder / source.name).write_bytes(source.read_bytes())
-    (folder / "X_Tangra.lc").write_bytes(b"lc")
+    (folder / "X_Tangra.xml").write_bytes(b"lc")
 
     result = run(runner, "submit", str(folder), "--dry-run")
     assert result.exit_code == 0
-    assert "attachment  X_Tangra.lc" in result.stdout
+    assert "attachment  X_Tangra.xml" in result.stdout
 
     result = run(runner, "submit", str(folder), "--dry-run", "--no-attachments")
     assert result.exit_code == 0
-    assert "X_Tangra.lc" not in result.stdout.split("Not uploaded")[0]
-    assert "Not uploaded (--no-attachments): X_Tangra.lc" in result.stdout
+    assert "X_Tangra.xml" not in result.stdout.split("Not uploaded")[0]
+    assert "Not uploaded (--no-attachments): X_Tangra.xml" in result.stdout
 
 
 def test_attach_adds_a_file_to_the_dry_run(runner: CliRunner, tmp_path: Path) -> None:
@@ -363,6 +372,7 @@ def test_submit_json_is_one_document(runner: CliRunner, mock_api: MockAPI) -> No
         "next_commands",
         "skipped_checks",
         "owc_commands",
+        "web_url",
         "observation",
     }
     assert payload["observation_id"] == OBS_ID
@@ -1030,6 +1040,7 @@ HUMAN_RUNS = [
     ["drafts", "--help"],
     ["drafts", "files", "add", "--help"],
     ["observations", "list", "--help"],
+    ["observations", "check", "--help"],
     ["events", "list", "--help"],
     ["files", "download", "--help"],
     ["auth", "login", "--help"],
@@ -1063,6 +1074,7 @@ def test_every_command_help_carries_an_example(runner: CliRunner) -> None:
         ["drafts", "files", "rm"],
         ["observations", "list"],
         ["observations", "show"],
+        ["observations", "check"],
         ["events", "list"],
         ["events", "show"],
         ["files", "download"],
@@ -1150,17 +1162,19 @@ def test_the_key_prompt_and_the_confirmation_are_written_to_stderr(
 # -- drafts submit and drafts check -----------------------------------------
 
 
-def test_drafts_submit_refuses_an_observation_that_is_already_submitted(
+def test_drafts_submit_of_an_already_submitted_observation_is_success(
     runner: CliRunner, mock_api: MockAPI
 ) -> None:
+    """Submit is a state you ask for: asking twice is success (API spec 4.2)."""
     mock_api.json(
         "GET",
         GET,
-        observation(submission_status="submitted", readiness=None),
+        observation(submission_status="submitted", status="submitted", readiness=None),
     )
-    result = run(runner, "drafts", "submit", OBS_ID)
-    assert result.exit_code == 1
-    assert "error: already_submitted:" in result.stderr
+    result = run(runner, "--json", "drafts", "submit", OBS_ID)
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout)["status"] == "submitted"
+    assert result.stderr.count("error") == 0
     assert not [r for r in mock_api.requests if r.url.path == SUBMIT]
 
 
@@ -1521,3 +1535,319 @@ def test_show_renders_the_owc_state_and_the_skipped_checks(
     assert "OWC:          unresolved (ambiguous)" in result.stdout
     assert OWC_A in result.stdout
     assert "Skipped (did not run):" in result.stdout
+
+
+# -- the JSON report, the aperture record, check and amend ------------------
+
+CHECK = f"{OBSERVATIONS}/check"
+WEB_URL = f"https://hub.example.test/new-observation?draft={OBS_ID}"
+
+
+def test_dry_run_maps_a_json_report_and_an_aperture_record(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    for source in (LIGHTCURVE, LOG):
+        (folder / source.name).write_bytes(source.read_bytes())
+    (folder / "20180305_9721_Doty_Observer+.json").write_text("{}")
+    (folder / "X_Tangra.lc").write_bytes(b"lc")
+
+    result = run(runner, "submit", str(folder), "--dry-run")
+    assert result.exit_code == 0, result.stderr
+    assert "report           20180305_9721_Doty_Observer+.json" in result.stdout
+    assert "aperture_record  X_Tangra.lc" in result.stdout
+    assert "attachment" not in result.stdout
+
+    result = run(runner, "--json", "submit", str(folder), "--dry-run")
+    payload = json.loads(result.stdout)
+    assert {u["slot"]: u["filename"] for u in payload["uploads"]} == {
+        "report": "20180305_9721_Doty_Observer+.json",
+        "lightcurve": LIGHTCURVE.name,
+        "log": LOG.name,
+        "aperture_record": "X_Tangra.lc",
+    }
+    assert payload["attachments"] == []
+
+
+def test_the_aperture_record_flag_names_a_file_from_elsewhere(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    record = tmp_path / "frames.pymovie"
+    record.write_bytes(b"PYMOVIE\x00")
+    result = run(
+        runner,
+        "--json",
+        "submit",
+        str(OBSERVATION_DIR),
+        "--dry-run",
+        "--aperture-record",
+        str(record),
+    )
+    assert result.exit_code == 0, result.stderr
+    uploads = {u["slot"]: u["path"] for u in json.loads(result.stdout)["uploads"]}
+    assert uploads["aperture_record"] == str(record)
+
+
+def test_the_aperture_record_flag_checks_the_extension(
+    runner: CliRunner, tmp_path: Path, mock_api: MockAPI
+) -> None:
+    wrong = tmp_path / "frames.fits"
+    wrong.write_bytes(b"x")
+    result = run(
+        runner, "submit", str(OBSERVATION_DIR), "--aperture-record", str(wrong)
+    )
+    assert result.exit_code == 2
+    assert "error: invalid_extension:" in result.stderr
+    assert mock_api.requests == []
+
+
+def test_needs_attention_prints_the_web_url(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    script_submit(
+        mock_api,
+        observation(
+            web_url=WEB_URL,
+            readiness=ready(state="needs_attention", open_findings=1),
+            checks=checks(open_findings=1, findings=[finding()]),
+            next_actions=["dismiss_or_fix"],
+        ),
+    )
+    result = run(runner, "submit", str(OBSERVATION_DIR))
+    assert result.exit_code == 4
+    assert f"Web:          {WEB_URL}" in result.stdout
+
+
+def test_a_no_wait_draft_prints_the_web_url_and_carries_it_in_json(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    script_submit(mock_api, observation(), finalized=observation(web_url=WEB_URL))
+    result = run(runner, "submit", str(OBSERVATION_DIR), "--no-wait")
+    assert result.exit_code == 0
+    assert f"Web:          {WEB_URL}" in result.stdout
+
+    result = run(runner, "--json", "submit", str(OBSERVATION_DIR), "--no-wait")
+    payload = json.loads(result.stdout)
+    assert payload["outcome"] == "draft"
+    assert payload["web_url"] == WEB_URL
+
+
+def test_a_submitted_outcome_does_not_print_the_web_url(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    script_submit(mock_api, observation(readiness=ready(), checks=checks()))
+    mock_api.json(
+        "POST",
+        SUBMIT,
+        observation(submission_status="submitted", status="submitted", web_url="x"),
+    )
+    result = run(runner, "submit", str(OBSERVATION_DIR))
+    assert result.exit_code == 0
+    assert "Web:" not in result.stdout
+
+
+def test_observations_check_finds_your_own_draft(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "POST",
+        CHECK,
+        {
+            "found": "observation",
+            "observation": {
+                "observation_id": OBS_ID,
+                "status": "draft",
+                "amendment_count": 0,
+                "web_url": WEB_URL,
+            },
+            "event": None,
+        },
+    )
+    result = run(
+        runner,
+        "observations",
+        "check",
+        "--asteroid-id",
+        "9721",
+        "--asteroid-name",
+        "Doty",
+        "--star-catalog",
+        "UCAC4",
+        "--star-id",
+        "1234-56789",
+        "--date",
+        "2018-03-05",
+        "--station",
+        "2",
+    )
+    assert result.exit_code == 0, result.stderr
+    assert "Found:        observation" in result.stdout
+    assert f"Observation:  {OBS_ID}" in result.stdout
+    assert "Status:       draft" in result.stdout
+    assert f"Web:          {WEB_URL}" in result.stdout
+    assert f"iota-hub drafts show {OBS_ID}" in result.stdout
+    assert json.loads(mock_api.last_request.content) == {
+        "asteroid_id": "9721",
+        "asteroid_name": "Doty",
+        "star_catalog": "UCAC4",
+        "star_id": "1234-56789",
+        "observed_date": "2018-03-05",
+        "station": "2",
+    }
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        ({"found": "none"}, ["Found:        none"]),
+        (
+            {"found": "event", "event": {"event_id": "evt_1", "status": "IN_REVIEW"}},
+            ["Found:        event", "Event:        evt_1 (IN_REVIEW)"],
+        ),
+    ],
+)
+def test_observations_check_reports_an_event_or_nothing_and_exits_0(
+    runner: CliRunner, mock_api: MockAPI, answer: dict, expected: list[str]
+) -> None:
+    mock_api.json("POST", CHECK, answer)
+    result = run(
+        runner,
+        "observations",
+        "check",
+        "--asteroid-name",
+        "Doty",
+        "--star-id",
+        "1-2",
+        "--date",
+        "2018-03-05",
+    )
+    assert result.exit_code == 0
+    for line in expected:
+        assert line in result.stdout
+    assert "Observation:" not in result.stdout
+    body = json.loads(mock_api.last_request.content)
+    assert body["asteroid_id"] is None and body["station"] is None
+
+
+def test_observations_check_json_is_the_api_answer(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    answer = {
+        "found": "observation",
+        "observation": {
+            "observation_id": OBS_ID,
+            "status": "amended",
+            "amendment_count": 2,
+            "web_url": f"https://hub.example.test/observations/{OBS_ID}",
+        },
+        "event": {"event_id": "evt_1", "status": "READY_FOR_REVIEW"},
+    }
+    mock_api.json("POST", CHECK, answer)
+    result = run(
+        runner,
+        "--json",
+        "observations",
+        "check",
+        "--asteroid-name",
+        "Doty",
+        "--star-id",
+        "1-2",
+        "--date",
+        "2018-03-05",
+    )
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == answer
+
+
+def test_observations_check_needs_the_identity(runner: CliRunner) -> None:
+    result = run(runner, "observations", "check", "--asteroid-name", "Doty")
+    assert result.exit_code == 2
+
+
+def test_show_renders_the_derived_status_amendments_and_web_url(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "GET",
+        GET,
+        observation(
+            submission_status="submitted",
+            status="amended",
+            amendment_count=2,
+            amended_at="2026-02-01T00:00:00Z",
+            web_url=f"https://hub.example.test/observations/{OBS_ID}",
+        ),
+    )
+    result = run(runner, "observations", "show", OBS_ID)
+    assert result.exit_code == 0
+    assert "Status:       amended" in result.stdout
+    assert "Amended:      2 time(s), last 2026-02-01T00:00:00Z" in result.stdout
+    assert "Web:          https://hub.example.test/observations/obs_1" in result.stdout
+
+
+def test_an_amend_with_another_identity_exits_2_with_the_changes(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    changed = [{"field": "star_id", "stored": "1-2", "parsed": "1-3"}]
+    mock_api.json(
+        "POST", f"{GET}/files/report/upload/init", upload_target("report", REPORT.name)
+    )
+    mock_api.add("POST", BUCKET, httpx.Response(204))
+    mock_api.json(
+        "POST",
+        f"{GET}/files/report/upload/finalize",
+        {
+            "code": "identity_changed",
+            "message": "The replacement report describes a different observation",
+            "hint": "Fix the report so it describes this observation.",
+            "details": {"status": "submitted", "changed": changed},
+        },
+        status=422,
+    )
+    result = run(
+        runner, "--json", "drafts", "files", "add", OBS_ID, "report", str(REPORT)
+    )
+    assert result.exit_code == 2
+    error = json.loads(result.stderr[result.stderr.index("{") :])
+    assert error["code"] == "identity_changed"
+    assert error["details"]["changed"] == changed
+    assert error["exit_code"] == 2
+
+
+def test_an_amend_after_the_lock_exits_1(runner: CliRunner, mock_api: MockAPI) -> None:
+    mock_api.json(
+        "POST",
+        f"{GET}/files/lightcurve/upload/init",
+        {
+            "code": "already_processed",
+            "message": "The event is in review",
+            "hint": "Contact a coordinator if a correction is needed.",
+            "details": {"status": "locked", "observation_id": OBS_ID},
+        },
+        status=409,
+    )
+    result = run(
+        runner, "drafts", "files", "add", OBS_ID, "lightcurve", str(LIGHTCURVE)
+    )
+    assert result.exit_code == 1
+    assert "error: already_processed:" in result.stderr
+    assert "hint: Contact a coordinator" in result.stderr
+
+
+def test_drafts_files_add_takes_the_aperture_record_slot(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    record = tmp_path / "X.pymovie"
+    record.write_bytes(b"PYMOVIE\x00")
+    mock_api.json(
+        "POST",
+        f"{GET}/files/aperture_record/upload/init",
+        upload_target("aperture_record", record.name),
+    )
+    mock_api.add("POST", BUCKET, httpx.Response(204))
+    mock_api.json("POST", f"{GET}/files/aperture_record/upload/finalize", observation())
+    result = run(
+        runner, "drafts", "files", "add", OBS_ID, "aperture_record", str(record)
+    )
+    assert result.exit_code == 0, result.stderr

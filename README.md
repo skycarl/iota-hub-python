@@ -10,7 +10,7 @@ scripted or reduced to one command, and for AI agents acting on an observer's
 behalf. There are three ways in, in the order you should try them: **the CLI
 first**, the **Python library** second when you are building something of your
 own, and the **raw HTTP API** last, documented at
-<https://iota-hub.com/developers>.
+<https://iota-hub.com/developers/api>.
 
 ## Quickstart (CLI)
 
@@ -49,9 +49,11 @@ storage (files never travel through the API), finalizes, waits for the observer
 check run, and submits the observation when — and only when — the draft comes
 back `ready`. If the run leaves open findings, or something required is still
 missing, it does not submit: the draft stays in your Drafts, the findings are
-printed with the exact commands that resolve them, and the exit code is `4`.
-Nothing is ever guessed and nothing is ever thrown away — a draft it could not
-submit is recoverable in the web app.
+printed with the exact commands that resolve them, along with the draft's
+`Web:` link to finish it in the browser, and the exit code is `4`. Nothing is
+ever guessed and nothing is ever thrown away — a draft it could not submit is
+recoverable in the web app. Submitting something that is already submitted is
+not an error either: it reports `submitted`.
 
 **Skipped checks are said out loud.** A check that could not run never blocks
 submit, so after "Waiting for checks..." `submit` prints a `WARNING` block on
@@ -70,29 +72,44 @@ Useful variations:
 - `iota-hub submit --dry-run` — print the slot mapping, the file sizes and the
   target, and call nothing.
 - `iota-hub submit --json` — one JSON document on stdout, for scripts and agents.
-- `iota-hub submit --no-wait` — return after the upload with the draft id;
-  `--timeout S` changes how long it waits (default 10 minutes).
+- `iota-hub submit --no-wait` — return after the upload with the draft id and
+  its `Web:` link; `--timeout S` changes how long it waits (default 10 minutes).
+
+Not sure whether an earlier run already created the draft? Ask before creating
+a second one — it finds your own draft or submission by what it observed, or
+says whether the event exists:
+
+```bash
+iota-hub observations check --asteroid-id 9721 --asteroid-name Doty \
+    --star-id 1234-56789 --date 2018-03-05
+```
 
 ## Which file goes where
 
 `submit` takes a directory (the current one by default) and maps its files onto
-the four slots by rules only. The observer naming convention
+the five slots by rules only. The observer naming convention
 (`YYYYMMDD_<number>_<name>_<lastname>_POS|NEG[-X]`, see
 <https://iota-hub.com/data-submission>) already carries enough signal, so there
 is no classification and no content sniffing:
 
-| Slot         | Rule                                                        | Required |
-| ------------ | ----------------------------------------------------------- | -------- |
-| `report`     | exactly one `.xlsx` / `.xls`                                | yes      |
-| `lightcurve` | exactly one `.csv`                                          | yes      |
-| `log`        | exactly one `.txt` whose name contains `log`                | yes      |
-| `vizier`     | at most one `.dat`                                          | no       |
+| Slot              | Rule                                                     | Required |
+| ----------------- | -------------------------------------------------------- | -------- |
+| `report`          | exactly one `.xlsx` / `.xls`, or a Tangra `.json` report | yes      |
+| `lightcurve`      | exactly one `.csv`                                       | yes      |
+| `log`             | exactly one `.txt` whose name contains `log`             | yes      |
+| `vizier`          | at most one `.dat`                                       | no       |
+| `aperture_record` | at most one Tangra `.lc` or PyMovie `.pymovie`           | no       |
 
 The listing is non-recursive and skips subdirectories and dotfiles; extensions
 match case-insensitively, so `.CSV` is a light curve.
 
-Anything the rules do not claim — `field_notes.txt`, a PyOTE `.png`, a raw
-Tangra `_Tangra.lc` — is uploaded as an **attachment**, just like the web app's
+The NA spreadsheet is still the primary report; a folder holding both a
+spreadsheet and a `.json` is ambiguous, so name the one you mean with
+`--report`. The aperture record has its own slot (up to 500 MB), so it is not
+an attachment.
+
+Anything the rules do not claim — `field_notes.txt`, a PyOTE `.png` — is
+uploaded as an **attachment**, just like the web app's
 "Optional Attachments". The web app's limits apply, and are checked before
 anything is created, so a folder that breaks one fails whole (exit code `2`)
 with every offending file named:
@@ -102,7 +119,7 @@ with every offending file named:
 - no executables or scripts (`.exe`, `.bat`, `.cmd`, `.sh`, `.ps1`, `.js`,
   `.py`, `.php`, `.pl`, `.rb`, `.jar`, `.msi`, `.dll`, `.so`).
 
-`--no-attachments` uploads only the four slots and lists the rest as **not
+`--no-attachments` uploads only the five slots and lists the rest as **not
 uploaded**; `--attach PATH` (repeatable) adds a file from outside the folder.
 `--dry-run` shows the attachments too. Afterwards,
 `iota-hub drafts files add <id> attachment <path>` adds one and
@@ -112,14 +129,23 @@ are in `iota-hub drafts show <id>`).
 **Ambiguity is an error, never a guess.** Two candidates for one slot, or none
 for a required one, stops the command with the names of the files involved and
 the flag that settles it. The overrides are `--report PATH`,
-`--lightcurve PATH`, `--log PATH` and `--vizier PATH`; each is checked only for
-the slot's extension, so `--log notes.txt` is accepted even though its name does
-not contain `log`.
+`--lightcurve PATH`, `--log PATH`, `--vizier PATH` and `--aperture-record PATH`;
+each is checked only for the slot's extension. The "contains `log`" rule only
+tells two `.txt` files in a folder apart, so `--log PATH` takes any `.txt` — a
+Tangra fit log or `notes.txt` alike.
+
+**Correcting a submitted observation** is the same command as fixing a draft:
+`iota-hub drafts files add <id> <slot> <path>` replaces the file and marks the
+observation `amended`. A replacement report must still describe the same
+observation (otherwise `identity_changed`, exit code `2`, and nothing changes),
+and once its event is in review the Hub refuses (`already_processed`, exit code
+`1`) — ask a coordinator then.
 
 ## Getting a key
 
-Sign in to IOTA Hub, open your profile page, and use the **API Keys** card. The
-key is shown once, is stored hashed, and you may have up to 10.
+Sign in to IOTA Hub and open the **Developers** page (`/developers`); the
+**API keys** section is there. The key is shown once, is stored hashed, and you
+may have up to 10.
 
 - **Scopes**, fixed when the key is created: `read` for every read,
   `observations:write` for every write. A key missing the scope a call needs is
@@ -183,7 +209,7 @@ no OS keyring integration.
   | ---- | ------------------------ | ------------------------------------------------------------------------- |
   | `0`  | success                  | also `--draft`, `--dry-run` and `--no-wait`, which end where you asked     |
   | `1`  | error                    | any other failure, including `5xx` and network failures                   |
-  | `2`  | usage                    | bad flags, missing argument, an ambiguous or incomplete slot mapping      |
+  | `2`  | usage                    | bad flags, missing argument, an ambiguous or incomplete slot mapping, a replacement report for another observation (`identity_changed`) |
   | `3`  | auth                     | no key configured, or the API rejected it                                 |
   | `4`  | open findings / not ready | findings to fix or dismiss, something required missing, or a wait timeout |
   | `5`  | rate limited             | still rate limited after the built-in retries                             |
@@ -228,9 +254,14 @@ with Client(api_key=os.environ["IOTA_HUB_API_KEY"]) as client:
     client.download_files("observation", result.observation_id, "downloads/")
 ```
 
-`result.outcome` is the vocabulary to branch on: `submitted`, `ready` (clean but
-left a draft), `needs_attention` (findings, something missing, or the run
-errored), or `draft` (`wait=False`, uploaded and finalized but not waited on).
+`result.outcome` is the vocabulary to branch on: `submitted` (also when it
+already was), `ready` (clean but left a draft), `needs_attention` (findings,
+something missing, or the run errored), or `draft` (`wait=False`, uploaded and
+finalized but not waited on). `result.observation.web_url` is the observation in
+the web app, and `result.observation.status` is the derived `draft` /
+`submitted` / `amended` / `locked`. `client.check_observation(asteroid_name=...,
+star_id=..., observed_date="YYYY-MM-DD", asteroid_id=...)` is the lookup before
+a create.
 
 Two layers, deliberately kept apart. The **transport** layer is one method per
 public API operation (`create_draft`, `submit_draft`, `list_events`,
@@ -273,9 +304,9 @@ which stays public for anyone the CLI and the library do not fit. It is the hard
 way — presigned S3 uploads, polling, idempotency keys — which is exactly why
 this package exists.
 
-The reference and the quickstart are at <https://iota-hub.com/developers>
+The raw-HTTP walkthrough is at <https://iota-hub.com/developers/api>
 (interactive reference at `/developers/reference`, the raw workflow guide at
-`/developers/guide.md`). Porting a client to another language starts from
+`/developers/guide.md`; keys are on `/developers`). Porting a client to another language starts from
 [`spec/openapi.json`](spec/openapi.json), vendored here and checked against the
 live document in CI, and
 [`docs/client-conventions.md`](docs/client-conventions.md), which specifies

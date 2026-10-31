@@ -19,10 +19,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 #: The file slots a client may fill. Closed: the server rejects anything else.
-Slot = Literal["report", "lightcurve", "log", "vizier"]
+Slot = Literal["report", "lightcurve", "log", "vizier", "aperture_record"]
 
 #: What a draft-create may declare: a fixed slot, or an attachment (repeatable).
-DeclaredSlot = Literal["report", "lightcurve", "log", "vizier", "attachment"]
+DeclaredSlot = Literal[
+    "report", "lightcurve", "log", "vizier", "aperture_record", "attachment"
+]
 
 
 class _Public(BaseModel):
@@ -79,9 +81,29 @@ class PublicDismissRequest(_Public):
 
 
 class PublicSubmitRequest(_Public):
-    """Body of ``POST /observations/{id}/submit``."""
+    """Body of ``POST /observations/{id}/submit``.
 
-    version: int
+    ``version`` is optional: omitted, the current version is submitted;
+    given, a mismatch is ``409 stale_version``.
+    """
+
+    version: int | None = None
+
+
+class PublicCheckRequest(_Public):
+    """Body of ``POST /observations/check``: an observation's natural identity.
+
+    ``asteroid_id`` and ``star_catalog`` are compared only when given, and
+    without ``asteroid_id`` there is no event lookup. ``station`` absent, null
+    and ``""`` are the same station.
+    """
+
+    asteroid_id: str | None = None
+    asteroid_name: str
+    star_catalog: str | None = None
+    star_id: str
+    observed_date: str
+    station: str | None = None
 
 
 #: What ``PATCH /observations/{id}`` may set the OWC link to. Closed: the
@@ -289,6 +311,7 @@ class PublicObservationMetadata(_Public):
     star_id: str | None = None
     observed_at_utc: str | None = None
     result_type: str | None = None
+    station: str | None = None
     comments: str | None = None
     confirm_unnumbered_asteroid_id: bool = False
     bypass_required_files: bool = False
@@ -303,10 +326,20 @@ class PublicReportParse(_Public):
 
 
 class PublicObservation(_Public):
-    """An observation (draft or submitted), self-describing for a poller."""
+    """An observation (draft or submitted), self-describing for a poller.
+
+    ``status`` is derived by the server: ``draft``, ``submitted``, ``amended``
+    (the owner changed a file after submitting) or ``locked`` (its event is in
+    review or later, so the owner can no longer change its files) -- an open
+    set, like every status here. ``web_url`` is the observation in the web app.
+    """
 
     observation_id: str
     submission_status: str
+    status: str = "draft"
+    web_url: str | None = None
+    amendment_count: int = 0
+    amended_at: str | None = None
     submitted_at: str | None = None
     created_at: str
     updated_at: str
@@ -356,6 +389,35 @@ class PublicFileList(_Public):
     files: list[PublicFileLink] = Field(default_factory=list)
     zip_url: str | None = None
     expires_in: int
+
+
+class PublicCheckObservation(_Public):
+    """The caller's own observation that matched a check."""
+
+    observation_id: str
+    status: str
+    amendment_count: int
+    web_url: str
+
+
+class PublicCheckEvent(_Public):
+    """An event for the checked asteroid + star + date: id and status only."""
+
+    event_id: str
+    status: str
+
+
+class PublicCheckResponse(_Public):
+    """Answer of ``POST /observations/check``.
+
+    ``found``: ``observation`` (one of yours; ``event`` is then its attached
+    event, if any), ``event`` (none of yours, but the event exists) or
+    ``none``. Another user's observation is never returned.
+    """
+
+    found: str
+    observation: PublicCheckObservation | None = None
+    event: PublicCheckEvent | None = None
 
 
 # --------------------------------------------------------------------------

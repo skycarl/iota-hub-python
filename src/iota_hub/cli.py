@@ -39,7 +39,12 @@ from .client import Client
 from .config import ENV_BASE_URL, Settings
 from .errors import AuthError, ConflictError, IotaHubError, RateLimitError
 from .files import map_folder
-from .models import PublicChecks, PublicEvent, PublicObservation
+from .models import (
+    PublicCheckResponse,
+    PublicChecks,
+    PublicEvent,
+    PublicObservation,
+)
 from .workflow import (
     POLL_TIMEOUT,
     SubmitResult,
@@ -70,6 +75,10 @@ USAGE_CODES = frozenset(
         "too_many_attachments",
         "unknown_profile",
         "confirmation_required",
+        # The API's own: the replacement report describes another observation.
+        # Nothing is wrong with the observation; the file the caller named is
+        # the wrong one for it, like an ``invalid_extension``.
+        "identity_changed",
     }
 )
 
@@ -92,6 +101,7 @@ class SlotName(str, Enum):
     lightcurve = "lightcurve"
     log = "log"
     vizier = "vizier"
+    aperture_record = "aperture_record"
     attachment = "attachment"
 
 
@@ -364,7 +374,14 @@ def _render_observation(observation: PublicObservation) -> None:
     """The one observation view, shared by submit, drafts and observations."""
     metadata = observation.metadata
     _field("Observation", observation.observation_id)
-    _field("Status", observation.submission_status)
+    _field("Status", observation.status)
+    if observation.amendment_count:
+        _field(
+            "Amended",
+            f"{observation.amendment_count} time(s), last {observation.amended_at}",
+        )
+    if observation.web_url:
+        _field("Web", observation.web_url)
     _field("Observer", _or_dash(metadata.observer_name))
     _field("Asteroid", _or_dash(metadata.asteroid_name or metadata.asteroid_id))
     _field("Star", _or_dash(metadata.star_id))
@@ -430,7 +447,8 @@ app = _sub("Submit and inspect IOTA Hub occultation observations.")
 auth_app = _sub("Store, inspect and forget the API key for a profile.")
 drafts_app = _sub("Work on unsubmitted drafts.")
 drafts_files_app = _sub(
-    "Replace or clear one file slot on a draft, or add or remove an attachment."
+    "Replace or clear one file slot on a draft, or add or remove an attachment. "
+    "On a submitted observation, replacing a file is how its owner amends it."
 )
 observations_app = _sub("Read observations.")
 events_app = _sub("Read events.")
@@ -489,7 +507,8 @@ IdArgument = Annotated[str, typer.Argument(metavar="ID")]
 SlotArgument = Annotated[
     SlotName,
     typer.Argument(
-        metavar="SLOT", help="report, lightcurve, log, vizier or attachment."
+        metavar="SLOT",
+        help="report, lightcurve, log, vizier, aperture_record or attachment.",
     ),
 ]
 YesOption = Annotated[bool, typer.Option("--yes", help="Do not ask for confirmation.")]
@@ -579,7 +598,10 @@ def submit(
     timeout: TimeoutOption = POLL_TIMEOUT,
     report: Annotated[
         Path | None,
-        typer.Option("--report", help="Use this file for the report slot (.xlsx)."),
+        typer.Option(
+            "--report",
+            help="Use this file for the report slot (.xlsx, .xls or .json).",
+        ),
     ] = None,
     lightcurve: Annotated[
         Path | None,
@@ -587,11 +609,21 @@ def submit(
     ] = None,
     log: Annotated[
         Path | None,
-        typer.Option("--log", help="Use this file for the log slot (.txt)."),
+        typer.Option(
+            "--log",
+            help="Use this file for the log slot (any .txt, whatever its name).",
+        ),
     ] = None,
     vizier: Annotated[
         Path | None,
         typer.Option("--vizier", help="Use this file for the vizier slot (.dat)."),
+    ] = None,
+    aperture_record: Annotated[
+        Path | None,
+        typer.Option(
+            "--aperture-record",
+            help="Use this file for the aperture_record slot (.lc or .pymovie).",
+        ),
     ] = None,
     attach: Annotated[
         list[Path] | None,
@@ -611,9 +643,10 @@ def submit(
 ) -> None:
     """Submit one folder: map, upload, finalize, wait for the checks, submit.
 
-    Files the four slots do not take (plots, raw .lc output, notes) are uploaded
-    as attachments; hidden files and subfolders never are. The attachment
-    limits (25 files, 50 MB each, no executables or scripts) are checked before
+    A Tangra .lc or PyMovie .pymovie goes in the optional aperture_record slot.
+    Files the five slots do not take (plots, notes) are uploaded as
+    attachments; hidden files and subfolders never are. The attachment limits
+    (25 files, 50 MB each, no executables or scripts) are checked before
     anything is created.
 
     Exits 4 when the draft came back with open findings or something missing,
@@ -626,6 +659,7 @@ def submit(
         "lightcurve": lightcurve,
         "log": log,
         "vizier": vizier,
+        "aperture_record": aperture_record,
         "attachments": not no_attachments,
         "attach": tuple(attach or ()),
     }
@@ -712,6 +746,7 @@ def _emit_submit(result: SubmitResult) -> None:
                     check.model_dump(mode="json") for check in result.skipped_checks
                 ],
                 "owc_commands": result.owc_commands,
+                "web_url": observation.web_url,
                 "observation": observation.model_dump(mode="json"),
             }
         )
@@ -726,6 +761,9 @@ def _emit_submit(result: SubmitResult) -> None:
         _out(f"  {'attachment':<12}{filename}")
     if ignored:
         _out(f"Not uploaded (--no-attachments): {', '.join(ignored)}")
+    if result.outcome in ("needs_attention", "draft") and observation.web_url:
+        # The hand-off to the browser: finish the draft there if you prefer.
+        _field("Web", observation.web_url)
     if result.outcome == "needs_attention":
         _render_readiness(observation)
         if observation.checks is not None:
@@ -957,21 +995,19 @@ def drafts_check(
 def drafts_submit(observation_id: IdArgument) -> None:
     """Submit a draft that is ready. Exits 4, with the findings, when it is not.
 
+    An observation that is already submitted is a success: it is printed as it
+    is, exactly what the API's own submit would answer.
+
     Example: iota-hub drafts submit obs_01JABCDEF
     """
     settings = _settings()
     with _make_client(settings) as client:
         observation = client.get_observation(observation_id)
         if observation.submission_status == "submitted":
-            raise IotaHubError(
-                "already_submitted",
-                f"{observation_id} is already submitted.",
-                hint=(
-                    "This observation is already submitted; submitted "
-                    "observations cannot be re-submitted."
-                ),
-                details={"observation_id": observation_id},
-            )
+            # Asking for a state the observation is already in is success
+            # (API spec 4.2): the read is the answer, no write needed.
+            _emit_observation(observation)
+            return
         readiness = observation.readiness
         if readiness is None or readiness.state != "ready":
             if not _OPTIONS.json:
@@ -1191,7 +1227,10 @@ def drafts_files_add(
     """Put a new file in one slot of a draft, or add one attachment.
 
     A fixed slot is replaced; `attachment` adds one more (the limits are 25
-    per observation, 50 MB each, no executables or scripts).
+    per observation, 50 MB each, no executables or scripts). On a submitted
+    observation of yours this is an amendment: a replaced report must still
+    describe the same observation (identity_changed, exit 2, otherwise), and
+    once its event is in review the API refuses (already_processed, exit 1).
 
     Example: iota-hub drafts files add obs_01JABCDEF lightcurve ./fixed.csv
     Example: iota-hub drafts files add obs_01JABCDEF attachment ./plot.png
@@ -1355,6 +1394,78 @@ def observations_show(observation_id: IdArgument) -> None:
     _emit_observation(observation)
 
 
+@observations_app.command("check")
+@handle_errors
+def observations_check(
+    asteroid_name: Annotated[
+        str, typer.Option("--asteroid-name", help="The asteroid's name.")
+    ],
+    star_id: Annotated[str, typer.Option("--star-id", help="The star's id.")],
+    date: Annotated[
+        str,
+        typer.Option(
+            "--date", metavar="YYYY-MM-DD", help="The UTC date of the observation."
+        ),
+    ],
+    asteroid_id: Annotated[
+        str | None,
+        typer.Option(
+            "--asteroid-id",
+            help="The asteroid's number. Without it, no event lookup is made.",
+        ),
+    ] = None,
+    star_catalog: Annotated[
+        str | None,
+        typer.Option("--star-catalog", help="The star's catalog, e.g. UCAC4, TYC."),
+    ] = None,
+    station: Annotated[
+        str | None,
+        typer.Option(
+            "--station", help="The station number, for one of several stations."
+        ),
+    ] = None,
+) -> None:
+    """Do I already have this observation? Look it up by what it observed.
+
+    Finds your own draft or submission for this asteroid, star, UTC date and
+    station; otherwise says whether the event exists. Never another observer's
+    observation. Run it before `submit` when an earlier run may have created
+    the draft already. Exits 0 whatever it finds.
+
+    Example: iota-hub observations check --asteroid-id 9721
+    --asteroid-name Doty --star-id 1234-56789 --date 2018-03-05
+    """
+    settings = _settings()
+    with _make_client(settings) as client:
+        answer = client.check_observation(
+            asteroid_id=asteroid_id,
+            asteroid_name=asteroid_name,
+            star_catalog=star_catalog,
+            star_id=star_id,
+            observed_date=date,
+            station=station,
+        )
+    if _OPTIONS.json:
+        _emit(answer.model_dump(mode="json"))
+        return
+    _render_check(answer)
+
+
+def _render_check(answer: PublicCheckResponse) -> None:
+    _field("Found", answer.found)
+    found = answer.observation
+    if found is not None:
+        _field("Observation", found.observation_id)
+        _field("Status", found.status)
+        _field("Amendments", found.amendment_count)
+        _field("Web", found.web_url)
+    if answer.event is not None:
+        _field("Event", f"{answer.event.event_id} ({answer.event.status})")
+    if found is not None and found.status == "draft":
+        _out("Next:")
+        _out(f"  iota-hub drafts show {found.observation_id}")
+
+
 # --------------------------------------------------------------------------
 # events
 # --------------------------------------------------------------------------
@@ -1473,7 +1584,7 @@ def files_download(
             metavar="SLOT",
             help=(
                 "Download only this slot. Any slot the server names, not just "
-                "the four upload slots: damit, ground_track, attachment, ..."
+                "the five upload slots: damit, ground_track, attachment, ..."
             ),
         ),
     ] = None,

@@ -20,6 +20,8 @@ from pydantic import BaseModel
 
 from ._http import DEFAULT_BASE_URL, Transport
 from .models import (
+    PublicCheckRequest,
+    PublicCheckResponse,
     PublicChecks,
     PublicDeclaredFile,
     PublicDismissRequest,
@@ -269,14 +271,21 @@ class Client(WorkflowMixin):
         self,
         observation_id: str,
         *,
-        version: int,
+        version: int | None = None,
         idempotency_key: str | None = None,
     ) -> PublicObservation:
-        """``public_submit_draft`` — submit, echoing the version you last read."""
+        """``public_submit_draft`` — submit, echoing the version you last read.
+
+        ``version`` is optional: without one the body is ``{}`` and the server
+        submits the current version. An observation that is already submitted
+        answers ``200`` with its current state, not an error.
+        """
         response = self.http.request(
             "POST",
             f"/observations/{_seg(observation_id)}/submit",
-            json=_body(PublicSubmitRequest(version=version)),
+            json=PublicSubmitRequest(version=version).model_dump(
+                mode="json", exclude_none=True
+            ),
             idempotency_key=idempotency_key,
         )
         return PublicObservation.model_validate(response.json())
@@ -286,6 +295,33 @@ class Client(WorkflowMixin):
         self.http.request("DELETE", f"/observations/{_seg(observation_id)}")
 
     # ----------------------------------------------------------------- reads
+
+    def check_observation(
+        self,
+        *,
+        asteroid_name: str,
+        star_id: str,
+        observed_date: str,
+        asteroid_id: str | None = None,
+        star_catalog: str | None = None,
+        station: str | None = None,
+    ) -> PublicCheckResponse:
+        """``public_check_observation`` — do I already have this observation?
+
+        Looks the observation up by its natural identity: your own draft or
+        submission, else whether the event exists. ``observed_date`` is the
+        UTC date, ``YYYY-MM-DD``. A read (``read`` scope), though it is a POST.
+        """
+        request = PublicCheckRequest(
+            asteroid_id=asteroid_id,
+            asteroid_name=asteroid_name,
+            star_catalog=star_catalog,
+            star_id=star_id,
+            observed_date=observed_date,
+            station=station,
+        )
+        response = self.http.request("POST", "/observations/check", json=_body(request))
+        return PublicCheckResponse.model_validate(response.json())
 
     def list_events(
         self,

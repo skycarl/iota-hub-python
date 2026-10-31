@@ -57,7 +57,7 @@ class SubmitResult:
 
     | value | meaning |
     |---|---|
-    | ``submitted`` | the observation is submitted |
+    | ``submitted`` | the observation is submitted (also when it already was) |
     | ``ready`` | clean, but ``submit=False`` left it a draft |
     | ``needs_attention`` | findings, missing items, or the run errored |
     | ``draft`` | ``wait=False``: uploaded and finalized, not waited on |
@@ -183,6 +183,9 @@ class WorkflowMixin:
         if not submit:
             return result(observation, False, "ready")
 
+        # A submit on an observation that is already submitted -- a lost
+        # response retried, or the auto-submit worker winning the race --
+        # answers 200 with its current state: that is "submitted" too.
         _say(on_progress, "Submitting...")
         observation = self.submit_draft(
             observation_id,
@@ -199,6 +202,7 @@ class WorkflowMixin:
         lightcurve: str | Path | None = None,
         log: str | Path | None = None,
         vizier: str | Path | None = None,
+        aperture_record: str | Path | None = None,
         attachments: bool = True,
         attach: Sequence[str | Path] = (),
         **kwargs: object,
@@ -215,6 +219,7 @@ class WorkflowMixin:
             lightcurve=lightcurve,
             log=log,
             vizier=vizier,
+            aperture_record=aperture_record,
             attachments=attachments,
             attach=tuple(attach),
         )

@@ -9,7 +9,13 @@ import httpx
 import pytest
 from conftest import FIXTURES, MockAPI, body_of
 
-from iota_hub import IotaHubError, next_actions_commands, sha256_base64
+from iota_hub import (
+    ConflictError,
+    IotaHubError,
+    RequestError,
+    next_actions_commands,
+    sha256_base64,
+)
 from iota_hub.models import PublicObservation
 
 OBSERVATION_DIR = FIXTURES / "observation"
@@ -339,7 +345,7 @@ def test_submit_folder_uploads_the_leftovers_as_attachments(client, mock_api, tm
     for source in FILES.values():
         (folder / source.name).write_bytes(source.read_bytes())
     (folder / "X.pyote.png").write_bytes(b"png-bytes")
-    (folder / "X_Tangra.lc").write_bytes(b"lc-bytes")
+    (folder / "X_Tangra.xml").write_bytes(b"lc-bytes")
     (folder / ".hidden").write_bytes(b"never")
 
     mock_api.json(
@@ -350,7 +356,7 @@ def test_submit_folder_uploads_the_leftovers_as_attachments(client, mock_api, tm
             "uploads": [
                 *(upload_target(slot, FILES[slot].name) for slot in FILES),
                 attachment_target("X.pyote.png", "att-1"),
-                attachment_target("X_Tangra.lc", "att-2"),
+                attachment_target("X_Tangra.xml", "att-2"),
             ],
         },
         status=201,
@@ -365,7 +371,7 @@ def test_submit_folder_uploads_the_leftovers_as_attachments(client, mock_api, tm
         },
         {
             "attachment_id": "att-2",
-            "filename": "X_Tangra.lc",
+            "filename": "X_Tangra.xml",
             "size_bytes": 8,
             "uploaded_at": "2026-01-01T00:00:00Z",
         },
@@ -385,7 +391,7 @@ def test_submit_folder_uploads_the_leftovers_as_attachments(client, mock_api, tm
     result = client.submit_folder(folder, submit=False, on_progress=messages.append)
 
     assert result.outcome == "ready"
-    assert result.attachments == ["X.pyote.png", "X_Tangra.lc"]
+    assert result.attachments == ["X.pyote.png", "X_Tangra.xml"]
     assert result.ignored == []
     assert [a.attachment_id for a in result.observation.attachments] == [
         "att-1",
@@ -412,7 +418,7 @@ def test_submit_folder_uploads_the_leftovers_as_attachments(client, mock_api, tm
     assert len(posts) == 5
     assert b"png-bytes" in posts[3].content
     assert b"lc-bytes" in posts[4].content
-    assert "Uploading attachment X_Tangra.lc (5/5)..." in messages
+    assert "Uploading attachment X_Tangra.xml (5/5)..." in messages
 
 
 def test_submit_files_checks_attachment_limits_before_any_call(
@@ -933,3 +939,192 @@ def test_unknown_slots_are_rejected_before_anything_is_sent(client, mock_api):
         client.submit_files({"attachment": Path("notes.txt")})
 
     assert mock_api.requests == []
+
+
+# -- the aperture record, submit-twice, check and amend ---------------------
+
+
+def test_submit_folder_declares_and_uploads_the_aperture_record(
+    client, mock_api, tmp_path
+):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    for source in FILES.values():
+        (folder / source.name).write_bytes(source.read_bytes())
+    record = folder / "X.pymovie"
+    record.write_bytes(b"PYMOVIE\x00frames")
+    mock_api.json(
+        "POST",
+        DRAFTS,
+        {
+            "observation": observation(next_actions=[]),
+            "uploads": [
+                *(upload_target(slot, path.name) for slot, path in FILES.items()),
+                upload_target("aperture_record", record.name),
+            ],
+        },
+        status=201,
+    )
+    script_upload(mock_api)
+    mock_api.json("POST", FINALIZE, observation())
+
+    result = client.submit_folder(folder, wait=False)
+
+    declared = body_of(requests_to(mock_api, DRAFTS)[0])["files"]
+    assert [item["slot"] for item in declared] == [
+        "report",
+        "lightcurve",
+        "log",
+        "aperture_record",
+    ]
+    assert declared[3]["filename"] == "X.pymovie"
+    assert declared[3]["size"] == record.stat().st_size
+    assert result.uploads["aperture_record"] == "X.pymovie"
+    assert result.attachments == []
+    assert len(requests_to(mock_api, BUCKET)) == 4
+
+
+def test_a_200_from_an_already_submitted_observation_is_submitted(client, mock_api):
+    """The worker won the race: submit answers 200 with the current state."""
+    script_create(mock_api)
+    script_upload(mock_api)
+    mock_api.json("POST", FINALIZE, observation())
+    mock_api.json(
+        "GET",
+        GET,
+        observation(
+            checks={"run_id": "r1", "status": "complete"},
+            readiness=readiness(),
+            next_actions=["submit"],
+        ),
+    )
+    mock_api.json(
+        "POST",
+        SUBMIT,
+        observation(
+            submission_status="submitted",
+            status="submitted",
+            submitted_at="2026-01-01T00:00:01Z",
+            next_actions=[],
+        ),
+    )
+
+    result = client.submit_files(FILES)
+
+    assert result.outcome == "submitted"
+    assert result.submitted is True
+    assert result.observation.status == "submitted"
+
+
+def test_submit_draft_without_a_version_sends_an_empty_body(client, mock_api):
+    mock_api.json("POST", SUBMIT, observation(submission_status="submitted"))
+
+    client.submit_draft(OBS_ID)
+    client.submit_draft(OBS_ID, version=9)
+
+    bodies = [body_of(request) for request in requests_to(mock_api, SUBMIT)]
+    assert bodies == [{}, {"version": 9}]
+
+
+CHECK = "/public/v1/observations/check"
+
+
+def test_check_observation_sends_the_identity_and_reads_the_answer(client, mock_api):
+    mock_api.json(
+        "POST",
+        CHECK,
+        {
+            "found": "observation",
+            "observation": {
+                "observation_id": OBS_ID,
+                "status": "draft",
+                "amendment_count": 0,
+                "web_url": f"https://hub.example.test/new-observation?draft={OBS_ID}",
+            },
+            "event": None,
+        },
+    )
+
+    answer = client.check_observation(
+        asteroid_id="9721",
+        asteroid_name="Doty",
+        star_id="1234-56789",
+        observed_date="2018-03-05",
+    )
+
+    assert answer.found == "observation"
+    assert answer.observation.observation_id == OBS_ID
+    request = requests_to(mock_api, CHECK)[0]
+    assert body_of(request) == {
+        "asteroid_id": "9721",
+        "asteroid_name": "Doty",
+        "star_catalog": None,
+        "star_id": "1234-56789",
+        "observed_date": "2018-03-05",
+        "station": None,
+    }
+    # A read: no idempotency key, and the key is sent like on every call.
+    assert "Idempotency-Key" not in request.headers
+    assert request.headers["X-API-Key"]
+
+
+INIT_REPORT = f"/public/v1/observations/{OBS_ID}/files/report/upload/init"
+FINALIZE_REPORT = f"/public/v1/observations/{OBS_ID}/files/report/upload/finalize"
+
+
+def test_an_amend_with_another_identity_is_a_request_error_with_the_changes(
+    client, mock_api
+):
+    changed = [{"field": "star_id", "stored": "1-2", "parsed": "1-3"}]
+    mock_api.json("POST", INIT_REPORT, upload_target("report", REPORT.name))
+    script_upload(mock_api)
+    mock_api.json(
+        "POST",
+        FINALIZE_REPORT,
+        {
+            "code": "identity_changed",
+            "message": "The replacement report describes a different observation",
+            "hint": "Fix the report so it describes this observation.",
+            "details": {
+                "status": "submitted",
+                "observation_id": OBS_ID,
+                "amendment_count": 0,
+                "changed": changed,
+            },
+        },
+        status=422,
+    )
+
+    with pytest.raises(RequestError) as excinfo:
+        client.replace_file(OBS_ID, "report", REPORT)
+
+    error = excinfo.value
+    assert error.code == "identity_changed"
+    assert error.details["changed"] == changed
+    assert error.details["status"] == "submitted"
+    # A 4xx is never retried.
+    assert len(requests_to(mock_api, FINALIZE_REPORT)) == 1
+
+
+def test_an_amend_after_the_lock_is_a_conflict_with_the_state(client, mock_api):
+    mock_api.json(
+        "POST",
+        INIT_REPORT,
+        {
+            "code": "already_processed",
+            "message": "The event is in review",
+            "details": {
+                "status": "locked",
+                "observation_id": OBS_ID,
+                "amendment_count": 1,
+            },
+        },
+        status=409,
+    )
+
+    with pytest.raises(ConflictError) as excinfo:
+        client.replace_file(OBS_ID, "report", REPORT)
+
+    assert excinfo.value.code == "already_processed"
+    assert excinfo.value.details["status"] == "locked"
+    assert requests_to(mock_api, BUCKET) == []

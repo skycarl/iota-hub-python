@@ -88,3 +88,91 @@ def test_defaults_match_the_schema():
     evidence = models.PublicEvidence(source="s", field="f", expected="a", actual="b")
     assert evidence.expected_label == "Expected"
     assert evidence.mismatch is True
+
+
+def test_the_derived_status_web_url_and_amendments_parse_and_default():
+    minimal = {
+        "observation_id": "obs_1",
+        "submission_status": "submitted",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+        "version": 3,
+        "observer_user_id": "user_1",
+        "metadata": {},
+    }
+    # An older server sends none of them: the defaults are the schema's.
+    observation = models.PublicObservation.model_validate(minimal)
+    assert observation.status == "draft"
+    assert observation.web_url is None
+    assert observation.amendment_count == 0
+    assert observation.amended_at is None
+    assert observation.metadata.station is None
+
+    observation = models.PublicObservation.model_validate(
+        {
+            **minimal,
+            "status": "amended",
+            "web_url": "https://hub.example.test/observations/obs_1",
+            "amendment_count": 2,
+            "amended_at": "2026-02-01T00:00:00Z",
+            "metadata": {"station": "2"},
+        }
+    )
+    assert observation.status == "amended"
+    assert observation.web_url.endswith("/observations/obs_1")
+    assert observation.amendment_count == 2
+    assert observation.metadata.station == "2"
+
+    # A status the API adds later still parses (open string enum).
+    assert (
+        models.PublicObservation.model_validate(
+            {**minimal, "status": "withdrawn"}
+        ).status
+        == "withdrawn"
+    )
+
+
+def test_the_submit_version_is_optional():
+    assert models.PublicSubmitRequest().version is None
+    assert models.PublicSubmitRequest(version=7).version == 7
+
+
+def test_the_aperture_record_is_a_declarable_slot():
+    declared = models.PublicDeclaredFile(
+        slot="aperture_record", filename="x.pymovie", size=8
+    )
+    assert declared.slot == "aperture_record"
+
+
+def test_the_check_request_and_every_answer_parse():
+    request = models.PublicCheckRequest(
+        asteroid_name="Doty", star_id="1-2", observed_date="2018-03-05"
+    )
+    assert request.asteroid_id is None
+    assert request.star_catalog is None
+    assert request.station is None
+
+    none = models.PublicCheckResponse.model_validate({"found": "none"})
+    assert none.observation is None and none.event is None
+
+    event = models.PublicCheckResponse.model_validate(
+        {"found": "event", "event": {"event_id": "evt_1", "status": "IN_REVIEW"}}
+    )
+    assert event.event.event_id == "evt_1"
+    assert event.observation is None
+
+    found = models.PublicCheckResponse.model_validate(
+        {
+            "found": "observation",
+            "observation": {
+                "observation_id": "obs_1",
+                "status": "draft",
+                "amendment_count": 0,
+                "web_url": "https://hub.example.test/new-observation?draft=obs_1",
+                "added_later": True,
+            },
+            "event": None,
+        }
+    )
+    assert found.observation.status == "draft"
+    assert found.observation.web_url.endswith("draft=obs_1")

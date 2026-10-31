@@ -25,10 +25,25 @@ Read `outcome` from the JSON document on stdout:
 
 | `outcome`         | What to do                                                    |
 | ----------------- | ------------------------------------------------------------- |
-| `submitted`       | Done. Report the observation id.                               |
+| `submitted`       | Done (also when it was already submitted). Report the id.      |
 | `ready`           | Clean but still a draft (`--draft` was used). Nothing to fix.   |
-| `needs_attention` | Work the fix loop below.                                       |
+| `needs_attention` | Work the fix loop below, or give the observer `web_url`.        |
 | `draft`           | `--no-wait` was used; nothing has been checked yet.             |
+
+`web_url` (top level of the document) is the observation in the web app — hand
+it to the observer whenever the outcome is `needs_attention` or `draft`.
+
+**Before re-running a submit that may already have created a draft** (an
+earlier run crashed or its output was lost), look first instead of creating a
+second one:
+
+```bash
+iota-hub observations check --asteroid-id <number> --asteroid-name <name> \
+    --star-id <star> --date <YYYY-MM-DD> --json
+```
+
+`found: "observation"` is the observer's own draft or submission (work on that
+id); `"event"` or `"none"` means there is none of theirs yet.
 
 Use `--dry-run` first if you want to show the observer the slot mapping before
 anything is created. It calls nothing.
@@ -64,7 +79,7 @@ API says is available; run them as printed rather than paraphrasing them.
 
 ```bash
 iota-hub drafts show <id>                          # current state and findings
-iota-hub drafts files add <id> lightcurve <path>   # replace a file
+iota-hub drafts files add <id> lightcurve <path>   # replace a file (any slot, incl. aperture_record)
 iota-hub drafts files rm <id> vizier               # clear a slot
 iota-hub drafts files add <id> attachment <path>   # add an attachment
 iota-hub drafts files rm <id> attachment <attachment_id>  # remove one (ids in drafts show)
@@ -80,6 +95,14 @@ iota-hub drafts submit <id>                        # submit when clean
 Replacing a file re-arms the checks automatically. A finding about a missing
 required item cannot be dismissed — supply the item instead.
 
+**Amending a submitted observation** is the same `drafts files add` (the
+observation then shows `status: amended`). `identity_changed` (exit `2`) means
+the replacement report describes a different observation — show the observer
+`details.changed` and let them fix the report; never work around it by
+creating a new observation. `already_processed` (exit `1`) means the event is
+in review: only a coordinator can change it now. An observer can never clear a
+slot of a submitted observation (`forbidden`).
+
 Other commands: `iota-hub drafts list`, `iota-hub observations list|show`,
 `iota-hub events list|show`,
 `iota-hub files download observation <id> [--slot lightcurve] [-o DIR] [--force]`,
@@ -93,7 +116,7 @@ Branch on these, not on the text.
 | ---- | ---------------------------------------------------------- |
 | `0`  | success                                                     |
 | `1`  | error (including server and network failures)               |
-| `2`  | usage: bad flags, an ambiguous or incomplete file mapping, or an attachment the API would refuse |
+| `2`  | usage: bad flags, an ambiguous or incomplete file mapping, an attachment the API would refuse, or a replacement report for another observation (`identity_changed`) |
 | `3`  | auth: no key, or the API rejected it                        |
 | `4`  | open findings / not ready — the fix loop above              |
 | `5`  | rate limited after the built-in retries                     |
@@ -115,9 +138,14 @@ JSON too: `usage_error`, exit code `2`.
   observation in the web app before it is submitted.
 - If a `Target: <base URL>` line appears on stderr, the command is **not**
   pointed at production. Confirm with the observer that this is intended.
-- An ambiguous mapping (two `.csv` files, no `.xlsx`) is exit code `2`. Do not
-  pick one — show the observer the candidates and use the explicit flag they
-  name (`--report`, `--lightcurve`, `--log`, `--vizier`).
+- An ambiguous mapping (two `.csv` files, no report, a spreadsheet *and* a
+  `.json`) is exit code `2`. Do not pick one — show the observer the candidates
+  and use the explicit flag they name (`--report`, `--lightcurve`, `--log`,
+  `--vizier`, `--aperture-record`).
+- The report is the NA spreadsheet (`.xlsx`/`.xls`) or a Tangra JSON report
+  (`.json`); a Tangra `.lc` or PyMovie `.pymovie` goes in the optional
+  `aperture_record` slot. `--log PATH` takes any `.txt` (e.g. a Tangra fit
+  log); in a folder only a `.txt` with `log` in its name is picked up.
 - Files the slots do not claim are uploaded as **attachments** (25 max, 50 MB
   each, no executables or scripts). If `submit` exits `2` with
   `blocked_attachment`, `attachment_too_large` or `too_many_attachments`, show
@@ -129,4 +157,5 @@ JSON too: `usage_error`, exit code `2`.
 ## More
 
 `iota-hub guide` prints the full workflow guide offline. The HTTP API behind all
-of this is documented at <https://iota-hub.com/developers>.
+of this is documented at <https://iota-hub.com/developers/api>; keys are
+created on <https://iota-hub.com/developers>.

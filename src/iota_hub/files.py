@@ -7,7 +7,7 @@ and nothing else: no content sniffing, no classification. When a rule does not
 pick exactly one file, that is an error naming the candidates and the flag that
 settles it — a wrong guess costs an observer a bad submission.
 
-Every file the four slots do not take becomes an **attachment**, under the
+Every file the five slots do not take becomes an **attachment**, under the
 server's attachment rules (``specs/public-api.md`` § 4.3), checked here before
 anything is created so a folder the API would refuse fails before any call.
 """
@@ -20,23 +20,24 @@ from pathlib import Path
 from .errors import IotaHubError
 
 #: Every slot the public API accepts, in the order a client fills them.
-SLOTS = ("report", "lightcurve", "log", "vizier")
+SLOTS = ("report", "lightcurve", "log", "vizier", "aperture_record")
 
 #: The slots a draft cannot be submitted without.
 REQUIRED_SLOTS = ("report", "lightcurve", "log")
 
 #: The server's allow-list (``observation_file_validation.py``), slot by slot.
 EXTENSIONS: dict[str, tuple[str, ...]] = {
-    "report": (".xlsx", ".xls"),
+    "report": (".xlsx", ".xls", ".json"),
     "lightcurve": (".csv",),
     "log": (".txt",),
     "vizier": (".dat",),
+    "aperture_record": (".lc", ".pymovie"),
 }
 
 #: The CLI flag that overrides the rule for a slot, named in every error.
-FLAGS = {slot: f"--{slot}" for slot in SLOTS}
+FLAGS = {slot: f"--{slot.replace('_', '-')}" for slot in SLOTS}
 
-#: The declared ``slot`` of an attachment. It repeats; the four above do not.
+#: The declared ``slot`` of an attachment. It repeats; the five above do not.
 ATTACHMENT_SLOT = "attachment"
 
 #: The server's attachment rules (``file_limits`` and
@@ -97,6 +98,7 @@ def map_folder(
     lightcurve: str | Path | None = None,
     log: str | Path | None = None,
     vizier: str | Path | None = None,
+    aperture_record: str | Path | None = None,
     attachments: bool = True,
     attach: list[str | Path] | tuple[str | Path, ...] = (),
 ) -> FolderMapping:
@@ -104,10 +106,11 @@ def map_folder(
 
     | Slot | Rule |
     |---|---|
-    | ``report`` | exactly one ``.xlsx``/``.xls`` |
+    | ``report`` | exactly one ``.xlsx``/``.xls``/``.json`` |
     | ``lightcurve`` | exactly one ``.csv`` |
     | ``log`` | exactly one ``.txt`` whose name contains ``log`` |
     | ``vizier`` | at most one ``.dat`` |
+    | ``aperture_record`` | at most one ``.lc``/``.pymovie`` |
 
     The listing is non-recursive and skips dotfiles and subdirectories;
     extensions are matched case-insensitively. An explicit path replaces the
@@ -129,7 +132,13 @@ def map_folder(
             details={"path": str(base)},
         )
 
-    overrides = _overrides(report=report, lightcurve=lightcurve, log=log, vizier=vizier)
+    overrides = _overrides(
+        report=report,
+        lightcurve=lightcurve,
+        log=log,
+        vizier=vizier,
+        aperture_record=aperture_record,
+    )
     # Sorted by name, codepoint order: ``Path`` ordering is case-insensitive
     # on Windows, and the attachments are declared in this order everywhere.
     entries = sorted(
@@ -201,7 +210,8 @@ def check_attachments(paths: list[Path], *, already_attached: int = 0) -> None:
             f"The API refuses these file types as attachments: {names}.",
             hint=(
                 "Move them out of the folder, or pass --no-attachments to upload "
-                "only the report, light curve, log and VizieR files."
+                "only the report, light curve, log, VizieR and aperture record "
+                "files."
             ),
             details={
                 "files": [path.name for path in blocked],
@@ -310,7 +320,7 @@ def _ambiguous(slot: str, candidates: list[Path]) -> MappingError:
 
 def _missing(directory: Path, missing: list[str]) -> MappingError:
     rules = {
-        "report": "one .xlsx or .xls file",
+        "report": "one .xlsx, .xls or .json file",
         "lightcurve": "one .csv file",
         "log": "one .txt file with 'log' in its name",
     }
