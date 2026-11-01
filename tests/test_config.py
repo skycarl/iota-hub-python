@@ -73,6 +73,46 @@ def test_an_explicit_base_url_overrides_the_profiles(config_path):
     assert settings.api_key == PROFILE_KEY
 
 
+def test_an_environment_base_url_cannot_redirect_a_stored_key(config_path):
+    with pytest.raises(IotaHubError) as excinfo:
+        resolve(env={"IOTA_HUB_BASE_URL": DEFAULT_BASE_URL}, config_path=config_path)
+
+    assert excinfo.value.code == "invalid_config"
+    assert PROFILE_KEY not in str(excinfo.value)
+
+
+def test_an_environment_base_url_that_agrees_with_the_profile_is_fine(config_path):
+    settings = resolve(
+        env={"IOTA_HUB_BASE_URL": DEV_URL + "/"}, config_path=config_path
+    )
+
+    assert settings.base_url == DEV_URL
+    assert settings.api_key == PROFILE_KEY
+
+
+def test_an_environment_base_url_goes_with_an_environment_key(config_path):
+    settings = resolve(
+        env={"IOTA_HUB_API_KEY": ENV_KEY, "IOTA_HUB_BASE_URL": DEFAULT_BASE_URL},
+        config_path=config_path,
+    )
+
+    assert settings.base_url == DEFAULT_BASE_URL
+    assert settings.api_key == ENV_KEY
+
+
+def test_the_base_url_flag_still_overrides_the_profile_despite_the_environment(
+    config_path,
+):
+    settings = resolve(
+        base_url=DEFAULT_BASE_URL,
+        env={"IOTA_HUB_BASE_URL": "https://elsewhere.example.test"},
+        config_path=config_path,
+    )
+
+    assert settings.base_url == DEFAULT_BASE_URL
+    assert settings.api_key == PROFILE_KEY
+
+
 def test_the_environment_names_the_profile(tmp_path):
     path = tmp_path / "config.toml"
     save_profile(

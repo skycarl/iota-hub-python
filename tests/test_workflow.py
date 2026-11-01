@@ -778,6 +778,42 @@ def test_a_filename_that_names_no_file_is_refused(client, mock_api, tmp_path, fi
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize("second", ["report.xlsx", "REPORT.XLSX", "sub/report.xlsx"])
+def test_two_files_with_one_name_are_refused(client, mock_api, tmp_path, second):
+    link = {"size_bytes": 12, "expires_in": 900}
+    mock_api.json(
+        "GET",
+        FILE_LIST,
+        {
+            "observation_id": OBS_ID,
+            "expires_in": 900,
+            "files": [
+                {
+                    **link,
+                    "slot": "report",
+                    "filename": "report.xlsx",
+                    "url": f"https://s3.example.test{REPORT_URL}?sig=1",
+                },
+                {
+                    **link,
+                    "slot": "attachment",
+                    "filename": second,
+                    "url": f"https://s3.example.test{CURVE_URL}?sig=2",
+                },
+            ],
+        },
+    )
+
+    with pytest.raises(IotaHubError) as excinfo:
+        client.download_files("observation", OBS_ID, tmp_path, overwrite=True)
+
+    assert excinfo.value.code == "download_failed"
+    # Refused before any request: the second file never overwrote the first.
+    assert requests_to(mock_api, REPORT_URL) == []
+    assert requests_to(mock_api, CURVE_URL) == []
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_an_expired_link_is_download_failed(client, mock_api, tmp_path):
     script_file_list(mock_api)
     mock_api.add("GET", REPORT_URL, httpx.Response(403, text="<Error>Expired</Error>"))

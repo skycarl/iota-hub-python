@@ -366,3 +366,32 @@ def test_sha256_base64_streams_a_large_file(tmp_path: Path):
     path = tmp_path / "big.csv"
     path.write_bytes(b"x" * (3 * 1024 * 1024 + 7))
     assert len(sha256_base64(path)) == 44
+
+
+# -- cleartext targets ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://api.iota-hub.com",
+        "http://192.168.1.10:8000",
+        "ftp://api.iota-hub.com",
+        "api.iota-hub.com",
+        "https://",
+    ],
+)
+def test_a_base_url_that_would_leak_the_key_is_refused(base_url):
+    with pytest.raises(IotaHubError) as excinfo:
+        Transport(API_KEY, base_url)
+
+    assert excinfo.value.code == "invalid_config"
+    assert API_KEY not in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["http://localhost:8000", "http://127.0.0.1:8000/", "http://[::1]:8000"],
+)
+def test_plain_http_is_allowed_to_the_local_machine(base_url):
+    Transport(API_KEY, base_url).close()

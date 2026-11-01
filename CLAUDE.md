@@ -90,6 +90,10 @@ uv run python scripts/check_openapi_drift.py --update
 Tag `vX.Y.Z` matching the version in `pyproject.toml` and push it; `release.yml` builds
 and publishes to PyPI via Trusted Publishing (no stored token). The tag/version check
 fails loudly on a mismatch rather than publishing the wrong thing.
+The publish job runs in the `pypi` GitHub environment, which only `v*` tags may deploy
+to and which waits for the maintainer's approval. Actions are pinned to commit SHAs (the
+tag in the trailing comment); bump a pin by resolving the new tag's SHA, never back to a
+bare tag or branch.
 
 **Nothing publishes before the production release of the IOTA Hub public API** (phase 7
 of `features/public-api/design.md` in the main repo) — see the warning at the top of

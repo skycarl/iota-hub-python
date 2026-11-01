@@ -61,6 +61,9 @@ def resolve(
     Target: argument, then ``IOTA_HUB_BASE_URL``, then the profile's base URL,
     then the production default. Passing ``--base-url`` while using a profile
     is allowed and the flag wins — an explicit instruction beats a stored one.
+    ``IOTA_HUB_BASE_URL`` is not explicit enough to do the same: when it
+    disagrees with the base URL stored beside the profile's key, that is
+    ``invalid_config`` rather than the key going somewhere it was not stored for.
     """
     config = load_config(config_path)
     profiles = config.get("profiles") or {}
@@ -98,9 +101,30 @@ def resolve(
             hint="Set IOTA_HUB_API_KEY or run `iota-hub auth login`.",
         )
 
-    target = (
-        base_url or env.get(ENV_BASE_URL) or stored.get("base_url") or DEFAULT_BASE_URL
-    ).rstrip("/")
+    env_target = (env.get(ENV_BASE_URL) or "").rstrip("/")
+    stored_target = (stored.get("base_url") or "").rstrip("/")
+    if (
+        not base_url
+        and source == "profile"
+        and env_target
+        and stored_target
+        and env_target != stored_target
+    ):
+        # The stored key belongs to the stored target. An ambient environment
+        # variable must not quietly redirect it elsewhere -- a leftover dev
+        # IOTA_HUB_BASE_URL would otherwise send the prod key to dev.
+        raise IotaHubError(
+            "invalid_config",
+            f"{ENV_BASE_URL} is {env_target}, but the key comes from profile "
+            f"{name!r}, which is stored for {stored_target}.",
+            hint=(
+                f"Unset {ENV_BASE_URL}, set {ENV_API_KEY} as well, or pass "
+                "--base-url to choose the target explicitly."
+            ),
+            details={"field": "base_url", "profile": name},
+        )
+
+    target = (base_url or env_target or stored_target or DEFAULT_BASE_URL).rstrip("/")
 
     return Settings(
         api_key=key,

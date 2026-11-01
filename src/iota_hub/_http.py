@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from time import sleep as _default_sleep
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -29,6 +30,9 @@ BACKOFF_BASE = 0.5
 BACKOFF_CAP = 20.0
 
 _CHUNK = 1024 * 1024
+
+#: Hosts a key may be sent to over plain ``http``: the local machine only.
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 class Transport:
@@ -52,6 +56,7 @@ class Transport:
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        check_base_url(self.base_url)
         self.api_root = f"{self.base_url}{API_PREFIX}"
         self.max_retries = max_retries
         self.user_agent = user_agent or f"iota-hub-python/{__version__}"
@@ -164,6 +169,27 @@ class Transport:
             details={"slot": target.slot, "filename": target.filename},
             status=response.status_code,
         )
+
+
+def check_base_url(base_url: str) -> None:
+    """Refuse a base URL the key would travel to in cleartext.
+
+    The key is a header on every API call, so anything but ``https`` would
+    hand it to the network. Plain ``http`` is allowed only for the local
+    machine, where a development server runs (conventions § 4).
+    """
+    parts = urlsplit(base_url)
+    if parts.scheme == "https" and parts.hostname:
+        return
+    if parts.scheme == "http" and parts.hostname in LOOPBACK_HOSTS:
+        return
+    raise IotaHubError(
+        "invalid_config",
+        f"Refusing to send the API key to {base_url!r}: the base URL must be "
+        "https (plain http is allowed only for localhost).",
+        hint="Use the https:// address of the API.",
+        details={"field": "base_url", "base_url": base_url},
+    )
 
 
 def sha256_base64(path: str | Path) -> str:

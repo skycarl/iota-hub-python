@@ -362,6 +362,27 @@ class WorkflowMixin:
         # Check every destination before writing any of it: a refusal halfway
         # through would leave the caller with a partial download.
         targets = [(link, directory / _safe_name(link)) for link in links]
+        # Two links with one name would have the second overwrite the first,
+        # --force or not. Compared case-insensitively: the default Windows and
+        # macOS file systems are.
+        seen: dict[str, PublicFileLink | PublicEventFileLink] = {}
+        for link, out in targets:
+            first = seen.setdefault(out.name.casefold(), link)
+            if first is not link:
+                raise IotaHubError(
+                    "download_failed",
+                    f"The API listed two files that would both be written to "
+                    f"{out}: {first.filename!r} ({first.slot}) and "
+                    f"{link.filename!r} ({link.slot}).",
+                    hint=(
+                        "Download them one slot at a time (--slot) into "
+                        "separate directories."
+                    ),
+                    details={
+                        "filename": out.name,
+                        "slots": [first.slot, link.slot],
+                    },
+                )
         if not overwrite:
             for link, out in targets:
                 if out.exists():

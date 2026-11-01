@@ -150,7 +150,12 @@ else the profile; the base URL from the flag, else the environment, else the
 profile, else the default. *Decision:* a `--base-url` passed alongside a
 profile is allowed and wins — an explicit instruction beats a stored one — and
 the resolved settings say which of `flag` / `env` / `profile` the key came
-from, so a client can show it. A profile that was **asked for** and does not
+from, so a client can show it. The environment does not get the same
+latitude: when the key comes from a profile and `IOTA_HUB_BASE_URL` names a
+different base URL than the one stored with that key, the client raises
+`invalid_config` instead of sending the key there — a leftover dev variable
+must never carry a prod key to dev. Setting `IOTA_HUB_API_KEY` as well, or
+passing `--base-url`, settles it. A profile that was **asked for** and does not
 exist is `unknown_profile`; a config file that is not valid TOML is
 `invalid_config`. A stored `default_profile` that no longer exists is simply
 ignored, so deleting a profile never wedges the CLI.
@@ -185,6 +190,10 @@ A trailing slash on the configured value is tolerated and stripped.
 | Local | `http://localhost:8000` | `http://localhost:8000/public/v1/events` |
 
 No non-production URL is baked into a published client.
+
+**The key never travels in cleartext.** *Decision:* a base URL must be
+`https`, except `http` to `localhost`, `127.0.0.1` or `::1`. Anything else is
+`invalid_config`, raised when the client is constructed, before any request.
 
 > **Note.** `spec/openapi.json` carries `servers[0].url` = `<base>/public/v1`
 > *and* path keys that begin with `/public/v1`. Compose a request from the base
@@ -417,7 +426,7 @@ and the CLI maps each one to an exit code (§ 12):
 | `code` | Raised when |
 |---|---|
 | `upload_failed` | S3 refused a presigned POST; `status` and `details.slot` say which |
-| `download_failed` | S3 refused a presigned GET — an expired link answers `403`; also a server-supplied filename that names no file (`""`, `.`, `..` once the directories are stripped), refused before anything is written |
+| `download_failed` | S3 refused a presigned GET — an expired link answers `403`; also a server-supplied filename that names no file (`""`, `.`, `..` once the directories are stripped), or two files whose names collide (compared case-insensitively), refused before anything is written |
 | `file_exists` | a download would overwrite an existing file and `overwrite` was not asked for |
 | `timeout` | `wait_for_checks` gave up (§ 8) |
 | `ambiguous_files` | two candidates for one slot (§ 11); `details.slot`, `details.candidates` |
@@ -429,7 +438,7 @@ and the CLI maps each one to an exit code (§ 12):
 | `too_many_attachments` | more than 25 attachments (§ 11a); `details.files`, `details.count`, `details.max_allowed` |
 | `missing_api_key` | nothing configured a key (§ 3) — the auth category |
 | `unknown_profile` | a profile was named and the config file has no such profile |
-| `invalid_config` | the config file is not valid TOML, or a profile name, base URL or key carries something that cannot be stored in it (§ 3) |
+| `invalid_config` | the config file is not valid TOML, or a profile name, base URL or key carries something that cannot be stored in it (§ 3); a base URL that is not `https` (§ 4); `IOTA_HUB_BASE_URL` disagreeing with a profile's stored key (§ 3) |
 | `confirmation_required` | a destructive command would have had to prompt, and stdin is not a TTY (§ 13); the `hint` names `--yes` |
 | `usage_error` | the invocation itself was rejected by the argument parser (§ 12) |
 
