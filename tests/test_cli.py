@@ -2045,9 +2045,8 @@ def test_styled_urls_are_never_broken(runner: CliRunner, mock_api, terminal) -> 
 def test_a_path_with_a_space_is_printed_pasteable() -> None:
     spaced = Path("/Users/x/Library/Application Support/iota-hub/config.toml")
     assert cli_module._pasteable(spaced) == f'"{spaced}"'
-    assert cli_module._pasteable(Path("/home/x/.config/iota-hub/config.toml")) == (
-        "/home/x/.config/iota-hub/config.toml"
-    )
+    plain = Path("/home/x/.config/iota-hub/config.toml")
+    assert cli_module._pasteable(plain) == str(plain)
 
 
 @pytest.mark.parametrize(

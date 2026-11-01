@@ -1461,7 +1461,7 @@
                 "type": "null"
               }
             ],
-            "description": "Latest observer-check run, when one was loaded"
+            "description": "Latest observer-check run, when one was loaded; null for submitted observations"
           },
           "created_at": {
             "description": "ISO 8601 creation timestamp",
