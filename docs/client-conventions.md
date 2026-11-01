@@ -198,8 +198,8 @@ No non-production URL is baked into a published client.
 > **Note.** `spec/openapi.json` carries `servers[0].url` = `<base>/public/v1`
 > *and* path keys that begin with `/public/v1`. Compose a request from the base
 > URL and the path **suffix**, as the table above does; do not naively
-> concatenate the server URL with the path key. (Reported upstream as
-> skycarl/iota-hub#762; once that is fixed this note can go.)
+> concatenate the server URL with the path key. (Reported upstream; once that
+> is fixed this note can go.)
 
 ## 5. Authentication and User-Agent
 

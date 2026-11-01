@@ -11,8 +11,8 @@ observers scripting something bespoke), the raw HTTP API last (everyone else, or
 the first two don't fit). Optimize for that order — a feature that only the library can do
 is a smell.
 
-This repo does not own the API. It is a client of `skycarl/iota-hub`, built and versioned
-independently.
+This repo does not own the API. It is a client of the IOTA Hub API, whose source lives in a
+separate private repository, and is built and versioned independently.
 
 ## The contract
 
@@ -28,8 +28,8 @@ Two documents govern behavior here and must stay current with any change:
   update it in the same change.** It's what makes a future language client (`iota-hub-
   <lang>`) a port instead of a second design.
 
-If this repo and a spec in `skycarl/iota-hub` disagree, the API repo's spec wins — file an
-issue there (see below) rather than guessing.
+If this repo and the API's own spec disagree, the API's spec wins — file an issue in the
+API repository (see below) rather than guessing.
 
 ## Two layers — keep them separate
 
@@ -113,5 +113,6 @@ write the straightforward thing.
 
 File GitHub issues for anything out-of-scope you notice while working — don't fix it
 inline and don't just mention it in a summary. Issues that touch the IOTA Hub API itself
-(not just this client) go in `skycarl/iota-hub`, labeled `drafts-and-api`. Issues about
+(not just this client) go in the private API repository, labeled `drafts-and-api` — never
+name or link that repository from this public one. Issues about
 this repo's own code go here.

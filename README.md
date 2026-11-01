@@ -328,11 +328,10 @@ document are additive and are not.
 
 ## Contributing
 
-Issues and pull requests about this client go to
-[skycarl/iota-hub-python](https://github.com/skycarl/iota-hub-python). Issues
-about the API itself — a wrong status code, a missing filter, an unclear
-finding — go to [skycarl/iota-hub](https://github.com/skycarl/iota-hub) with the
-label `drafts-and-api`.
+Issues and pull requests go to
+[skycarl/iota-hub-python](https://github.com/skycarl/iota-hub-python) — including
+issues about the API itself (a wrong status code, a missing filter, an unclear
+finding), which the maintainer takes to the API from there.
 
 ## License
 
