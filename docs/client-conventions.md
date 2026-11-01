@@ -663,6 +663,9 @@ instead of exiting `1`, which is what the API's own hint says to do. With
   under one fix with their fingerprints joined. A stream is styled only when it
   is a TTY, `NO_COLOR` is unset and the run is not `--json`; styling never
   adds, drops or reorders facts a reader needs, so nothing may branch on it.
+  Only prose wraps. Table rows, file rows, field values, commands and progress
+  lines go out as one unbroken line each and the terminal wraps them, so a
+  widened window reflows them and an id, URL or command stays copyable.
 - Output must survive a non-UTF-8 Windows console. Plain output is ASCII apart
   from what the server's own strings carry. Styled output may use a few glyphs
   (`✓`, `✗`, `›`) only when the stream's encoding is UTF-8, and prints ASCII

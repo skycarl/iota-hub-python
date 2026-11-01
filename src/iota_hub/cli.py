@@ -290,7 +290,7 @@ def _diagnostic(line: str) -> None:
         shown = Text(line)
     else:
         shown = Text(f"{_term.glyph('step', True)} {line}", "dim")
-    _term.show(shown, err=True)
+    _term.show(shown, err=True, soft_wrap=True)
 
 
 def _table(headers: list[str], rows: list[list[str]]) -> None:
@@ -305,11 +305,12 @@ def _table(headers: list[str], rows: list[list[str]]) -> None:
         if not styled:
             _out("  ".join(cells).rstrip())
         elif index == 0:
-            _term.show(Text("  ".join(cells).rstrip(), "bold"))
+            _term.show(Text("  ".join(cells).rstrip(), "bold"), soft_wrap=True)
         else:
             # The first column is what the row is about: a slot, an id.
             rest = "  ".join(cells[1:]).rstrip()
-            _term.show(_term.text((cells[0], _ACCENT), "  " + rest if rest else ""))
+            row = _term.text((cells[0], _ACCENT), "  " + rest if rest else "")
+            _term.show(row, soft_wrap=True)
 
 
 def _render_files(
@@ -327,7 +328,8 @@ def _render_files(
     for slot, filename, size in rows:
         rest = filename if size is None else f"{filename}  ({_size(size)})"
         if _term.styled():
-            _term.show(_term.text((f"  {slot:<{width}}", _ACCENT), rest))
+            line = _term.text((f"  {slot:<{width}}", _ACCENT), rest)
+            _term.show(line, soft_wrap=True)
         else:
             _out(f"  {slot:<{width}}{rest}")
 
@@ -425,7 +427,7 @@ def _heading(title: str) -> None:
 def _command(command: str) -> None:
     """One copy-pasteable command, indented under its heading."""
     if _term.styled():
-        _term.show(Text(command, "cyan"), indent=2)
+        _term.show(Text(command, "cyan"), indent=2, soft_wrap=True)
         return
     _out(f"  {command}")
 

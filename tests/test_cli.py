@@ -2042,6 +2042,26 @@ def test_styled_urls_are_never_broken(runner: CliRunner, mock_api, terminal) -> 
     assert long_url in streams[False].getvalue()
 
 
+def test_a_table_row_wider_than_the_terminal_stays_one_line(
+    runner: CliRunner, mock_api: MockAPI, terminal
+) -> None:
+    # rich must not break a row at the width it saw: those breaks are hard
+    # newlines that never reflow when the window is widened. The terminal
+    # soft-wraps the line instead.
+    streams = terminal()
+    name = "Asteroid " + "x" * 80
+    mock_api.json(
+        "GET",
+        EVENTS,
+        {"items": [event("evt_1", asteroid_name=name)], "next_cursor": None},
+    )
+    result = run(runner, "events", "list")
+    assert result.exit_code == 0
+    lines = streams[False].getvalue().splitlines()
+    assert len(lines) == 2
+    assert lines[1].startswith(("evt_1", "\x1b")) and name in lines[1]
+
+
 def test_a_path_with_a_space_is_printed_pasteable() -> None:
     spaced = Path("/Users/x/Library/Application Support/iota-hub/config.toml")
     assert cli_module._pasteable(spaced) == f'"{spaced}"'
