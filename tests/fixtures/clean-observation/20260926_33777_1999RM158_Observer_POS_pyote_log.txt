@@ -1,0 +1,81 @@
+#################### PYOTE 5.7.11  session started: Sat Sep 26 10:12:44 2026  ####################
+
+filename: C:/Occultations/20260926_33777_1999RM158_Observer_POS/20260926_33777_1999RM158_Observer_POS.csv
+
+==================== file header lines ====================
+# PyMovie Version 4.1.5
+# source: C:\Astrid Data\2026_09_26_03_53_20_1999RM158.avi
+#
+# Aperture photometry was used to extract the lightcurves
+#
+# lunar background: False
+# yellow mask = default: False
+#
+# aperture name: target
+# ____ aperture size: 51
+# ____ x,y: (640, 360) at frame 0
+# ____ threshold: 99999
+# ____ def mask radius: 3.2
+# ____ color: red
+# ____ joggable: False
+# ____ auto textOut: False
+# ____ thumbnail source: False
+# ____ csv output order: 1
+#
+# aperture name: track
+# ____ aperture size: 51
+# ____ x,y: (402, 215) at frame 0
+# ____ threshold: 1408
+# ____ def mask radius: 3.2
+# ____ color: yellow
+# ____ joggable: True
+# ____ auto textOut: False
+# ____ thumbnail source: False
+# ____ csv output order: 2
+#
+# date at frame 0: 2026-09-26
+#OCCULTATION-OBJECT-NUMBER: 33777
+#OCCULTATION-OBJECT-NAME: 1999 RM158
+#OCCULTATION-PREDICTED-CENTER-TIME: 2026-09-26T03:53:29.85Z
+#
+==================== end header lines ====================
+
+D zone selected: [283, 293]
+
+R zone selected: [298, 308]
+
+Number of candidate solutions: 121 (using D/R region selections)
+
+New solver results...
+
+Integer (non-subframe) solution...
+B:3049.12  A:421.37
+in entryNum units: D: 288  R: 304
+
+Subframe adjusted solution...
+B:3049.12  A:421.37
+in entryNum units: D: 288  R: 304  D(subframe): 288.2500  R(subframe): 303.6000
+
+in frameNum units: D: 288  R: 304  D(subframe): 288.2500  R(subframe): 303.6000
+
+... end New solver results
+
+=============== Summary report for Excel file =====================
+
+This light curve has not been block integrated.
+
+D time: [03:53:29.6180]
+D: 0.6800 containment intervals:  {+/- 0.0080} seconds
+D: 0.9500 containment intervals:  {+/- 0.0194} seconds
+D: 0.9973 containment intervals:  {+/- 0.0371} seconds
+
+R time: [03:53:30.1301]
+R: 0.6800 containment intervals:  {+/- 0.0081} seconds
+R: 0.9500 containment intervals:  {+/- 0.0195} seconds
+R: 0.9973 containment intervals:  {+/- 0.0372} seconds
+
+Duration (R - D): 0.5122 seconds
+
+Enter D and R error bars for each containment interval in Excel spreadsheet without + or - sign (assumed to be +/-)
+
+=========== end Summary report for Excel file =====================

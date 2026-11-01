@@ -15,9 +15,10 @@ from pathlib import Path
 import httpx
 import pytest
 from conftest import API_KEY, BASE_URL, FIXTURES, MockAPI
+from rich.console import Console
 from typer.testing import CliRunner
 
-from iota_hub import DEFAULT_BASE_URL, Client, config
+from iota_hub import DEFAULT_BASE_URL, Client, _term, config
 from iota_hub import cli as cli_module
 from iota_hub.cli import app, exit_code_for
 from iota_hub.errors import (
@@ -226,8 +227,21 @@ def test_dry_run_maps_the_folder_without_calling_anything(
     assert REPORT.name in result.stdout
     assert LIGHTCURVE.name in result.stdout
     assert LOG.name in result.stdout
-    assert str(REPORT.stat().st_size) in result.stdout
-    assert "Target:" in result.stdout
+    assert "dry run, nothing sent" in result.stdout
+    assert f"{REPORT.name}  (62.8 KB)" in result.stdout
+    # Announced like every other command's target, on stderr...
+    assert f"Target: {BASE_URL}" in result.stderr
+    assert "Target:" not in result.stdout
+
+
+def test_dry_run_announces_even_the_production_target(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ...and, unlike them, even when it is production: that is what it is for.
+    monkeypatch.setenv("IOTA_HUB_BASE_URL", DEFAULT_BASE_URL)
+    result = run(runner, "submit", str(OBSERVATION_DIR), "--dry-run")
+    assert result.exit_code == 0
+    assert f"Target: {DEFAULT_BASE_URL}" in result.stderr
 
 
 def test_dry_run_needs_no_key(
@@ -345,6 +359,9 @@ def test_submit_happy_path(runner: CliRunner, mock_api: MockAPI) -> None:
     assert OBS_ID in result.stdout
     assert "submitted" in result.stdout
     assert LIGHTCURVE.name in result.stdout
+    # What was observed, as drafts submit / observations show print it.
+    assert "Observer:     Test Observer" in result.stdout
+    assert "Asteroid:     Doty" in result.stdout
     # Progress belongs on stderr, and stdout stays data.
     assert "Creating draft" in result.stderr
     assert "Creating draft" not in result.stdout
@@ -823,7 +840,7 @@ def test_drafts_files_add_attachment(
     result = run(runner, "drafts", "files", "add", OBS_ID, "attachment", str(plot))
     assert result.exit_code == 0, result.output
     assert "Attachments:" in result.stdout
-    assert "att-1  plot.png (3 bytes)" in result.stdout
+    assert "att-1  plot.png  (3 B)" in result.stdout
 
 
 def test_drafts_files_rm_attachment_needs_its_id(
@@ -950,7 +967,25 @@ def test_events_show(runner: CliRunner, mock_api: MockAPI) -> None:
     result = run(runner, "events", "show", "evt_1")
     assert result.exit_code == 0
     assert "evt_1" in result.stdout
-    assert "UCAC4" in result.stdout
+    assert "Asteroid:     9721 Doty" in result.stdout
+    assert "Star:         UCAC4 123-456789" in result.stdout
+
+
+def test_observation_and_event_views_name_the_asteroid_and_star_alike(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    metadata = {
+        "observer_name": "Test Observer",
+        "asteroid_id": "9721",
+        "asteroid_name": "Doty",
+        "star_catalog": "UCAC4",
+        "star_id": "123-456789",
+    }
+    mock_api.json("GET", GET, observation(metadata=metadata))
+    result = run(runner, "observations", "show", OBS_ID)
+    assert result.exit_code == 0
+    assert "Asteroid:     9721 Doty" in result.stdout
+    assert "Star:         UCAC4 123-456789" in result.stdout
 
 
 # -- files download ---------------------------------------------------------
@@ -1682,7 +1717,7 @@ def test_observations_check_finds_your_own_draft(
         "2",
     )
     assert result.exit_code == 0, result.stderr
-    assert "Found:        observation" in result.stdout
+    assert "Found:        yes, one of yours" in result.stdout
     assert f"Observation:  {OBS_ID}" in result.stdout
     assert "Status:       draft" in result.stdout
     assert f"Web:          {WEB_URL}" in result.stdout
@@ -1700,10 +1735,14 @@ def test_observations_check_finds_your_own_draft(
 @pytest.mark.parametrize(
     ("answer", "expected"),
     [
-        ({"found": "none"}, ["Found:        none"]),
+        ({"found": "none"}, ["Found:        no"]),
         (
             {"found": "event", "event": {"event_id": "evt_1", "status": "IN_REVIEW"}},
-            ["Found:        event", "Event:        evt_1 (IN_REVIEW)"],
+            [
+                "Found:        no, but the event exists",
+                "Event:        evt_1",
+                "Event status: IN_REVIEW",
+            ],
         ),
     ],
 )
@@ -1851,3 +1890,175 @@ def test_drafts_files_add_takes_the_aperture_record_slot(
         runner, "drafts", "files", "add", OBS_ID, "aperture_record", str(record)
     )
     assert result.exit_code == 0, result.stderr
+
+
+# -- styled output (conventions section 13) -----------------------------------
+#
+# The tests above run colourless (NO_COLOR, not a TTY): the plain path. These
+# force the styled one with a rich console that believes it is a terminal, and
+# check the switch: pipes, NO_COLOR and --json stay plain, and a non-UTF-8
+# console gets ASCII glyphs.
+
+
+class _Terminal(io.StringIO):
+    """A captured stream that reports a given encoding."""
+
+    def __init__(self, encoding: str) -> None:
+        super().__init__()
+        self._encoding = encoding
+
+    @property
+    def encoding(self) -> str:  # type: ignore[override]
+        return self._encoding
+
+    def isatty(self) -> bool:
+        return True
+
+
+@pytest.fixture
+def terminal(monkeypatch: pytest.MonkeyPatch):
+    """Make stdout and stderr styled terminals; returns their captured text."""
+
+    def make(encoding: str = "utf-8") -> dict[bool, _Terminal]:
+        streams = {False: _Terminal(encoding), True: _Terminal(encoding)}
+        consoles = {
+            err: Console(
+                file=stream, force_terminal=True, color_system="standard", width=100
+            )
+            for err, stream in streams.items()
+        }
+        monkeypatch.setattr(
+            _term,
+            "console",
+            lambda err=False: None if _term.plain else consoles[err],
+        )
+        return streams
+
+    return make
+
+
+def _needs_attention() -> dict:
+    return observation(
+        readiness=ready(state="needs_attention", open_findings=2),
+        checks=checks(
+            open_findings=2,
+            findings=[
+                finding(message="Report D is 5 s from the log."),
+                finding(message="Report R is 6 s from the log.", fingerprint="7b3e"),
+            ],
+        ),
+        next_actions=["dismiss_or_fix"],
+    )
+
+
+def test_styled_findings_say_a_shared_fix_once(
+    runner: CliRunner, mock_api, terminal
+) -> None:
+    streams = terminal()
+    script_submit(mock_api, _needs_attention())
+    result = run(runner, "submit", str(OBSERVATION_DIR))
+    assert result.exit_code == 4
+
+    out = streams[False].getvalue()
+    assert "\x1b[" in out  # styled
+    assert "lightcurve_time_gap (2)" in out
+    assert out.count("Re-export the light curve") == 1
+    assert "9f2a1c, 7b3e" in out
+    assert "Report D is 5 s" in out and "Report R is 6 s" in out
+    assert f"iota-hub drafts dismiss {OBS_ID} 7b3e" in out
+    # Readiness is not repeated when it says what the outcome already said.
+    assert "Readiness" not in out
+    # Progress went to the stderr terminal, not stdout.
+    assert "Creating draft" in streams[True].getvalue()
+    assert "Creating draft" not in out
+
+
+def test_styled_glyphs_need_utf8(runner: CliRunner, mock_api, terminal) -> None:
+    streams = terminal("cp1252")
+    script_submit(mock_api, observation(readiness=ready(), checks=checks()))
+    mock_api.json(
+        "POST",
+        f"/public/v1/observations/{OBS_ID}/submit",
+        observation(submission_status="submitted", status="submitted"),
+    )
+    result = run(runner, "submit", str(OBSERVATION_DIR))
+    assert result.exit_code == 0
+
+    out = streams[False].getvalue()
+    assert "ok submitted" in out
+    (out + streams[True].getvalue()).encode("ascii")
+
+
+def test_json_is_never_styled(runner: CliRunner, mock_api, terminal) -> None:
+    streams = terminal()
+    script_submit(mock_api, _needs_attention())
+    result = run(runner, "--json", "submit", str(OBSERVATION_DIR))
+    assert result.exit_code == 4
+    assert streams[False].getvalue() == ""
+    assert "\x1b[" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("tty", "no_color", "plain", "expected"),
+    [
+        (True, None, False, True),
+        (False, None, False, False),  # piped
+        (True, "1", False, False),  # NO_COLOR
+        (True, None, True, False),  # --json
+    ],
+)
+def test_styled_only_on_a_colour_terminal(
+    monkeypatch: pytest.MonkeyPatch, tty, no_color, plain, expected
+) -> None:
+    stream = _Terminal("utf-8")
+    monkeypatch.setattr(stream, "isatty", lambda: tty)
+    monkeypatch.setattr("sys.stdout", stream)
+    if no_color is None:
+        monkeypatch.delenv("NO_COLOR", raising=False)
+    else:
+        monkeypatch.setenv("NO_COLOR", no_color)
+    monkeypatch.setattr(_term, "plain", plain)
+    assert _term.styled() is expected
+
+
+def test_a_repeated_progress_line_prints_once(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli_module._LAST_PROGRESS[:] = []
+    for message in ["Waiting for checks...", "Waiting for checks...", "Done"]:
+        cli_module._progress(message)
+    assert capsys.readouterr().err == "Waiting for checks...\nDone\n"
+
+
+def test_styled_urls_are_never_broken(runner: CliRunner, mock_api, terminal) -> None:
+    """A URL wider than the terminal stays one string the terminal can link."""
+    streams = terminal()
+    long_url = "https://example.test/observations/" + "x" * 120
+    mock_api.json(
+        "GET", f"/public/v1/observations/{OBS_ID}", observation(web_url=long_url)
+    )
+    result = run(runner, "observations", "show", OBS_ID)
+    assert result.exit_code == 0
+    assert long_url in streams[False].getvalue()
+
+
+def test_a_path_with_a_space_is_printed_pasteable() -> None:
+    spaced = Path("/Users/x/Library/Application Support/iota-hub/config.toml")
+    assert cli_module._pasteable(spaced) == f'"{spaced}"'
+    assert cli_module._pasteable(Path("/home/x/.config/iota-hub/config.toml")) == (
+        "/home/x/.config/iota-hub/config.toml"
+    )
+
+
+@pytest.mark.parametrize(
+    ("size", "shown"),
+    [
+        (0, "0 B"),
+        (1023, "1023 B"),
+        (1024, "1.0 KB"),
+        (64275, "62.8 KB"),
+        (5 * 1024 * 1024, "5.0 MB"),
+    ],
+)
+def test_sizes_read_like_the_web_app(size: int, shown: str) -> None:
+    assert cli_module._size(size) == shown

@@ -82,7 +82,7 @@ cleaned up: the draft stays, because it is recoverable in the web app (and
 Progress is reported through an optional `on_progress` callback taking one
 short string (`Uploading lightcurve (2/3)...`, `Waiting for checks...`), which
 the CLI prints to stderr. Those strings are **ASCII**, like everything else a
-client prints by default (§ 13).
+client prints in plain output (§ 13).
 
 ## 2. Naming
 
@@ -142,7 +142,8 @@ api_key  = "iotahub_<key_id>_<secret>"
 - No OS keyring in v1.
 - Whenever the resolved base URL is not the default, the CLI prints
   `Target: <base URL>` on **stderr** before acting, so a test run is never
-  mistaken for a prod submission.
+  mistaken for a prod submission. `submit --dry-run` prints it even for the
+  default target (§ 13).
 
 **Precedence in detail.** The key comes from the flag, else the environment,
 else the profile; the base URL from the flag, else the environment, else the
@@ -571,7 +572,8 @@ coordinator's key may still change a `locked` observation.
 
 **`web_url`** is on every observation: the draft editor for a draft, the
 observation page otherwise. The CLI prints it (`Web:`) whenever `submit`
-ends `needs_attention` or `draft`, so a person can finish in the browser, and
+leaves a draft (`needs_attention`, `ready` or `draft`), so a person can review
+or finish it in the browser, and
 `submit --json` carries it at the top level.
 
 ## 12. CLI exit codes
@@ -653,9 +655,21 @@ instead of exiting `1`, which is what the API's own hint says to do. With
   `status` is the HTTP status, or `null` when no response arrived; `retry_after`
   is the `Retry-After` wait in seconds, or `null` when the response carried
   none. Both are always present, so a reader never has to test for the key.
-- No color when piped or when `NO_COLOR` is set.
-- Output must survive a non-UTF-8 Windows console: no decorative Unicode in
-  default output.
+- **Plain and styled.** The plain text is the contract: what a pipe, a file,
+  an agent or a test sees, and what every rule in this section describes.
+  *Decision (2026-10-31):* on a terminal the same facts may be **styled** --
+  color, bold/dim, blank lines between sections, prose wrapped to the terminal
+  (at most 100 columns), and findings that share a check, code and fix grouped
+  under one fix with their fingerprints joined. A stream is styled only when it
+  is a TTY, `NO_COLOR` is unset and the run is not `--json`; styling never
+  adds, drops or reorders facts a reader needs, so nothing may branch on it.
+- Output must survive a non-UTF-8 Windows console. Plain output is ASCII apart
+  from what the server's own strings carry. Styled output may use a few glyphs
+  (`✓`, `✗`, `›`) only when the stream's encoding is UTF-8, and prints ASCII
+  stand-ins (`ok`, `x`, `>`) otherwise -- so a legacy console keeps the color
+  and loses nothing it cannot print.
+- A progress line identical to the one before it is printed once (each poll
+  says "Waiting for checks...").
 - Never prompt when stdin is not a TTY; destructive commands take `--yes`.
 - Human output prints the literal next command for each `next_actions` verb, so
   neither a person nor an agent has to translate. The mapping is the library's
@@ -676,8 +690,8 @@ instead of exiting `1`, which is what the API's own hint says to do. With
   `retry after <n> s` when the response carried a `Retry-After`.
 - Dates are printed as the API gives them. No local-time conversion: an
   observation's `observed_at_utc` is UTC and stays readable as UTC.
-- Tables are simple aligned columns — no box drawing and no emoji, so a
-  non-UTF-8 console and a `grep`/`awk` pipeline both survive them.
+- Tables are simple aligned columns — no box drawing and no emoji, styled or
+  not, so a non-UTF-8 console and a `grep`/`awk` pipeline both survive them.
 
 **The `--json` document, per command.** *Decision:* the design fixed only
 `submit --json`; the rest follow one rule — a command that answers with **one
@@ -705,11 +719,26 @@ shapes are part of semver (a major bump to change one):
 A key never appears in any of them — the most any document carries is
 `key_prefix` (§ 3).
 
-**`--dry-run` prints its target on stdout.** *Decision:* the target is part of
-the mapping report the design asks `--dry-run` for ("the slot mapping, sizes
-and target"), so it is data, not a diagnostic. The stderr `Target:` line of § 3
-is unchanged and still appears whenever the target is not the default, which on
-a dry run means the two agree with each other.
+**`--dry-run` reads like the real run.** *Decision (2026-10-31, supersedes
+"prints its target on stdout"):* its human output is the `submit` layout with
+nothing sent -- the same `Target:` line on stderr, the same fields
+(`Directory`, `Outcome: dry run, nothing sent`) and the same `Files` section
+(`<slot>  <filename>  (<size>)`, the size in B/KB/MB as the web app shows it) that `submit` and the observation view
+print, so a dry run and a real run can be compared line by line. Unlike other
+commands it announces the target **even when it is the production default**,
+since saying where a real run would go is its job. The `--json` document still
+carries `target`.
+
+**One way to say what was observed.** *Decision (2026-10-31):* every human
+view that names an observation's or an event's identity prints the same
+fields the same way: `Observer`, `Asteroid` as `<number> <name>`, `Star` as
+`<catalog> <id>` (missing parts dropped, `-` when nothing is known), then
+`Observed` for an observation or `Date` for an event (an event's date window
+is not an observation time). That covers `submit`, `drafts show|check|submit`,
+`observations show` and `events show`. `observations check` reads as an
+answer: `Found: yes, one of yours`, `no, but the event exists` or `no`, with
+the event as `Event` and `Event status` rather than one combined line. Human
+wording only; the `--json` `found` values are unchanged.
 
 ## 14. The shared fixture folder
 
@@ -726,6 +755,15 @@ It exercises the required half of the mapping table (three of five slots, the
 `log` rule, no `.dat`, no aperture record), and it is what the dev smoke test submits and then deletes. Every
 client repo ships the same folder, so a port's tests compare against the same
 bytes.
+
+`tests/fixtures/clean-observation/` (`20260926_33777_1999RM158_Observer_POS.{xlsx,csv}`
++ `_pyote_log.txt`) is the *clean* counterpart: a PyMovie light curve, the PyOTE log
+solved from it, and a report copied from the log, all mutually consistent for the real
+event (33777) 1999 RM158 / UCAC4 326-152286 on 2026-09-26 (it auto-matches OWC event
+`2094-33777-995661-234407-U152286`), so `iota-hub submit … --draft` against dev comes back
+`ready` with no open findings and no skipped checks. The station prediction for check 11
+comes from the light curve's Astrid `#OCCULTATION-PREDICTED-CENTER-TIME` key, so the report
+still carries no coordinates.
 
 **This is a public repository.** The identity in these fixtures is deliberately
 fictional — "Test Observer", `cli-smoke@example.com`, no coordinates, no real

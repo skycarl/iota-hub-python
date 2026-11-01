@@ -132,7 +132,7 @@ terminal, `POST /observations/{id}/submit`. See /developers/guide.md.
 | `needs_attention` | open findings, something missing, or the run errored  | 4    |
 | `draft`           | `--no-wait`: uploaded and finalized, not waited on    | 0    |
 
-For `needs_attention` and `draft` the output also prints `Web:` - the draft in
+Whenever it leaves a draft (`needs_attention`, `ready`, `draft`) the output also prints `Web:` - the draft in
 the web app (`web_url`, also at the top level of `submit --json`), to finish it
 there. Every observation carries a derived `status`: `draft`, `submitted`,
 `amended` (you replaced a file after submitting) or `locked` (its event is in
@@ -313,8 +313,8 @@ See /developers/guide.md.
   every upload are handled for you. Do not wrap a mutating command in your own
   retry loop: a retry with a fresh key is a second write.
 - The tool never prompts when stdin is not a TTY; destructive commands take
-  `--yes`. No color when piped or when `NO_COLOR` is set, and default output is
-  plain ASCII so a non-UTF-8 Windows console survives it.
+  `--yes`. No color when piped, under `--json` or when `NO_COLOR` is set, and
+  that plain output is ASCII so a non-UTF-8 Windows console survives it.
 - `iota-hub --version` prints the package version and the API version it
   targets. `SKILL.md` in `skycarl/iota-hub-python` is a skill for an agent.
 

@@ -219,7 +219,8 @@ no OS keyring integration.
 - **[`SKILL.md`](SKILL.md)** in this repository is a ready-made skill for Claude
   Code or any agent that reads `SKILL.md`. Point your agent at it.
 - **Never prompts when stdin is not a TTY.** Destructive commands take `--yes`.
-- Output is colorless when piped or when `NO_COLOR` is set, and is plain ASCII
+- On a terminal, output is colored and spaced for reading; it is plain, colorless
+  text when piped, under `--json` or when `NO_COLOR` is set, and is plain ASCII
   by default so a non-UTF-8 Windows console survives it.
 - The literal next command for every action the API says is available is
   printed in human output and returned as `next_commands` in `submit --json`,

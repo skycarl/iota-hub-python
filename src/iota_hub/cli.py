@@ -9,7 +9,8 @@ layer on it"), so an embedder gets the same behavior without the CLI.
 The conventions are ``docs/client-conventions.md`` sections 12-13: data on
 stdout, progress and ``Target:`` on stderr, one JSON document on stdout under
 ``--json`` and a problem-details object on stderr when it fails, documented
-exit codes, ASCII only, and never a prompt when stdin is not a TTY.
+exit codes, plain ASCII unless a UTF-8 terminal is styled (:mod:`._term`),
+and never a prompt when stdin is not a TTY.
 """
 
 from __future__ import annotations
@@ -26,13 +27,14 @@ from pathlib import Path
 from typing import Annotated, Any, NoReturn
 
 import typer
+from rich.text import Text
 
 try:  # typer 0.27+ vendors click; older typer depends on the package.
     from typer._click.exceptions import UsageError
 except ImportError:  # pragma: no cover - typer < 0.27 only
     from click.exceptions import UsageError  # type: ignore[no-redef]
 
-from . import config
+from . import _term, config
 from ._http import DEFAULT_BASE_URL
 from ._version import __version__
 from .client import Client
@@ -43,7 +45,9 @@ from .models import (
     PublicCheckResponse,
     PublicChecks,
     PublicEvent,
+    PublicFinding,
     PublicObservation,
+    PublicObservationMetadata,
 )
 from .workflow import (
     POLL_TIMEOUT,
@@ -193,6 +197,8 @@ def _merge_options(*, base_url: str | None, profile: str | None, as_json: bool) 
     _OPTIONS.base_url = base_url or _OPTIONS.base_url
     _OPTIONS.profile = profile or _OPTIONS.profile
     _OPTIONS.json = as_json or _OPTIONS.json
+    _term.plain = _OPTIONS.json
+    _LAST_PROGRESS[:] = []
 
 
 def _fail(error: IotaHubError) -> NoReturn:
@@ -212,6 +218,19 @@ def _fail(error: IotaHubError) -> NoReturn:
                 indent=2,
             )
         )
+    elif _term.styled(err=True):
+        _term.show(
+            _term.text(
+                (f"{_term.glyph('fail', True)} error ", "bold red"),
+                (error.code, "bold"),
+                f": {error.message}",
+            ),
+            err=True,
+        )
+        if error.hint:
+            _term.show(_term.text(("  hint  ", "dim"), error.hint), err=True)
+        if error.retry_after is not None:
+            _term.show(Text(f"  retry after {error.retry_after:g} s", "dim"), err=True)
     else:
         _err(f"error: {error.code}: {error.message}")
         if error.hint:
@@ -241,8 +260,37 @@ def _emit(payload: Any) -> None:
     _out(json.dumps(payload, indent=2))
 
 
+#: The last progress line printed, so a repeated one (each poll says "Waiting
+#: for checks...") is printed once.
+_LAST_PROGRESS: list[str] = []
+
+
 def _progress(message: str) -> None:
-    _err(message)
+    if [message] == _LAST_PROGRESS:
+        return
+    _LAST_PROGRESS[:] = [message]
+    _diagnostic(message)
+
+
+def _diagnostic(line: str) -> None:
+    """One stderr line: a progress step, or a line of the ``check_warnings`` block.
+
+    Plain, it is printed as is. Styled, a progress step is dimmed, and the
+    warning block (``WARNING:`` lines and their indented detail) stands out.
+    """
+    if not _term.styled(err=True):
+        _err(line)
+        return
+    if line.startswith("WARNING:"):
+        _err("")
+        shown = Text(line, "bold yellow")
+    elif line.lstrip().startswith("iota-hub "):
+        shown = Text(line, "cyan")
+    elif line.startswith(" "):
+        shown = Text(line)
+    else:
+        shown = Text(f"{_term.glyph('step', True)} {line}", "dim")
+    _term.show(shown, err=True)
 
 
 def _table(headers: list[str], rows: list[list[str]]) -> None:
@@ -251,9 +299,37 @@ def _table(headers: list[str], rows: list[list[str]]) -> None:
         max([len(header)] + [len(row[index]) for row in rows])
         for index, header in enumerate(headers)
     ]
-    for line in [headers, *rows]:
-        cells = (cell.ljust(w) for cell, w in zip(line, widths, strict=True))
-        _out("  ".join(cells).rstrip())
+    styled = _term.styled()
+    for index, line in enumerate([headers, *rows]):
+        cells = [cell.ljust(w) for cell, w in zip(line, widths, strict=True)]
+        if not styled:
+            _out("  ".join(cells).rstrip())
+        elif index == 0:
+            _term.show(Text("  ".join(cells).rstrip(), "bold"))
+        else:
+            # The first column is what the row is about: a slot, an id.
+            rest = "  ".join(cells[1:]).rstrip()
+            _term.show(_term.text((cells[0], _ACCENT), "  " + rest if rest else ""))
+
+
+def _render_files(
+    rows: list[tuple[str, str, int | None]], title: str = "Files"
+) -> None:
+    """The one files section: ``  <slot>  <filename>  (<size>)``.
+
+    Shared by ``submit``, ``submit --dry-run`` and the observation view, so a
+    dry run reads like the real thing.
+    """
+    if not rows:
+        return
+    _heading(title)
+    width = max(12, *(len(slot) + 2 for slot, _, _ in rows))
+    for slot, filename, size in rows:
+        rest = filename if size is None else f"{filename}  ({_size(size)})"
+        if _term.styled():
+            _term.show(_term.text((f"  {slot:<{width}}", _ACCENT), rest))
+        else:
+            _out(f"  {slot:<{width}}{rest}")
 
 
 # --------------------------------------------------------------------------
@@ -266,38 +342,135 @@ def _make_client(settings: Settings) -> Client:
     return Client(settings.api_key, settings.base_url)
 
 
-def _settings(*, api_key: str | None = None) -> Settings:
-    """Resolve the target, announcing it when it is not production."""
+def _settings(*, api_key: str | None = None, always_announce: bool = False) -> Settings:
+    """Resolve the target, announcing it when it is not production (or always)."""
     settings = config.resolve(
         api_key=api_key,
         base_url=_OPTIONS.base_url,
         profile=_OPTIONS.profile,
     )
-    if not settings.is_default_target:
-        _err(f"Target: {settings.base_url}")
+    if always_announce or not settings.is_default_target:
+        if _term.styled(err=True):
+            fallback = "production" if settings.is_default_target else "not production"
+            badge = (settings.profile_name or fallback).upper()
+            _term.show(
+                _term.text(
+                    (f" {badge} ", "bold black on yellow"),
+                    " ",
+                    (settings.base_url, "yellow"),
+                ),
+                err=True,
+                soft_wrap=True,
+            )
+        else:
+            _err(f"Target: {settings.base_url}")
     return settings
-
-
-def _target_only() -> str:
-    """The resolved base URL for a command that needs no key."""
-    return _settings(api_key=_UNUSED_KEY).base_url
 
 
 # --------------------------------------------------------------------------
 # Renderers
+#
+# One set of facts, two looks: plain text (pipes, NO_COLOR, the tests) and,
+# on a terminal, the same lines with color, spacing and wrapping (_term).
 # --------------------------------------------------------------------------
 
+#: Values that read as an outcome: (glyph, color).
+_STATUS_STYLE = {
+    "submitted": ("ok", "green"),
+    "ready": ("ok", "green"),
+    "complete": ("ok", "green"),
+    "valid": ("ok", "green"),
+    "needs_attention": ("warn", "yellow"),
+    "timeout": ("warn", "yellow"),
+    "error": ("fail", "red"),
+}
 
-def _field(label: str, value: Any) -> None:
+#: The one accent color: section headings, slots, the first column of a table.
+_ACCENT = "bright_blue"
+
+_SEVERITY_STYLE = {"error": "bold red", "warning": "yellow"}
+
+#: Wide enough for the longest label, so separate rows still line up.
+_LABEL_WIDTH = 12
+
+
+def _status_text(value: Any) -> Text:
+    word = str(value)
+    style = _STATUS_STYLE.get(word)
+    if style is None:
+        return Text(word, "bold")
+    glyph, color = style
+    return Text(f"{_term.glyph(glyph)} {word}", f"bold {color}")
+
+
+def _field(label: str, value: Any, *, status: bool = False, style: str = "") -> None:
+    if _term.styled():
+        shown = _status_text(value) if status else Text(str(value), style)
+        # One unbroken line: a value is often a URL or an id, which must stay
+        # clickable and copyable, so the terminal wraps it, not rich.
+        label_text = (label.ljust(_LABEL_WIDTH) + "  ", "dim")
+        _term.show(_term.text(label_text, shown), soft_wrap=True)
+        return
     _out(f"{label + ':':<14}{value}")
+
+
+def _heading(title: str) -> None:
+    if _term.styled():
+        _out()
+        _term.show(Text(title, f"bold {_ACCENT}"))
+        return
+    _out(f"{title}:")
+
+
+def _command(command: str) -> None:
+    """One copy-pasteable command, indented under its heading."""
+    if _term.styled():
+        _term.show(Text(command, "cyan"), indent=2)
+        return
+    _out(f"  {command}")
+
+
+def _pasteable(path: Path) -> str:
+    """A path a person can paste into a shell: double-quoted if it has a space.
+
+    macOS keeps the config under "Application Support". Double quotes, not
+    ``shlex.quote``'s single ones, because cmd.exe only understands double.
+    """
+    text = str(path)
+    return f'"{text}"' if " " in text else text
+
+
+def _size(size_bytes: int) -> str:
+    """A file size as the web app shows it: B, then KB, then MB (base 1024)."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
 def _or_dash(value: Any) -> str:
     return "-" if value in (None, "") else str(value)
 
 
+def _joined(*parts: str | None) -> str:
+    """``9721 Doty``, ``UCAC4 326-152286``: the parts there are, or ``-``."""
+    return _or_dash(" ".join(part for part in parts if part))
+
+
+def _render_identity(metadata: PublicObservationMetadata) -> None:
+    """What was observed, as the server parsed it from the report."""
+    _field("Observer", _or_dash(metadata.observer_name))
+    _field("Asteroid", _joined(metadata.asteroid_id, metadata.asteroid_name))
+    _field("Star", _joined(metadata.star_catalog, metadata.star_id))
+    _field("Observed", _or_dash(metadata.observed_at_utc))
+
+
 def _render_findings(checks: PublicChecks) -> None:
     if not checks.findings:
+        return
+    if _term.styled():
+        _render_findings_styled(checks.findings)
         return
     _out("Findings:")
     for finding in checks.findings:
@@ -311,16 +484,72 @@ def _render_findings(checks: PublicChecks) -> None:
         _out(f"      fingerprint: {finding.fingerprint}")
 
 
+def _finding_group(finding: PublicFinding) -> tuple[Any, ...]:
+    return (
+        finding.check_number,
+        finding.code,
+        finding.how_to_fix,
+        finding.doc_url,
+        finding.dismissal is None,
+    )
+
+
+def _render_findings_styled(findings: list[PublicFinding]) -> None:
+    """Findings on a terminal: one block per check, the fix said once."""
+    groups: list[list[PublicFinding]] = []
+    for finding in findings:
+        if groups and _finding_group(groups[-1][0]) == _finding_group(finding):
+            groups[-1].append(finding)
+        else:
+            groups.append([finding])
+
+    _heading("Findings")
+    for index, group in enumerate(groups):
+        first = group[0]
+        dismissed = first.dismissal is not None
+        count = f" ({len(group)})" if len(group) > 1 else ""
+        if index:
+            _out()
+        _term.show(
+            _term.text(
+                (f"[{first.check_number}] ", "dim"),
+                (
+                    first.severity,
+                    "dim" if dismissed else _SEVERITY_STYLE.get(first.severity, ""),
+                ),
+                "  ",
+                (first.code + count, "dim" if dismissed else "bold"),
+                (" (dismissed)" if dismissed else "", "dim"),
+            ),
+            indent=2,
+        )
+        for finding in group:
+            _term.show(Text(finding.message), indent=6)
+        if first.how_to_fix:
+            _term.pairs([("Fix", Text(first.how_to_fix))], indent=6)
+        # A link and ids are never wrapped by rich: they stay clickable.
+        if first.doc_url:
+            _term.show(
+                _term.text(("Doc  ", "dim"), first.doc_url), soft_wrap=True, indent=6
+            )
+        fingerprints = ", ".join(finding.fingerprint for finding in group)
+        _term.show(
+            _term.text(("ID   ", "dim"), (fingerprints, "dim")),
+            soft_wrap=True,
+            indent=6,
+        )
+
+
 def _render_checks(checks: PublicChecks) -> None:
     _field("Run", checks.run_id)
-    _field("Status", checks.status)
+    _field("Status", checks.status, status=True)
     _field(
         "Findings",
         f"{checks.open_findings} open, {checks.dismissed_findings} dismissed",
     )
     _render_findings(checks)
     if checks.skipped:
-        _out("Skipped (did not run):")
+        _heading("Skipped (did not run)")
         for check in checks.skipped:
             _out(
                 f"  [{check.check_number}] {check.name} ({check.code}): {check.reason}"
@@ -349,32 +578,33 @@ def _warn_checks(observation: PublicObservation) -> None:
     document -- which carries the same facts. Warns, never blocks.
     """
     for line in check_warnings(observation):
-        _err(line)
+        _diagnostic(line)
 
 
 def _render_next(observation: PublicObservation) -> None:
     commands = next_actions_commands(observation)
     if not commands:
         return
-    _out("Next:")
+    _heading("Next")
     for command in commands:
-        _out(f"  {command}")
+        _command(command)
 
 
-def _render_readiness(observation: PublicObservation) -> None:
+def _render_readiness(observation: PublicObservation, *, unless: str = "") -> None:
+    """Readiness, leaving out a state that repeats ``unless`` (submit's outcome)."""
     readiness = observation.readiness
     if readiness is None:
         return
-    _field("Readiness", readiness.state)
+    if readiness.state != unless:
+        _field("Readiness", readiness.state, status=True)
     if readiness.missing_required:
-        _field("Missing", ", ".join(readiness.missing_required))
+        _field("Missing", ", ".join(readiness.missing_required), style="bold red")
 
 
 def _render_observation(observation: PublicObservation) -> None:
-    """The one observation view, shared by submit, drafts and observations."""
-    metadata = observation.metadata
-    _field("Observation", observation.observation_id)
-    _field("Status", observation.status)
+    """The one observation view, shared by drafts and observations."""
+    _field("Observation", observation.observation_id, style="bold")
+    _field("Status", observation.status, status=True)
     if observation.amendment_count:
         _field(
             "Amended",
@@ -382,36 +612,37 @@ def _render_observation(observation: PublicObservation) -> None:
         )
     if observation.web_url:
         _field("Web", observation.web_url)
-    _field("Observer", _or_dash(metadata.observer_name))
-    _field("Asteroid", _or_dash(metadata.asteroid_name or metadata.asteroid_id))
-    _field("Star", _or_dash(metadata.star_id))
-    _field("Observed", _or_dash(metadata.observed_at_utc))
+    _render_identity(observation.metadata)
     _field("Updated", observation.updated_at)
     _render_readiness(observation)
     _render_owc(observation)
 
-    present = {slot: file for slot, file in observation.files.items() if file}
-    if present:
-        _out("Files:")
-        for slot, file in present.items():
-            _out(f"  {slot:<12}{file.filename} ({file.size_bytes} bytes)")
+    _render_files(
+        [
+            (slot, file.filename, file.size_bytes)
+            for slot, file in observation.files.items()
+            if file
+        ]
+    )
     if observation.attachments:
-        _out("Attachments:")
+        _heading("Attachments")
         for attachment in observation.attachments:
             _out(
-                f"  {attachment.attachment_id}  {attachment.filename} "
-                f"({attachment.size_bytes} bytes)"
+                f"  {attachment.attachment_id}  {attachment.filename}"
+                f"  ({_size(attachment.size_bytes)})"
             )
     if observation.checks is not None:
+        if _term.styled():
+            _out()
         _render_checks(observation.checks)
     _render_next(observation)
 
 
 def _render_event(event: PublicEvent) -> None:
-    _field("Event", event.event_id)
-    _field("Status", event.status)
-    _field("Asteroid", f"{event.asteroid_id} {event.asteroid_name}".strip())
-    _field("Star", f"{event.star_catalog} {event.star_id}".strip())
+    _field("Event", event.event_id, style="bold")
+    _field("Status", event.status, status=True)
+    _field("Asteroid", _joined(event.asteroid_id, event.asteroid_name))
+    _field("Star", _joined(event.star_catalog, event.star_id))
     _field("Date", event.date_window_utc)
     _field("Observers", ", ".join(event.observer_names) or "-")
     _field("Observations", ", ".join(event.observation_ids) or "-")
@@ -684,7 +915,8 @@ def submit(
 
 def _dry_run(directory: Path, overrides: dict[str, Any]) -> None:
     """The mapping, the sizes and the target, without touching the network."""
-    target = _target_only()
+    # A dry run always says where a real run would go, production included.
+    target = _settings(api_key=_UNUSED_KEY, always_announce=True).base_url
     mapping = map_folder(directory, **overrides)
     uploads = [
         {
@@ -711,20 +943,13 @@ def _dry_run(directory: Path, overrides: dict[str, Any]) -> None:
             }
         )
         return
-    _field("Target", target)
+    if _term.styled():
+        _out()
     _field("Directory", mapping.directory)
-    _out("Would upload:")
-    _table(
-        ["  SLOT", "FILE", "BYTES"],
-        [
-            ["  " + upload["slot"], str(upload["filename"]), str(upload["size"])]
-            for upload in uploads
-        ]
-        + [
-            ["  attachment", str(item["filename"]), str(item["size"])]
-            for item in attachments
-        ],
-    )
+    _field("Outcome", "dry run, nothing sent", style="bold")
+    files = [(slot, path) for slot, path in mapping.slots.items()]
+    files += [("attachment", path) for path in mapping.attachments]
+    _render_files([(slot, path.name, path.stat().st_size) for slot, path in files])
     if ignored:
         _out(f"Not uploaded (--no-attachments): {', '.join(ignored)}")
 
@@ -752,20 +977,30 @@ def _emit_submit(result: SubmitResult) -> None:
         )
         return
 
-    _field("Observation", result.observation_id)
-    _field("Outcome", result.outcome)
-    _out("Uploaded:")
-    for slot, filename in result.uploads.items():
-        _out(f"  {slot:<12}{filename}")
-    for filename in result.attachments:
-        _out(f"  {'attachment':<12}{filename}")
-    if ignored:
-        _out(f"Not uploaded (--no-attachments): {', '.join(ignored)}")
-    if result.outcome in ("needs_attention", "draft") and observation.web_url:
+    if _term.styled():
+        _out()
+    _field("Observation", result.observation_id, style="bold")
+    _field("Outcome", result.outcome, status=True)
+    checks = observation.checks
+    if checks is not None and result.outcome != "draft":
+        noun = "finding" if checks.open_findings == 1 else "findings"
+        summary = f"{checks.status}, {checks.open_findings} open {noun}"
+        if checks.dismissed_findings:
+            summary += f", {checks.dismissed_findings} dismissed"
+        _field("Checks", summary)
+    if result.outcome != "submitted" and observation.web_url:
         # The hand-off to the browser: finish the draft there if you prefer.
         _field("Web", observation.web_url)
+    _render_identity(observation.metadata)
+    sizes = {slot: file.size_bytes for slot, file in observation.files.items() if file}
+    _render_files(
+        [(slot, name, sizes.get(slot)) for slot, name in result.uploads.items()]
+        + [("attachment", name, None) for name in result.attachments]
+    )
+    if ignored:
+        _out(f"Not uploaded (--no-attachments): {', '.join(ignored)}")
     if result.outcome == "needs_attention":
-        _render_readiness(observation)
+        _render_readiness(observation, unless=result.outcome)
         if observation.checks is not None:
             _render_findings(observation.checks)
     _render_next(observation)
@@ -831,7 +1066,7 @@ def auth_login() -> None:
     _field("Profile", name)
     _field("Base URL", target)
     _field("Key", prefix)
-    _field("Saved to", path)
+    _field("Saved to", _pasteable(path))
 
 
 def _read_key() -> str:
@@ -884,8 +1119,8 @@ def auth_status() -> None:
     _field("Base URL", settings.base_url)
     _field("Key", prefix)
     _field("Key source", settings.source_of_key)
-    _field("Config file", path)
-    _field("Check", check)
+    _field("Config file", _pasteable(path))
+    _field("Check", check, status=True)
 
 
 @auth_app.command("logout")
@@ -902,9 +1137,9 @@ def auth_logout() -> None:
         _emit({"profile": name, "deleted": deleted, "config_file": str(path)})
         return
     if deleted:
-        _out(f"Removed profile '{name}' from {path}")
+        _out(f"Removed profile '{name}' from {_pasteable(path)}")
     else:
-        _out(f"No profile named '{name}' in {path}")
+        _out(f"No profile named '{name}' in {_pasteable(path)}")
 
 
 # --------------------------------------------------------------------------
@@ -1451,19 +1686,28 @@ def observations_check(
     _render_check(answer)
 
 
+_FOUND = {
+    "observation": "yes, one of yours",
+    "event": "no, but the event exists",
+    "none": "no",
+}
+
+
 def _render_check(answer: PublicCheckResponse) -> None:
-    _field("Found", answer.found)
+    _field("Found", _FOUND.get(answer.found, answer.found), style="bold")
     found = answer.observation
     if found is not None:
         _field("Observation", found.observation_id)
-        _field("Status", found.status)
-        _field("Amendments", found.amendment_count)
+        _field("Status", found.status, status=True)
+        if found.amendment_count:
+            _field("Amended", f"{found.amendment_count} time(s)")
         _field("Web", found.web_url)
     if answer.event is not None:
-        _field("Event", f"{answer.event.event_id} ({answer.event.status})")
+        _field("Event", answer.event.event_id)
+        _field("Event status", answer.event.status, status=True)
     if found is not None and found.status == "draft":
-        _out("Next:")
-        _out(f"  iota-hub drafts show {found.observation_id}")
+        _heading("Next")
+        _command(f"iota-hub drafts show {found.observation_id}")
 
 
 # --------------------------------------------------------------------------
