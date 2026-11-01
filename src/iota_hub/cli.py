@@ -456,14 +456,19 @@ def _or_dash(value: Any) -> str:
 
 
 def _joined(*parts: str | None) -> str:
-    """``9721 Doty``, ``UCAC4 326-152286``: the parts there are, or ``-``."""
+    """``UCAC4 326-152286``: the parts there are, or ``-``."""
     return _or_dash(" ".join(part for part in parts if part))
+
+
+def _asteroid(number: str | None, name: str | None) -> str:
+    """``(33777) 1999 RM158``, as the web app writes it; ``-`` when unknown."""
+    return _joined(f"({number})" if number else None, name)
 
 
 def _render_identity(metadata: PublicObservationMetadata) -> None:
     """What was observed, as the server parsed it from the report."""
     _field("Observer", _or_dash(metadata.observer_name))
-    _field("Asteroid", _joined(metadata.asteroid_id, metadata.asteroid_name))
+    _field("Asteroid", _asteroid(metadata.asteroid_id, metadata.asteroid_name))
     _field("Star", _joined(metadata.star_catalog, metadata.star_id))
     _field("Observed", _or_dash(metadata.observed_at_utc))
 
@@ -643,7 +648,7 @@ def _render_observation(observation: PublicObservation) -> None:
 def _render_event(event: PublicEvent) -> None:
     _field("Event", event.event_id, style="bold")
     _field("Status", event.status, status=True)
-    _field("Asteroid", _joined(event.asteroid_id, event.asteroid_name))
+    _field("Asteroid", _asteroid(event.asteroid_id, event.asteroid_name))
     _field("Star", _joined(event.star_catalog, event.star_id))
     _field("Date", event.date_window_utc)
     _field("Observers", ", ".join(event.observer_names) or "-")
@@ -1606,8 +1611,8 @@ def observations_list(
         [
             item.observation_id,
             item.submission_status,
-            _or_dash(item.metadata.asteroid_name or item.metadata.asteroid_id),
-            _or_dash(item.metadata.star_id),
+            _asteroid(item.metadata.asteroid_id, item.metadata.asteroid_name),
+            _joined(item.metadata.star_catalog, item.metadata.star_id),
             _or_dash(item.metadata.observed_at_utc),
             item.updated_at,
         ]
@@ -1785,8 +1790,8 @@ def events_list(
         [
             item.event_id,
             item.status,
-            f"{item.asteroid_id} {item.asteroid_name}".strip(),
-            item.star_id,
+            _asteroid(item.asteroid_id, item.asteroid_name),
+            _joined(item.star_catalog, item.star_id),
             item.date_window_utc,
             str(len(item.observation_ids)),
         ]

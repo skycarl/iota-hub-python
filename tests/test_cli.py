@@ -967,7 +967,7 @@ def test_events_show(runner: CliRunner, mock_api: MockAPI) -> None:
     result = run(runner, "events", "show", "evt_1")
     assert result.exit_code == 0
     assert "evt_1" in result.stdout
-    assert "Asteroid:     9721 Doty" in result.stdout
+    assert "Asteroid:     (9721) Doty" in result.stdout
     assert "Star:         UCAC4 123-456789" in result.stdout
 
 
@@ -984,7 +984,7 @@ def test_observation_and_event_views_name_the_asteroid_and_star_alike(
     mock_api.json("GET", GET, observation(metadata=metadata))
     result = run(runner, "observations", "show", OBS_ID)
     assert result.exit_code == 0
-    assert "Asteroid:     9721 Doty" in result.stdout
+    assert "Asteroid:     (9721) Doty" in result.stdout
     assert "Star:         UCAC4 123-456789" in result.stdout
 
 
@@ -2060,6 +2060,8 @@ def test_a_table_row_wider_than_the_terminal_stays_one_line(
     lines = streams[False].getvalue().splitlines()
     assert len(lines) == 2
     assert lines[1].startswith(("evt_1", "\x1b")) and name in lines[1]
+    assert "(9721) " in lines[1]
+    assert "UCAC4 123-456789" in lines[1]
 
 
 def test_a_path_with_a_space_is_printed_pasteable() -> None:

@@ -734,11 +734,13 @@ carries `target`.
 
 **One way to say what was observed.** *Decision (2026-10-31):* every human
 view that names an observation's or an event's identity prints the same
-fields the same way: `Observer`, `Asteroid` as `<number> <name>`, `Star` as
-`<catalog> <id>` (missing parts dropped, `-` when nothing is known), then
+fields the same way: `Observer`, `Asteroid` as `(<number>) <name>` (the web
+app's form), `Star` as `<catalog> <id>` (missing parts dropped, `-` when
+nothing is known), then
 `Observed` for an observation or `Date` for an event (an event's date window
 is not an observation time). That covers `submit`, `drafts show|check|submit`,
-`observations show` and `events show`. `observations check` reads as an
+`observations show` and `events show`, and the ASTEROID and STAR columns of
+`observations list` and `events list`. `observations check` reads as an
 answer: `Found: yes, one of yours`, `no, but the event exists` or `no`, with
 the event as `Event` and `Event status` rather than one combined line. Human
 wording only; the `--json` `found` values are unchanged.
