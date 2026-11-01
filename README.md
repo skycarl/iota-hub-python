@@ -216,7 +216,7 @@ no OS keyring integration.
 
 - **`iota-hub guide`** prints the full workflow guide, bundled in the package —
   no network, and the same text an agent can read before acting.
-- **[`SKILL.md`](SKILL.md)** in this repository is a ready-made skill for Claude
+- **[`SKILL.md`](https://github.com/skycarl/iota-hub-python/blob/main/SKILL.md)** in this repository is a ready-made skill for Claude
   Code or any agent that reads `SKILL.md`. Point your agent at it.
 - **Never prompts when stdin is not a TTY.** Destructive commands take `--yes`.
 - On a terminal, output is colored and spaced for reading; it is plain, colorless
@@ -308,9 +308,9 @@ this package exists.
 The raw-HTTP walkthrough is at <https://iota-hub.com/developers/api>
 (interactive reference at `/developers/reference`, the raw workflow guide at
 `/developers/guide.md`; keys are on `/developers`). Porting a client to another language starts from
-[`spec/openapi.json`](spec/openapi.json), vendored here and checked against the
+[`spec/openapi.json`](https://github.com/skycarl/iota-hub-python/blob/main/spec/openapi.json), vendored here and checked against the
 live document in CI, and
-[`docs/client-conventions.md`](docs/client-conventions.md), which specifies
+[`docs/client-conventions.md`](https://github.com/skycarl/iota-hub-python/blob/main/docs/client-conventions.md), which specifies
 everything the API itself does not: configuration, retries, polling, folder
 mapping, exit codes and output.
 

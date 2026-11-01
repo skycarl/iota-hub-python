@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "iota-hub"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Client library and CLI for the IOTA Hub public API (occultation observation submission)"
 readme = "README.md"
 license = { file = "LICENSE" }

@@ -1,6 +1,6 @@
-# Not usable until the PyPI project `iota-hub` has this repo registered as a
-# trusted publisher (design.md phase 7). Nothing publishes before the
-# production release.
+# Publishes to PyPI via Trusted Publishing: the PyPI project `iota-hub` trusts
+# this repo's release.yml in the `pypi` environment (v* tags only, maintainer
+# approval required).
 name: Release
 
 on:

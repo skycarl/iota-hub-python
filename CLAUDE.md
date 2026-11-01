@@ -95,11 +95,11 @@ to and which waits for the maintainer's approval. Actions are pinned to commit S
 tag in the trailing comment); bump a pin by resolving the new tag's SHA, never back to a
 bare tag or branch.
 
-**Nothing publishes before the production release of the IOTA Hub public API** (phase 7
-of `features/public-api/design.md` in the main repo) — see the warning at the top of
-`release.yml`.
+The PyPI project is registered ahead of the production release of the public API, so
+the name is held; until that release the default base URL (`https://api.iota-hub.com`)
+does not serve `/public/v1` yet.
 
-Semver, `0.x` until then. A **major** bump is: removing a command or flag, or changing the
+Semver, `0.x` until the public API is in production. A **major** bump is: removing a command or flag, or changing the
 shape of a `--json` output. Anything additive (new command, new optional flag, new field
 in a `--json` shape) is not.
 
