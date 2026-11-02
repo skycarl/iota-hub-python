@@ -232,7 +232,9 @@ no OS keyring integration.
 
 ## Python library
 
-The library is the same code the CLI is built on, importable on its own:
+The library is the same code the CLI is built on, importable on its own. Its
+guide is [`docs/library.md`](docs/library.md), also at
+<https://iota-hub.com/developers/library>.
 
 ```python
 import os

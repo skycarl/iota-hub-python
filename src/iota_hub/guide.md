@@ -1,8 +1,8 @@
 # IOTA Hub CLI guide
 
 Printed by `iota-hub guide`; also at <https://iota-hub.com/developers/cli>.
-Each step gives the command, then the library call. The HTTP calls behind them
-are at <https://iota-hub.com/developers/api>.
+Writing a program instead? The Python library has its own guide:
+<https://iota-hub.com/developers/library>.
 
 ## Install
 
@@ -22,9 +22,6 @@ tool one of two ways, never as a command-line argument:
 
     iota-hub auth status              # profile, base URL, key prefix, valid?
     iota-hub auth logout              # forget a stored profile
-
-Library: `Client(api_key=..., base_url=...)`, or `iota_hub.config.resolve()`
-for the same flag / environment / config-file precedence.
 
 ## Submit an observation
 
@@ -69,10 +66,6 @@ a required one, stops the command and names the flag that settles it:
 One observation per directory: a folder holding several stations (`_POS-1`,
 `_POS-2`) is not supported.
 
-Library: `client.submit_folder(dir, lightcurve=..., attach=[...], wait=True,
-submit=True)`, `client.submit_files({"report": path, ...})`,
-`iota_hub.files.map_folder(dir)`.
-
 ## Read the result
 
 `submit` ends in one of four outcomes:
@@ -102,9 +95,6 @@ settle it:
     iota-hub drafts owc <id> --link <url-or-id>       # any OWC event, checked
     iota-hub drafts owc <id> --none                   # deliberately no link
 
-Library: `SubmitResult` carries `.outcome`, `.observation`, `.skipped_checks`
-and `.owc_commands`.
-
 ## Fix and resubmit
 
     iota-hub drafts list                                  # your open drafts
@@ -126,11 +116,6 @@ Replacing a file re-runs the checks by itself. A finding about a missing
 required item cannot be dismissed: supply the item. `drafts submit` on an
 observation that is already submitted succeeds.
 
-Library: `client.replace_file(id, slot, path)`, `delete_file`,
-`dismiss_finding(id, fingerprint, note)`, `undo_dismissal`, `run_checks`,
-`wait_for_checks`, `update_draft(id, version=..., ...)`,
-`submit_draft(id)`, `delete_draft`.
-
 ## Already submitted? Check, and amend
 
 Before creating a draft a script may have created already, look it up by what
@@ -148,9 +133,6 @@ describe the same observation, else `identity_changed` (exit 2). Once the
 event is in review every file change is `already_processed` (exit 1); ask a
 coordinator.
 
-Library: `client.check_observation(asteroid_name=..., star_id=...,
-observed_date=..., ...)`, `client.replace_file(id, slot, path)`.
-
 ## Reads and downloads
 
     iota-hub observations list --submission-status draft
@@ -162,9 +144,6 @@ observed_date=..., ...)`, `client.replace_file(id, slot, path)`.
 
 Filters follow the API's query parameters as `--kebab-case` flags; `--help`
 lists them. A download never silently overwrites: pass `--force`.
-
-Library: `client.iter_observations(...)`, `iter_events(...)`,
-`get_observation`, `get_event`, `download_files(kind, id, dest, slot=...)`.
 
 ## Automation and agents
 
@@ -205,6 +184,7 @@ the target is not the default. The config file lives at:
 
 - What belongs in each file: <https://iota-hub.com/data-submission>
 - API keys: <https://iota-hub.com/developers>
+- The Python library: <https://iota-hub.com/developers/library>
 - The HTTP API: <https://iota-hub.com/developers/api>, the reference at
   `/developers/reference`, the OpenAPI document at `/developers/openapi.json`
 - Source, `SKILL.md`, client conventions:
