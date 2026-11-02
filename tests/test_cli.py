@@ -2083,3 +2083,275 @@ def test_a_path_with_a_space_is_printed_pasteable() -> None:
 )
 def test_sizes_read_like_the_web_app(size: int, shown: str) -> None:
     assert cli_module._size(size) == shown
+
+
+# -- regressions from the docs walkthrough ------------------------------
+
+
+def _store_profiles(*names: str) -> None:
+    for name in names:
+        config.save_profile(name, api_key=f"iotahub_{name}_tail", base_url=BASE_URL)
+
+
+def test_auth_logout_deletes_the_profile_the_environment_names(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _store_profiles("default", "viaenv")
+    monkeypatch.setenv("IOTA_HUB_PROFILE", "viaenv")
+
+    result = run(runner, "--json", "auth", "logout")
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["profile"] == "viaenv"
+    assert sorted(config.load_config()["profiles"]) == ["default"]
+
+
+def test_auth_login_saves_to_the_profile_the_environment_names(
+    runner: CliRunner, mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mock_api.json("GET", OBSERVATIONS, {"items": [], "next_cursor": None})
+    monkeypatch.setenv("IOTA_HUB_PROFILE", "viaenv")
+
+    result = run(runner, "--json", "auth", "login", input="iotahub_k1_tail\n")
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["profile"] == "viaenv"
+    assert list(config.load_config()["profiles"]) == ["viaenv"]
+
+
+def test_auth_profile_flag_beats_the_environment(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _store_profiles("default", "viaenv", "viaflag")
+    monkeypatch.setenv("IOTA_HUB_PROFILE", "viaenv")
+
+    result = run(runner, "--json", "auth", "logout", "--profile", "viaflag")
+
+    assert json.loads(result.stdout)["profile"] == "viaflag"
+    assert sorted(config.load_config()["profiles"]) == ["default", "viaenv"]
+
+
+def test_auth_logout_without_a_selection_still_means_default(
+    runner: CliRunner,
+) -> None:
+    _store_profiles("default", "other")
+    result = run(runner, "--json", "auth", "logout")
+    assert json.loads(result.stdout)["profile"] == "default"
+
+
+@pytest.mark.parametrize("slot", ["lightcurve", "attachment"])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_drafts_files_add_on_a_bad_path_is_a_usage_error(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path, slot: str, as_json: bool
+) -> None:
+    flags = ["--json"] if as_json else []
+    missing = str(tmp_path / "nope.csv")
+
+    result = run(runner, *flags, "drafts", "files", "add", OBS_ID, slot, missing)
+
+    assert isinstance(result.exception, SystemExit)  # not a FileNotFoundError
+    assert result.exit_code == 2
+    assert mock_api.requests == []
+    if as_json:
+        error = json.loads(result.stderr[result.stderr.index("{") :])
+        assert error["code"] == "missing_files"
+        assert error["details"] == {"missing": [slot], "path": missing}
+    else:
+        assert "error: missing_files:" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_drafts_files_add_on_a_directory_is_a_usage_error(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    result = run(runner, "drafts", "files", "add", OBS_ID, "log", str(tmp_path))
+    assert result.exit_code == 2
+    assert "error: missing_files:" in result.stderr
+
+
+def test_files_download_into_a_file_is_a_usage_error(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    mock_api.json(
+        "GET",
+        f"{GET}/files",
+        {"observation_id": OBS_ID, "expires_in": 900, "files": []},
+    )
+    blocker = tmp_path / "file"
+    blocker.write_text("x", encoding="utf-8")
+
+    result = run(runner, "files", "download", "observation", OBS_ID, "-o", str(blocker))
+
+    assert isinstance(result.exception, SystemExit)
+    assert result.exit_code == 2
+    assert "error: not_a_directory:" in result.stderr
+
+
+_NOTE_TOO_SHORT = {
+    "code": "validation_error",
+    "message": "Request validation failed.",
+    "hint": "See 'details' for what to fix.",
+    "details": {"field": "note", "min_length": 3},
+}
+
+
+def _script_short_note(mock_api: MockAPI) -> None:
+    mock_api.json(
+        "POST",
+        f"{GET}/validation/findings/fp/dismiss",
+        _NOTE_TOO_SHORT,
+        status=422,
+    )
+
+
+def test_plain_errors_print_the_details(runner: CliRunner, mock_api: MockAPI) -> None:
+    _script_short_note(mock_api)
+
+    result = run(runner, "drafts", "dismiss", OBS_ID, "fp", "--note", "x")
+
+    assert result.exit_code == 1
+    lines = result.stderr.splitlines()
+    hint = lines.index("hint: See 'details' for what to fix.")
+    assert lines[hint + 1] == 'details: {"field": "note", "min_length": 3}'
+    assert result.stdout == ""
+
+
+def test_styled_errors_print_the_details(
+    runner: CliRunner, mock_api: MockAPI, terminal
+) -> None:
+    streams = terminal()
+    _script_short_note(mock_api)
+
+    result = run(runner, "drafts", "dismiss", OBS_ID, "fp", "--note", "x")
+
+    assert result.exit_code == 1
+    assert '{"field": "note", "min_length": 3}' in streams[True].getvalue()
+
+
+def test_plain_errors_omit_empty_details(runner: CliRunner, mock_api: MockAPI) -> None:
+    mock_api.json("GET", GET, {"code": "not_found", "message": "Gone."}, status=404)
+    result = run(runner, "observations", "show", OBS_ID)
+    assert result.exit_code == 1
+    assert "details:" not in result.stderr
+
+
+def test_a_failed_finalize_prints_the_draft_id(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "POST",
+        DRAFTS,
+        {
+            "observation": observation(),
+            "uploads": [
+                {
+                    "slot": slot,
+                    "filename": path.name,
+                    "upload_url": f"https://s3.example.test{BUCKET}",
+                    "fields": {"key": f"staging/{slot}"},
+                    "file_key": f"staging/{slot}",
+                }
+                for slot, path in (
+                    ("report", REPORT),
+                    ("lightcurve", LIGHTCURVE),
+                    ("log", LOG),
+                )
+            ],
+        },
+        status=201,
+    )
+    mock_api.add("POST", BUCKET, httpx.Response(204))
+    mock_api.json(
+        "POST",
+        FINALIZE,
+        {"code": "upload_missing", "message": "A file never arrived."},
+        status=409,
+    )
+
+    result = run(runner, "submit", str(OBSERVATION_DIR))
+
+    assert result.exit_code == 1
+    assert f'details: {{"observation_id": "{OBS_ID}"}}' in result.stderr
+
+
+def _script_no_files(mock_api: MockAPI, path: str, **ids: str) -> None:
+    mock_api.json("GET", path, {**ids, "expires_in": 900, "files": []})
+
+
+def test_files_download_notes_an_empty_event_on_stderr(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    _script_no_files(mock_api, f"{EVENTS}/evt_1/files", event_id="evt_1")
+
+    result = run(runner, "files", "download", "event", "evt_1", "-o", str(tmp_path))
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert "No files to download for event evt_1." in result.stderr
+    assert "until the event is COMPLETE" in result.stderr
+
+
+def test_files_download_note_names_the_slot_that_matched_nothing(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    _script_no_files(mock_api, f"{GET}/files", observation_id=OBS_ID)
+
+    result = run(
+        runner,
+        "files",
+        "download",
+        "observation",
+        OBS_ID,
+        "--slot",
+        "nonesuch",
+        "-o",
+        str(tmp_path),
+    )
+
+    assert result.exit_code == 0
+    assert f"observation {OBS_ID} in slot nonesuch." in result.stderr
+    assert "COMPLETE" not in result.stderr  # An event's rule, not an observation's.
+
+
+def test_files_download_json_stays_an_empty_list_with_no_note(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    _script_no_files(mock_api, f"{EVENTS}/evt_1/files", event_id="evt_1")
+
+    result = run(
+        runner, "--json", "files", "download", "event", "evt_1", "-o", str(tmp_path)
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {"files": []}
+    assert "No files to download" not in result.stderr
+
+
+def test_files_download_says_nothing_extra_when_files_arrive(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    mock_api.json(
+        "GET",
+        f"{GET}/files",
+        {
+            "observation_id": OBS_ID,
+            "expires_in": 900,
+            "files": [
+                {
+                    "slot": "lightcurve",
+                    "filename": "lc.csv",
+                    "size_bytes": 7,
+                    "url": "https://s3.example.test/get/lc.csv",
+                    "expires_in": 900,
+                }
+            ],
+        },
+    )
+    mock_api.add("GET", "/get/lc.csv", httpx.Response(200, content=b"t,flux\n"))
+
+    result = run(
+        runner, "files", "download", "observation", OBS_ID, "-o", str(tmp_path)
+    )
+
+    assert result.exit_code == 0
+    assert "No files to download" not in result.stderr

@@ -1164,3 +1164,102 @@ def test_an_amend_after_the_lock_is_a_conflict_with_the_state(client, mock_api):
     assert excinfo.value.code == "already_processed"
     assert excinfo.value.details["status"] == "locked"
     assert requests_to(mock_api, BUCKET) == []
+
+
+# -- regressions from the docs walkthrough ------------------------------
+
+
+def test_replace_file_refuses_a_bad_path_without_calling(client, mock_api, tmp_path):
+    missing = tmp_path / "nope.csv"
+    with pytest.raises(IotaHubError) as excinfo:
+        client.replace_file(OBS_ID, "lightcurve", missing)
+
+    assert excinfo.value.code == "missing_files"
+    assert excinfo.value.details == {"missing": ["lightcurve"], "path": str(missing)}
+    assert mock_api.requests == []
+
+
+def test_add_attachment_refuses_a_bad_path_without_calling(client, mock_api, tmp_path):
+    with pytest.raises(IotaHubError) as excinfo:
+        client.add_attachment(OBS_ID, tmp_path / "nope.png")
+
+    assert excinfo.value.code == "missing_files"
+    assert excinfo.value.details["missing"] == ["attachment"]
+    assert mock_api.requests == []
+
+
+@pytest.mark.parametrize(
+    ("files", "attachments", "slot"),
+    [
+        ({"report": "nope.xlsx"}, [], "report"),
+        ({"report": REPORT}, ["nope.png"], "attachment"),
+        ({"report": "."}, [], "report"),  # A directory, not a file.
+    ],
+)
+def test_submit_files_refuses_a_bad_path_before_creating_a_draft(
+    client, mock_api, files, attachments, slot
+):
+    with pytest.raises(IotaHubError) as excinfo:
+        client.submit_files(files, attachments=attachments)
+
+    assert excinfo.value.code == "missing_files"
+    assert excinfo.value.details["missing"] == [slot]
+    assert mock_api.requests == []
+
+
+def test_download_files_into_a_file_is_not_a_directory(client, mock_api, tmp_path):
+    script_file_list(mock_api)
+    blocker = tmp_path / "file"
+    blocker.write_text("x", encoding="utf-8")
+
+    for dest in (blocker, blocker / "below"):
+        with pytest.raises(IotaHubError) as excinfo:
+            client.download_files("observation", OBS_ID, dest)
+        assert excinfo.value.code == "not_a_directory"
+
+
+def _script_failed_finalize(mock_api: MockAPI, **problem):
+    script_create(mock_api)
+    script_upload(mock_api)
+    mock_api.json("POST", FINALIZE, problem, status=409)
+
+
+def test_failed_finalize_names_the_draft(client, mock_api, sleeps):
+    _script_failed_finalize(
+        mock_api, code="upload_missing", message="A file never arrived."
+    )
+
+    with pytest.raises(ConflictError) as excinfo:
+        client.submit_files(FILES)
+
+    assert excinfo.value.code == "upload_missing"
+    assert excinfo.value.details == {"observation_id": OBS_ID}
+    # No retry and no extra request: create, three uploads, one finalize.
+    assert len(mock_api.requests) == 5
+    assert sleeps == []
+
+
+def test_failed_finalize_keeps_what_the_api_said(client, mock_api):
+    _script_failed_finalize(
+        mock_api,
+        code="upload_missing",
+        message="A file never arrived.",
+        details={"observation_id": "obs_from_api", "slot": "log"},
+    )
+
+    with pytest.raises(ConflictError) as excinfo:
+        client.submit_files(FILES)
+
+    assert excinfo.value.details == {"observation_id": "obs_from_api", "slot": "log"}
+
+
+def test_download_files_returns_nothing_for_an_empty_listing(
+    client, mock_api, tmp_path
+):
+    mock_api.json(
+        "GET",
+        "/public/v1/events/evt_1/files",
+        {"event_id": "evt_1", "expires_in": 900, "files": []},
+    )
+
+    assert client.download_files("event", "evt_1", tmp_path) == []

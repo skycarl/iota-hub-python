@@ -186,6 +186,7 @@ Use `--help` on a command to see its filters and options.
 `observations list` and `events list` return one page of results. Add `--all` to retrieve every page.
 
 Downloads preserve existing files. Add `--force` to overwrite them.
+Without reviewer access, an event's file list is empty until the event is `COMPLETE`.
 
 ## Automation and agents
 

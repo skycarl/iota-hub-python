@@ -38,7 +38,7 @@ from . import _term, config
 from ._http import DEFAULT_BASE_URL
 from ._version import __version__
 from .client import Client
-from .config import ENV_BASE_URL, Settings
+from .config import ENV_BASE_URL, ENV_PROFILE, Settings
 from .errors import AuthError, ConflictError, IotaHubError, RateLimitError
 from .files import map_folder
 from .models import (
@@ -229,12 +229,19 @@ def _fail(error: IotaHubError) -> NoReturn:
         )
         if error.hint:
             _term.show(_term.text(("  hint  ", "dim"), error.hint), err=True)
+        if error.details:
+            details = json.dumps(error.details)
+            _term.show(
+                _term.text(("  details  ", "dim"), details), err=True, soft_wrap=True
+            )
         if error.retry_after is not None:
             _term.show(Text(f"  retry after {error.retry_after:g} s", "dim"), err=True)
     else:
         _err(f"error: {error.code}: {error.message}")
         if error.hint:
             _err(f"hint: {error.hint}")
+        if error.details:
+            _err(f"details: {json.dumps(error.details)}")
         if error.retry_after is not None:
             _err(f"retry after {error.retry_after:g} s")
     raise typer.Exit(code)
@@ -1029,7 +1036,7 @@ def auth_login() -> None:
 
     Example: iota-hub auth login --profile dev --base-url https://host/dev/api
     """
-    name = _OPTIONS.profile or "default"
+    name = _auth_profile()
     stored = (config.load_config().get("profiles") or {}).get(name) or {}
     target = (
         _OPTIONS.base_url
@@ -1074,6 +1081,11 @@ def auth_login() -> None:
     _field("Base URL", target)
     _field("Key", prefix)
     _field("Saved to", _pasteable(path))
+
+
+def _auth_profile() -> str:
+    """The profile ``auth login`` writes and ``auth logout`` deletes."""
+    return _OPTIONS.profile or os.environ.get(ENV_PROFILE) or "default"
 
 
 def _read_key() -> str:
@@ -1137,7 +1149,7 @@ def auth_logout() -> None:
 
     Example: iota-hub auth logout --profile dev
     """
-    name = _OPTIONS.profile or "default"
+    name = _auth_profile()
     deleted = config.delete_profile(name)
     path = config.config_file_path()
     if _OPTIONS.json:
@@ -1864,8 +1876,22 @@ def files_download(
     if _OPTIONS.json:
         _emit({"files": [str(path) for path in written]})
         return
+    if not written:
+        _diagnostic(_nothing_to_download(kind, resource_id, slot))
     for path in written:
         _out(str(path))
+
+
+def _nothing_to_download(kind: ResourceKind, resource_id: str, slot: str | None) -> str:
+    """The note that says an empty result was a result, not a silent failure."""
+    note = f"No files to download for {kind.value} {resource_id}"
+    note += f" in slot {slot}." if slot else "."
+    if kind is ResourceKind.event:
+        note += (
+            " Without reviewer access, an event's file list is empty until the "
+            "event is COMPLETE."
+        )
+    return note
 
 
 # --------------------------------------------------------------------------

@@ -53,7 +53,10 @@ replacement):
   is `file_exists` unless `overwrite` was asked for — `--force` on the CLI —
   (and every destination is
   checked before the first byte is written, so a refusal leaves no half-done
-  download), and a link S3 refuses is `download_failed`,
+  download), and a link S3 refuses is `download_failed`. An empty result is
+  not a failure: the CLI exits `0`, `--json` prints `{"files": []}`, and plain
+  output says so on stderr. The API's event file list is empty until the event
+  is `COMPLETE` for a caller without reviewer access,
 - `next_actions_commands(observation)` — the API's verbs as the literal
   commands that answer them (§ 13). It lives in the *library*, not the CLI, so
   an embedder prints the same guidance the CLI does.
@@ -77,7 +80,9 @@ submitted observation no longer carries the draft's run), and an **`outcome`** �
 Flags: `wait=False` stops after finalize, `submit=False` stops at `ready`.
 **A draft that is not `ready` is never submitted**, and a failed run is never
 cleaned up: the draft stays, because it is recoverable in the web app (and
-`delete_draft` is one call away if the caller disagrees).
+`delete_draft` is one call away if the caller disagrees). A finalize that fails
+leaves the same draft behind, so `submit_files` adds `observation_id` to the
+error's `details` before re-raising it; it adds no retry and no request.
 
 Progress is reported through an optional `on_progress` callback taking one
 short string (`Uploading lightcurve (2/3)...`, `Waiting for checks...`), which
@@ -165,8 +170,9 @@ ignored, so deleting a profile never wedges the CLI.
 cannot be `unknown_profile`. The base URL stored with the key is the flag, else
 `IOTA_HUB_BASE_URL`, else what that profile already had (a re-login keeps its
 target), else the default — the § 3 order with the one profile in question
-standing in for "the profile". The key itself is read from a hidden prompt on a
-TTY and otherwise from one line of stdin, and is verified with
+standing in for "the profile". The profile it writes, and the one `auth logout`
+deletes, is `--profile`, else `IOTA_HUB_PROFILE`, else `default`. The key itself
+is read from a hidden prompt on a TTY and otherwise from one line of stdin, and is verified with
 `list_observations(limit=1)` **before** anything is written, so a typo never
 lands in the config file. Nothing but `key_prefix` is ever printed back.
 
@@ -406,7 +412,8 @@ state on its state refusals — `already_submitted`, `already_processed`,
 `identity_changed` adds `details.changed: [{field, stored, parsed}]` — and a
 client exposes it as given, in the exception and in the CLI's `--json` error,
 so a caller can say *which* field the replacement report disagreed on without
-another read.
+another read. The one addition is a client's: the `observation_id` on a failed
+`submit_files` finalize (§ 1), when the API's `details` did not carry it.
 
 **When the body is not problem details** — a gateway-level `429`, an HTML `5xx`,
 a truncated response — the client synthesizes one rather than raising a parse
@@ -424,9 +431,9 @@ and the CLI maps each one to an exit code (§ 12):
 | `file_exists` | a download would overwrite an existing file and `overwrite` was not asked for |
 | `timeout` | `wait_for_checks` gave up (§ 8) |
 | `ambiguous_files` | two candidates for one slot (§ 11); `details.slot`, `details.candidates` |
-| `missing_files` | the folder has no report, or an explicit path is not there; `details.missing` |
+| `missing_files` | the folder has no report, or an explicit path is not there or cannot be read (a directory, no permission), checked before any request for `submit_files`, `replace_file` and `add_attachment`; `details.missing` |
 | `invalid_extension` | an explicit path has the wrong extension for its slot |
-| `not_a_directory` | the folder to submit is not a directory |
+| `not_a_directory` | the folder to submit is not a directory, or a download destination cannot be one because a file is in the way |
 | `blocked_attachment` | an attachment has a type the API refuses (§ 11a); `details.files`, `details.blocked_extensions` |
 | `attachment_too_large` | an attachment is over the 50 MB cap (§ 11a); `details.files`, `details.max_size_bytes` |
 | `too_many_attachments` | more than 25 attachments (§ 11a); `details.files`, `details.count`, `details.max_allowed` |
@@ -696,7 +703,9 @@ instead of exiting `1`, which is what the API's own hint says to do. With
   | anything else | `<verb>: see iota-hub guide` — a verb a client does not know is never silently dropped |
 - Errors print the API's `code` and `hint`, as
   `error: <code>: <message>` then `hint: <hint>`, both on stderr, plus
-  `retry after <n> s` when the response carried a `Retry-After`.
+  `details: <one line of JSON>` when `details` is not empty (a hint may point
+  at it, so plain output must not hide it) and `retry after <n> s` when the
+  response carried a `Retry-After`.
 - Dates are printed as the API gives them. No local-time conversion: an
   observation's `observed_at_utc` is UTC and stays readable as UTC.
 - Tables are simple aligned columns — no box drawing and no emoji, styled or

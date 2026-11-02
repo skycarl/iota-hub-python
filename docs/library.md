@@ -249,6 +249,7 @@ client.download_files("event", event_id, "downloads/", slot="occelmnt")
 the parameter names in the [API reference](https://iota-hub.com/developers/reference).
 
 Downloads preserve existing files. Pass `overwrite=True` to replace them.
+Without reviewer access, an event's file list is empty until the event is `COMPLETE`.
 
 ## Errors
 

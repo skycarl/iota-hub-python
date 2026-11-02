@@ -21,6 +21,7 @@ from .files import (
     SLOTS,
     FolderMapping,
     check_attachments,
+    check_readable,
     map_folder,
 )
 from .models import (
@@ -110,6 +111,9 @@ class WorkflowMixin:
         """
         paths = _paths(files)
         extras = [Path(path) for path in attachments]
+        to_declare = [*paths.items(), *((ATTACHMENT_SLOT, p) for p in extras)]
+        for slot, path in to_declare:
+            check_readable(slot, path)
         check_attachments(extras)
         declared = [
             PublicDeclaredFile(
@@ -118,7 +122,7 @@ class WorkflowMixin:
                 size=path.stat().st_size,
                 sha256=sha256_base64(path),
             )
-            for slot, path in [*paths.items(), *((ATTACHMENT_SLOT, p) for p in extras)]
+            for slot, path in to_declare
         ]
         uploads = {slot: path.name for slot, path in paths.items()}
         attached = [path.name for path in extras]
@@ -146,9 +150,15 @@ class WorkflowMixin:
             self._upload(observation_id, target, path, on_progress=on_progress)
 
         _say(on_progress, "Finalizing draft...")
-        observation = self.finalize_draft(
-            observation_id, idempotency_key=_idempotency_key()
-        )
+        try:
+            observation = self.finalize_draft(
+                observation_id, idempotency_key=_idempotency_key()
+            )
+        except IotaHubError as error:
+            # The draft exists and stays, and this call never returned its id:
+            # without this it could only be found by listing drafts.
+            error.details.setdefault("observation_id", observation_id)
+            raise
 
         checked: PublicObservation | None = None
 
@@ -288,6 +298,7 @@ class WorkflowMixin:
     ) -> PublicObservation:
         """Put a new file in one slot: init, upload, finalize."""
         file = Path(path)
+        check_readable(slot, file)
         _say(on_progress, f"Uploading {slot} ({file.name})...")
         target = self.init_file_upload(
             observation_id, slot, filename=file.name, sha256=sha256_base64(file)
@@ -314,6 +325,7 @@ class WorkflowMixin:
         server's to enforce, since it depends on what the draft already holds.
         """
         file = Path(path)
+        check_readable(ATTACHMENT_SLOT, file)
         check_attachments([file])
         _say(on_progress, f"Uploading attachment {file.name}...")
         target = self.init_attachment_upload(
@@ -358,7 +370,15 @@ class WorkflowMixin:
             links = [link for link in links if link.slot == slot]
 
         directory = Path(dest)
-        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except (FileExistsError, NotADirectoryError) as exc:
+            raise IotaHubError(
+                "not_a_directory",
+                f"{directory} is not a directory.",
+                hint="Pass a directory to write the files into.",
+                details={"path": str(directory)},
+            ) from exc
         # Check every destination before writing any of it: a refusal halfway
         # through would leave the caller with a partial download.
         targets = [(link, directory / _safe_name(link)) for link in links]

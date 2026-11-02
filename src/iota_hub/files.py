@@ -71,8 +71,9 @@ class MappingError(IotaHubError):
     """A folder the rules cannot map to exactly one observation.
 
     Codes: ``ambiguous_files`` (two candidates for one slot),
-    ``missing_files`` (a required slot has none), ``invalid_extension`` (an
-    explicit override has the wrong extension), ``not_a_directory``, and the
+    ``missing_files`` (a required slot has none, or an explicit path cannot be
+    read), ``invalid_extension`` (an explicit override has the wrong extension),
+    ``not_a_directory``, and the
     attachment rules: ``blocked_attachment``, ``attachment_too_large`` and
     ``too_many_attachments``.
     """
@@ -195,6 +196,25 @@ def map_folder(
         mapping.attachments.append(path)
     check_attachments(mapping.attachments)
     return mapping
+
+
+def check_readable(slot: str, path: Path) -> None:
+    """Refuse an explicit path that is not a file this process can read.
+
+    Opening it is the one test that covers every way a path goes bad, on every
+    platform: not there, a directory (which Windows reports as access denied),
+    no permission.
+    """
+    try:
+        with open(path, "rb"):
+            pass
+    except OSError as exc:
+        raise MappingError(
+            "missing_files",
+            f"Cannot read the {slot} file {path}: {exc.strerror or exc}.",
+            hint=f"Check the path given for the {slot} slot.",
+            details={"missing": [slot], "path": str(path)},
+        ) from exc
 
 
 def check_attachments(paths: list[Path], *, already_attached: int = 0) -> None:
