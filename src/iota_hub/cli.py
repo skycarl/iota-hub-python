@@ -8,9 +8,9 @@ layer on it"), so an embedder gets the same behavior without the CLI.
 
 The conventions are ``docs/client-conventions.md`` sections 12-13: data on
 stdout, progress and ``Target:`` on stderr, one JSON document on stdout under
-``--json`` and a problem-details object on stderr when it fails, documented
-exit codes, plain ASCII unless a UTF-8 terminal is styled (:mod:`._term`),
-and never a prompt when stdin is not a TTY.
+``--json`` and nothing but a problem-details object on stderr when it fails,
+documented exit codes, plain ASCII unless a UTF-8 terminal is styled
+(:mod:`._term`), and never a prompt when stdin is not a TTY.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from . import _term, config
 from ._http import DEFAULT_BASE_URL
 from ._version import __version__
 from .client import Client
-from .config import ENV_BASE_URL, ENV_PROFILE, Settings
+from .config import ENV_BASE_URL, Settings
 from .errors import AuthError, ConflictError, IotaHubError, RateLimitError
 from .files import map_folder
 from .models import (
@@ -79,6 +79,7 @@ USAGE_CODES = frozenset(
         "too_many_attachments",
         "unknown_profile",
         "confirmation_required",
+        "not_writable",
         # The API's own: the replacement report describes another observation.
         # Nothing is wrong with the observation; the file the caller named is
         # the wrong one for it, like an ``invalid_extension``.
@@ -175,7 +176,11 @@ def handle_errors(command):
         try:
             return command(*args, **kwargs)
         except IotaHubError as error:
+            _HELD_NOTES[:] = []
             _fail(error)
+        finally:
+            for line in _HELD_NOTES:
+                _err(line)
 
     wrapper.__name__ = command.__name__
     wrapper.__doc__ = command.__doc__
@@ -199,6 +204,7 @@ def _merge_options(*, base_url: str | None, profile: str | None, as_json: bool) 
     _OPTIONS.json = as_json or _OPTIONS.json
     _term.plain = _OPTIONS.json
     _LAST_PROGRESS[:] = []
+    _HELD_NOTES[:] = []
 
 
 def _fail(error: IotaHubError) -> NoReturn:
@@ -262,6 +268,21 @@ def _err(line: str) -> None:
     typer.echo(line, err=True)
 
 
+#: Under ``--json``, the stderr lines of a run still in progress. A failed run's
+#: stderr is one JSON document (conventions section 13), and whether it fails
+#: is not known until it ends: they are printed when it succeeds, dropped when
+#: it does not.
+_HELD_NOTES: list[str] = []
+
+
+def _note(line: str) -> None:
+    """One line of progress or targeting, held back under ``--json``."""
+    if _OPTIONS.json:
+        _HELD_NOTES.append(line)
+    else:
+        _err(line)
+
+
 def _emit(payload: Any) -> None:
     """The one JSON document a ``--json`` run prints."""
     _out(json.dumps(payload, indent=2))
@@ -286,7 +307,7 @@ def _diagnostic(line: str) -> None:
     warning block (``WARNING:`` lines and their indented detail) stands out.
     """
     if not _term.styled(err=True):
-        _err(line)
+        _note(line)
         return
     if line.startswith("WARNING:"):
         _err("")
@@ -372,7 +393,7 @@ def _settings(*, api_key: str | None = None, always_announce: bool = False) -> S
                 soft_wrap=True,
             )
         else:
-            _err(f"Target: {settings.base_url}")
+            _note(f"Target: {settings.base_url}")
     return settings
 
 
@@ -1027,8 +1048,13 @@ def _emit_submit(result: SubmitResult) -> None:
 
 @auth_app.command("login")
 @handle_errors
-def auth_login() -> None:
+def auth_login(yes: YesOption = False) -> None:
     """Read an API key and store it, with its base URL, in a profile.
+
+    The profile is selected like every other command's: --profile, then
+    IOTA_HUB_PROFILE, then default_profile, then "default". If it already holds
+    a key, a terminal asks before replacing it (--yes does not ask); a piped
+    key replaces it and says so on stderr.
 
     The key is read from a hidden prompt on a terminal, otherwise from one line
     on stdin -- never from a command-line argument, which would land in the
@@ -1045,7 +1071,15 @@ def auth_login() -> None:
         or DEFAULT_BASE_URL
     ).rstrip("/")
     if target != DEFAULT_BASE_URL:
-        _err(f"Target: {target}")
+        _note(f"Target: {target}")
+
+    replaced = _describe_stored_key(stored)
+    if replaced and sys.stdin.isatty():
+        _confirm(
+            f"Profile '{name}' already holds {replaced}. "
+            f"Replace it with a key for {target}?",
+            yes,
+        )
 
     key = _read_key()
     if not key.startswith("iotahub_"):
@@ -1065,6 +1099,8 @@ def auth_login() -> None:
     with _make_client(settings) as client:
         client.list_observations(limit=1)
     path = config.save_profile(name, api_key=key, base_url=target)
+    if replaced:
+        _note(f"Replaced profile '{name}', which held {replaced}.")
 
     prefix = config.key_prefix(key)
     if _OPTIONS.json:
@@ -1074,6 +1110,7 @@ def auth_login() -> None:
                 "base_url": target,
                 "key_prefix": prefix,
                 "config_file": str(path),
+                "replaced": bool(replaced),
             }
         )
         return
@@ -1085,7 +1122,15 @@ def auth_login() -> None:
 
 def _auth_profile() -> str:
     """The profile ``auth login`` writes and ``auth logout`` deletes."""
-    return _OPTIONS.profile or os.environ.get(ENV_PROFILE) or "default"
+    return config.select_profile(config.load_config(), _OPTIONS.profile)[0]
+
+
+def _describe_stored_key(stored: dict[str, str]) -> str | None:
+    """What a re-login would overwrite, safe to print; ``None`` when nothing."""
+    if not stored.get("api_key"):
+        return None
+    prefix = config.key_prefix(stored["api_key"])
+    return f"key {prefix} for {stored.get('base_url') or DEFAULT_BASE_URL}"
 
 
 def _read_key() -> str:
@@ -1146,6 +1191,9 @@ def auth_status() -> None:
 @handle_errors
 def auth_logout() -> None:
     """Forget one profile's stored key and base URL.
+
+    The profile is selected like every other command's: --profile, then
+    IOTA_HUB_PROFILE, then default_profile, then "default".
 
     Example: iota-hub auth logout --profile dev
     """
@@ -1233,7 +1281,7 @@ def drafts_check(
             if error.code != "check_run_in_progress":
                 raise
             if no_wait:
-                _err(f"A check run is already under way for {observation_id}.")
+                _note(f"A check run is already under way for {observation_id}.")
         if no_wait:
             observation = client.get_observation(observation_id)
         else:

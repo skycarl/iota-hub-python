@@ -47,6 +47,29 @@ class Settings:
 # --------------------------------------------------------------------------
 
 
+def select_profile(
+    config: Mapping,
+    profile: str | None = None,
+    *,
+    env: Mapping[str, str] = os.environ,
+) -> tuple[str, bool]:
+    """Which profile a command means, and whether it was asked for by name.
+
+    ``profile``, then ``IOTA_HUB_PROFILE``, then ``default_profile``, then
+    ``default``. Every command selects this way, ``auth login`` and ``auth
+    logout`` included. A ``default_profile`` that no longer exists is ignored,
+    so deleting a profile never wedges the CLI. The name may not exist: what
+    that means is the caller's to decide.
+    """
+    requested = profile or env.get(ENV_PROFILE)
+    if requested:
+        return requested, True
+    stored = config.get("default_profile")
+    if stored and stored in (config.get("profiles") or {}):
+        return stored, False
+    return "default", False
+
+
 def resolve(
     *,
     api_key: str | None = None,
@@ -67,26 +90,21 @@ def resolve(
     """
     config = load_config(config_path)
     profiles = config.get("profiles") or {}
-    requested = profile or env.get(ENV_PROFILE) or None
-    name = requested or config.get("default_profile") or None
+    name, requested = select_profile(config, profile, env=env)
 
-    stored: dict[str, str] = {}
-    if name is not None:
-        found = profiles.get(name)
-        if found is None:
-            if requested is not None:
-                raise IotaHubError(
-                    "unknown_profile",
-                    f"No profile named {name!r} in {config_file_path(config_path)}.",
-                    hint=(
-                        "Create it with `iota-hub auth login --profile "
-                        f"{name} --base-url <url>`."
-                    ),
-                    details={"profile": name, "known": sorted(profiles)},
-                )
-            name = None
-        else:
-            stored = found
+    stored: dict[str, str] = profiles.get(name) or {}
+    if name not in profiles:
+        if requested:
+            raise IotaHubError(
+                "unknown_profile",
+                f"No profile named {name!r} in {config_file_path(config_path)}.",
+                hint=(
+                    "Create it with `iota-hub auth login --profile "
+                    f"{name} --base-url <url>`."
+                ),
+                details={"profile": name, "known": sorted(profiles)},
+            )
+        name = None
 
     if api_key:
         key, source = api_key, "flag"
@@ -168,6 +186,13 @@ def load_config(config_path: str | Path | None = None) -> dict:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
+    except (OSError, UnicodeDecodeError) as exc:
+        raise IotaHubError(
+            "invalid_config",
+            f"Cannot read {path}: {getattr(exc, 'strerror', None) or exc}.",
+            hint="Fix the file, or delete it and run `iota-hub auth login`.",
+            details={"path": str(path)},
+        ) from exc
     try:
         return tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -188,16 +213,18 @@ def save_profile(
 ) -> Path:
     """Store one profile's key and base URL, and return the file's path.
 
-    The first profile written becomes ``default_profile``.
+    The first profile written becomes ``default_profile``, as does any profile
+    written while a bare command would select nothing.
     """
     _check_writable("profile name", name, forbidden='"\\')
     _check_writable("base_url", base_url)
     _check_writable("API key", api_key)
     config = load_config(config_path)
     profiles = dict(config.get("profiles") or {})
+    if select_profile(config, env={})[0] not in profiles:
+        config["default_profile"] = name
     profiles[name] = {"base_url": base_url.rstrip("/"), "api_key": api_key}
     config["profiles"] = profiles
-    config.setdefault("default_profile", name)
     return _write_config(config, config_path)
 
 
@@ -222,18 +249,29 @@ def delete_profile(name: str, *, config_path: str | Path | None = None) -> bool:
 
 def _write_config(config: dict, config_path: str | Path | None) -> Path:
     path = config_file_path(config_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     text = _to_toml(config)
-    # 0600 at creation, so the key is never briefly world-readable. On Windows
-    # the mode is ignored and the user profile directory's ACL is the
-    # protection — which is what the docs promise there.
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with open(descriptor, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(text)
-    if os.name != "nt":
-        # O_CREAT's mode only applies to a file this call created; an existing
-        # one keeps whatever it had until we say otherwise.
-        os.chmod(path, 0o600)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # 0600 at creation, so the key is never briefly world-readable. On
+        # Windows the mode is ignored and the user profile directory's ACL is
+        # the protection — which is what the docs promise there.
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with open(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        if os.name != "nt":
+            # O_CREAT's mode only applies to a file this call created; an
+            # existing one keeps whatever it had until we say otherwise.
+            os.chmod(path, 0o600)
+    except OSError as exc:
+        raise IotaHubError(
+            "not_writable",
+            f"Cannot write the config file {path}: {exc.strerror or exc}.",
+            hint=(
+                f"Fix the permissions on {path.parent}, or set "
+                f"{ENV_API_KEY} instead of storing a key."
+            ),
+            details={"path": str(path)},
+        ) from exc
     return path
 
 

@@ -270,6 +270,9 @@ Additional information is available in `.details`, `.status` (the HTTP status)
 and `.retry_after` (the requested retry delay). API error codes are listed in
 the [reference](https://iota-hub.com/developers/reference).
 
+If `submit_folder` or `submit_files` fails after creating the draft, the draft is
+kept and `.details["observation_id"]` names it.
+
 The library retries temporary failures automatically and verifies uploads using
 checksums. Avoid retrying an entire submission, which can create another draft.
 Check for an existing observation before starting again.

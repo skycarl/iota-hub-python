@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from conftest import FIXTURES
 
@@ -431,3 +433,32 @@ def test_an_explicit_log_may_be_any_txt(tmp_path):
 
     assert mapping.slots["log"] == fit
     assert mapping.attachments == []
+
+
+# -- paths that cannot be used ----------------------------------------------
+
+
+def test_a_folder_that_cannot_be_listed_is_missing_files(tmp_path, monkeypatch):
+    def refuse(_self):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "iterdir", refuse)
+
+    with pytest.raises(MappingError) as excinfo:
+        map_folder(tmp_path)
+
+    assert excinfo.value.code == "missing_files"
+    assert excinfo.value.details == {
+        "missing": ["report"],
+        "directory": str(tmp_path),
+    }
+
+
+def test_a_bad_attach_path_says_what_is_missing(tmp_path):
+    missing = tmp_path / "nope.png"
+
+    with pytest.raises(MappingError) as excinfo:
+        map_folder(OBSERVATION, attach=[missing])
+
+    assert excinfo.value.code == "missing_files"
+    assert excinfo.value.details == {"missing": ["attachment"], "path": str(missing)}

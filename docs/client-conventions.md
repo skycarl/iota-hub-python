@@ -53,9 +53,10 @@ replacement):
   is `file_exists` unless `overwrite` was asked for — `--force` on the CLI —
   (and every destination is
   checked before the first byte is written, so a refusal leaves no half-done
-  download), and a link S3 refuses is `download_failed`. An empty result is
-  not a failure: the CLI exits `0`, `--json` prints `{"files": []}`, and plain
-  output says so on stderr. The API's event file list is empty until the event
+  download), a directory named like a file being downloaded is `not_writable`
+  with or without `overwrite`, and a link S3 refuses is `download_failed`. An
+  empty result is not a failure: `dest` is not created, the CLI exits `0`,
+  `--json` prints `{"files": []}`, and plain output says so on stderr. The API's event file list is empty until the event
   is `COMPLETE` for a caller without reviewer access,
 - `next_actions_commands(observation)` — the API's verbs as the literal
   commands that answer them (§ 13). It lives in the *library*, not the CLI, so
@@ -81,8 +82,10 @@ Flags: `wait=False` stops after finalize, `submit=False` stops at `ready`.
 **A draft that is not `ready` is never submitted**, and a failed run is never
 cleaned up: the draft stays, because it is recoverable in the web app (and
 `delete_draft` is one call away if the caller disagrees). A finalize that fails
-leaves the same draft behind, so `submit_files` adds `observation_id` to the
-error's `details` before re-raising it; it adds no retry and no request.
+leaves the same draft behind, as does an upload that fails twice, a request that
+fails during the wait, or a failed submit. So every error raised after the draft
+was created has `observation_id` added to its `details` before `submit_files`
+re-raises it; that adds no retry and no request.
 
 Progress is reported through an optional `on_progress` callback taking one
 short string (`Uploading lightcurve (2/3)...`, `Waiting for checks...`), which
@@ -148,7 +151,7 @@ api_key  = "iotahub_<key_id>_<secret>"
 - Whenever the resolved base URL is not the default, the CLI prints
   `Target: <base URL>` on **stderr** before acting, so a test run is never
   mistaken for a prod submission. `submit --dry-run` prints it even for the
-  default target (§ 13).
+  default target (§ 13). Under `--json` it is held until the run ends (§ 13).
 
 **Precedence in detail.** The key comes from the flag, else the environment,
 else the profile; the base URL from the flag, else the environment, else the
@@ -162,19 +165,35 @@ different base URL than the one stored with that key, the client raises
 must never carry a prod key to dev. Setting `IOTA_HUB_API_KEY` as well, or
 passing `--base-url`, settles it. A profile that was **asked for** and does not
 exist is `unknown_profile`; a config file that is not valid TOML is
-`invalid_config`. A stored `default_profile` that no longer exists is simply
-ignored, so deleting a profile never wedges the CLI.
+`invalid_config`, and so is one that cannot be read. A stored `default_profile`
+that no longer exists is simply ignored, so deleting a profile never wedges the
+CLI.
+
+**One way to select a profile.** *Decision:* every command, `auth login` and
+`auth logout` included, selects `--profile`, else `IOTA_HUB_PROFILE`, else
+`default_profile` (if that profile exists), else `default`. A profile named
+`default` is therefore used when no `default_profile` is set.
 
 **`auth login` resolves its target the same way, minus the profile's key.**
 *Decision:* the profile it is about to write may not exist yet, so naming it
 cannot be `unknown_profile`. The base URL stored with the key is the flag, else
 `IOTA_HUB_BASE_URL`, else what that profile already had (a re-login keeps its
 target), else the default — the § 3 order with the one profile in question
-standing in for "the profile". The profile it writes, and the one `auth logout`
-deletes, is `--profile`, else `IOTA_HUB_PROFILE`, else `default`. The key itself
+standing in for "the profile". The key itself
 is read from a hidden prompt on a TTY and otherwise from one line of stdin, and is verified with
 `list_observations(limit=1)` **before** anything is written, so a typo never
-lands in the config file. Nothing but `key_prefix` is ever printed back.
+lands in the config file. Nothing but `key_prefix` is ever printed back. The
+first login, on an empty config, writes `default` and makes it `default_profile`;
+so does a login while a bare command would select no existing profile.
+
+**Replacing a stored key is never silent.** *Decision:* when the selected
+profile already holds a key, a TTY is asked first, naming the profile, the stored
+key's prefix and base URL, and the base URL the new key is for; `--yes` skips the
+question. Without a TTY there is nothing to ask and `confirmation_required` does
+not apply: the piped key is the instruction. Either way a replacement says
+`Replaced profile '<name>', which held key <prefix> for <base URL>.` on stderr,
+and the `--json` document says `replaced: true`. `auth login` and `auth logout`
+both print the profile they acted on.
 
 **`auth status` shows profile, base URL and key prefix — and nothing else.**
 *Decision:* the public API has no `whoami` operation (there is none in
@@ -322,7 +341,8 @@ only reads `findings` would never learn the check did not happen. *Decision:*
 once a wait ends, the workflow reports every skipped check through
 `on_progress` as a `WARNING` block (`check_warnings`), and `submit` goes ahead
 exactly as it would have. The block goes wherever progress goes — stderr, for
-the CLI, in every mode — and the same facts are data in `--json` (§ 13).
+the CLI, in every mode (under `--json`, once the run has succeeded) — and the
+same facts are data in `--json` (§ 13).
 
 The usual skipped check is observer check 11, which needs an Occult Watcher
 Cloud link. The server matches the OWC event itself after the report lands
@@ -412,8 +432,9 @@ state on its state refusals — `already_submitted`, `already_processed`,
 `identity_changed` adds `details.changed: [{field, stored, parsed}]` — and a
 client exposes it as given, in the exception and in the CLI's `--json` error,
 so a caller can say *which* field the replacement report disagreed on without
-another read. The one addition is a client's: the `observation_id` on a failed
-`submit_files` finalize (§ 1), when the API's `details` did not carry it.
+another read. The one addition is a client's: the `observation_id` on any error
+`submit_files` raises after creating the draft (§ 1), when `details` did not
+already carry it.
 
 **When the body is not problem details** — a gateway-level `429`, an HTML `5xx`,
 a truncated response — the client synthesizes one rather than raising a parse
@@ -431,15 +452,16 @@ and the CLI maps each one to an exit code (§ 12):
 | `file_exists` | a download would overwrite an existing file and `overwrite` was not asked for |
 | `timeout` | `wait_for_checks` gave up (§ 8) |
 | `ambiguous_files` | two candidates for one slot (§ 11); `details.slot`, `details.candidates` |
-| `missing_files` | the folder has no report, or an explicit path is not there or cannot be read (a directory, no permission), checked before any request for `submit_files`, `replace_file` and `add_attachment`; `details.missing` |
+| `missing_files` | the folder has no report or cannot be listed, or an explicit path is not there or cannot be read (a directory, no permission), checked before any request for `submit_files`, `replace_file` and `add_attachment`; `details.missing` names the slots (`attachment` for a bad `--attach`) |
 | `invalid_extension` | an explicit path has the wrong extension for its slot |
 | `not_a_directory` | the folder to submit is not a directory, or a download destination cannot be one because a file is in the way |
+| `not_writable` | a path this client must write cannot be written: a download destination or a file in it (no permission, or a directory has that name), or the config file or its directory; `details.path` |
 | `blocked_attachment` | an attachment has a type the API refuses (§ 11a); `details.files`, `details.blocked_extensions` |
 | `attachment_too_large` | an attachment is over the 50 MB cap (§ 11a); `details.files`, `details.max_size_bytes` |
 | `too_many_attachments` | more than 25 attachments (§ 11a); `details.files`, `details.count`, `details.max_allowed` |
 | `missing_api_key` | nothing configured a key (§ 3) — the auth category |
 | `unknown_profile` | a profile was named and the config file has no such profile |
-| `invalid_config` | the config file is not valid TOML, or a profile name, base URL or key carries something that cannot be stored in it (§ 3); a base URL that is not `https` (§ 4); `IOTA_HUB_BASE_URL` disagreeing with a profile's stored key (§ 3) |
+| `invalid_config` | the config file is not valid TOML or cannot be read, or a profile name, base URL or key carries something that cannot be stored in it (§ 3); a base URL that is not `https` (§ 4); `IOTA_HUB_BASE_URL` disagreeing with a profile's stored key (§ 3) |
 | `confirmation_required` | a destructive command would have had to prompt, and stdin is not a TTY (§ 13); the `hint` names `--yes` |
 | `usage_error` | the invocation itself was rejected by the argument parser (§ 12) |
 
@@ -605,7 +627,8 @@ Scripts and agents branch on these.
 The client-invented codes of § 10 map on: the mapping errors
 (`ambiguous_files`, `missing_files`, `invalid_extension`, `not_a_directory`,
 and the attachment rules `blocked_attachment`, `attachment_too_large`,
-`too_many_attachments`) and `unknown_profile` and `confirmation_required` are **usage**, `2`;
+`too_many_attachments`) and `unknown_profile`, `confirmation_required` and
+`not_writable` are **usage**, `2`;
 `missing_api_key` is **auth**, `3`; of the API's own codes, `identity_changed`
 is **usage**, `2` (§ 11b), and `already_processed` and `already_submitted` are
 plain conflicts, `1`;
@@ -668,6 +691,12 @@ instead of exiting `1`, which is what the API's own hint says to do. With
   `status` is the HTTP status, or `null` when no response arrived; `retry_after`
   is the `Retry-After` wait in seconds, or `null` when the response carried
   none. Both are always present, so a reader never has to test for the key.
+  *Decision:* the error document is **all** a failed run prints on stderr, so
+  `json.loads(stderr)` always works. Whether a run fails is not known until it
+  ends, so under `--json` the `Target:` line, progress and warning lines are held
+  back: printed on stderr when the run succeeds (exit `4` on `needs_attention`
+  included, since stdout carries the document), dropped when it fails. The cost is
+  no live progress under `--json`.
 - **Plain and styled.** The plain text is the contract: what a pipe, a file,
   an agent or a test sees, and what every rule in this section describes.
   *Decision (2026-10-31):* on a terminal the same facts may be **styled** --
@@ -686,7 +715,9 @@ instead of exiting `1`, which is what the API's own hint says to do. With
   and loses nothing it cannot print.
 - A progress line identical to the one before it is printed once (each poll
   says "Waiting for checks...").
-- Never prompt when stdin is not a TTY; destructive commands take `--yes`.
+- Never prompt when stdin is not a TTY; destructive commands take `--yes`, and
+  refuse with `confirmation_required` without it. `auth login` replacing a key is
+  the one exception (§ 3): its stdin is the key.
 - Human output prints the literal next command for each `next_actions` verb, so
   neither a person nor an agent has to translate. The mapping is the library's
   (`next_actions_commands`, § 1), not the CLI's:
@@ -727,7 +758,7 @@ shapes are part of semver (a major bump to change one):
 | `events show` | the `PublicEvent` |
 | `drafts list` | `{items: [...]}` — it follows the cursor itself (the open-draft cap is 100), so there is no `next_cursor` to report |
 | `observations list`, `events list` | `{items: [...], next_cursor}`; with `--all` the cursor is followed and `next_cursor` is `null` |
-| `auth login` | `{profile, base_url, key_prefix, config_file}` |
+| `auth login` | `{profile, base_url, key_prefix, config_file, replaced}` |
 | `auth status` | `{profile, base_url, key_prefix, key_source, config_file, check}` |
 | `auth logout` | `{profile, deleted, config_file}` |
 | `drafts delete` | `{observation_id, deleted}` |

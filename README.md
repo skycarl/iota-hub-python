@@ -172,6 +172,12 @@ the identifying prefix of the key (`iotahub_<key_id>_...`, never the secret),
 and makes one cheap read to say whether the key is actually valid.
 `iota-hub auth logout` removes a stored profile.
 
+Both select a profile like every other command: `--profile`, then
+`IOTA_HUB_PROFILE`, then the config file's `default_profile` (the first profile
+you saved), then `default`, and both print the one they used. If it already
+holds a key, `auth login` asks before replacing it on a terminal (`--yes` skips
+the question); with a piped key, it replaces the key and says so on stderr.
+
 Profiles keep a key **and** its base URL together, so a development key is never
 sent to production or the reverse:
 
@@ -205,6 +211,9 @@ no OS keyring integration.
   nothing else. Errors are JSON too, on **stderr**, in the API's problem-details
   shape plus the HTTP status, the retry wait and the exit code:
   `{"code": "open_findings", "message": "...", "hint": "...", "details": {}, "status": 409, "retry_after": null, "exit_code": 4}`.
+  That document is all a failed run writes to stderr; `Target:` and progress lines
+  appear only once a run has succeeded. An error after a draft was created says
+  which one in `details.observation_id`.
   Branch on `code`, never on `message`. A bad invocation is JSON too, as
   `usage_error` with exit code `2`.
 - **Exit codes** — branch on these rather than parsing output:

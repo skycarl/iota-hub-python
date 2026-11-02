@@ -9,6 +9,7 @@ the two change together.
 
 from __future__ import annotations
 
+import os
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -135,74 +136,74 @@ class WorkflowMixin:
         )
         observation_id = created.observation.observation_id
 
-        # The API answers one target per declared file, in declared order; the
-        # attachment targets are paired with the attachment paths by position.
-        pending_extras = iter(extras)
-        total = len(created.uploads)
-        for index, target in enumerate(created.uploads, start=1):
-            if target.slot == ATTACHMENT_SLOT:
-                path = next(pending_extras)
-                label = f"attachment {path.name}"
-            else:
-                path = paths[target.slot]
-                label = target.slot
-            _say(on_progress, f"Uploading {label} ({index}/{total})...")
-            self._upload(observation_id, target, path, on_progress=on_progress)
-
-        _say(on_progress, "Finalizing draft...")
         try:
+            # The API answers one target per declared file, in declared order; the
+            # attachment targets are paired with the attachment paths by position.
+            pending_extras = iter(extras)
+            total = len(created.uploads)
+            for index, target in enumerate(created.uploads, start=1):
+                if target.slot == ATTACHMENT_SLOT:
+                    path = next(pending_extras)
+                    label = f"attachment {path.name}"
+                else:
+                    path = paths[target.slot]
+                    label = target.slot
+                _say(on_progress, f"Uploading {label} ({index}/{total})...")
+                self._upload(observation_id, target, path, on_progress=on_progress)
+
+            _say(on_progress, "Finalizing draft...")
             observation = self.finalize_draft(
                 observation_id, idempotency_key=_idempotency_key()
             )
+
+            checked: PublicObservation | None = None
+
+            def result(observation: PublicObservation, submitted: bool, outcome: str):
+                return SubmitResult(
+                    observation,
+                    submitted,
+                    outcome,
+                    uploads,
+                    attached,
+                    skipped_checks=skipped_checks(checked) if checked else [],
+                    owc_commands=owc_commands(checked) if checked else [],
+                )
+
+            if not wait:
+                return result(observation, False, "draft")
+
+            observation = self.wait_for_checks(
+                observation_id, timeout=timeout, on_progress=on_progress
+            )
+            checked = observation
+            # Warn, never block (conventions section 8a): a skipped check and an
+            # unresolved OWC link are said out loud, and the submit goes ahead.
+            for line in check_warnings(observation):
+                _say(on_progress, line)
+            # ``auto_submit_when_clean`` means the validation worker may have
+            # submitted it while we polled; that is a success, not an oversight.
+            if observation.submission_status == "submitted":
+                return result(observation, True, "submitted")
+            if not _is_ready(observation):
+                return result(observation, False, "needs_attention")
+            if not submit:
+                return result(observation, False, "ready")
+
+            # A submit on an observation that is already submitted -- a lost
+            # response retried, or the auto-submit worker winning the race --
+            # answers 200 with its current state: that is "submitted" too.
+            _say(on_progress, "Submitting...")
+            observation = self.submit_draft(
+                observation_id,
+                version=observation.version,
+                idempotency_key=_idempotency_key(),
+            )
+            return result(observation, True, "submitted")
         except IotaHubError as error:
             # The draft exists and stays, and this call never returned its id:
             # without this it could only be found by listing drafts.
             error.details.setdefault("observation_id", observation_id)
             raise
-
-        checked: PublicObservation | None = None
-
-        def result(observation: PublicObservation, submitted: bool, outcome: str):
-            return SubmitResult(
-                observation,
-                submitted,
-                outcome,
-                uploads,
-                attached,
-                skipped_checks=skipped_checks(checked) if checked else [],
-                owc_commands=owc_commands(checked) if checked else [],
-            )
-
-        if not wait:
-            return result(observation, False, "draft")
-
-        observation = self.wait_for_checks(
-            observation_id, timeout=timeout, on_progress=on_progress
-        )
-        checked = observation
-        # Warn, never block (conventions section 8a): a skipped check and an
-        # unresolved OWC link are said out loud, and the submit goes ahead.
-        for line in check_warnings(observation):
-            _say(on_progress, line)
-        # ``auto_submit_when_clean`` means the validation worker may have
-        # submitted it while we polled; that is a success, not an oversight.
-        if observation.submission_status == "submitted":
-            return result(observation, True, "submitted")
-        if not _is_ready(observation):
-            return result(observation, False, "needs_attention")
-        if not submit:
-            return result(observation, False, "ready")
-
-        # A submit on an observation that is already submitted -- a lost
-        # response retried, or the auto-submit worker winning the race --
-        # answers 200 with its current state: that is "submitted" too.
-        _say(on_progress, "Submitting...")
-        observation = self.submit_draft(
-            observation_id,
-            version=observation.version,
-            idempotency_key=_idempotency_key(),
-        )
-        return result(observation, True, "submitted")
 
     def submit_folder(
         self,
@@ -356,8 +357,10 @@ class WorkflowMixin:
 
         The links are presigned, so they are fetched **without** the API key.
         Nothing is skipped silently: an existing file is ``file_exists`` unless
-        ``overwrite`` is set, and a link S3 refuses (an expired one answers
-        ``403``) is ``download_failed``.
+        ``overwrite`` is set, a link S3 refuses (an expired one answers ``403``)
+        is ``download_failed``, and a destination that cannot be written is
+        ``not_writable``. ``dest`` is created only when there is something to
+        put in it.
         """
         if kind == "observation":
             links = self.list_observation_files(id).files
@@ -370,15 +373,11 @@ class WorkflowMixin:
             links = [link for link in links if link.slot == slot]
 
         directory = Path(dest)
-        try:
-            directory.mkdir(parents=True, exist_ok=True)
-        except (FileExistsError, NotADirectoryError) as exc:
-            raise IotaHubError(
-                "not_a_directory",
-                f"{directory} is not a directory.",
-                hint="Pass a directory to write the files into.",
-                details={"path": str(directory)},
-            ) from exc
+        if os.path.exists(directory) and not os.path.isdir(directory):
+            raise _not_a_directory(directory)
+        if not links:
+            return []
+
         # Check every destination before writing any of it: a refusal halfway
         # through would leave the caller with a partial download.
         targets = [(link, directory / _safe_name(link)) for link in links]
@@ -403,9 +402,18 @@ class WorkflowMixin:
                         "slots": [first.slot, link.slot],
                     },
                 )
+        for link, out in targets:
+            # Before file_exists, whose way out (--force) cannot help here.
+            if os.path.isdir(out):
+                raise IotaHubError(
+                    "not_writable",
+                    f"Cannot write {out}: a directory has that name.",
+                    hint="Download into another directory, or move that one away.",
+                    details={"path": str(out), "slot": link.slot},
+                )
         if not overwrite:
             for link, out in targets:
-                if out.exists():
+                if os.path.exists(out):
                     raise IotaHubError(
                         "file_exists",
                         f"{out} already exists.",
@@ -415,6 +423,13 @@ class WorkflowMixin:
                         ),
                         details={"path": str(out), "slot": link.slot},
                     )
+
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except (FileExistsError, NotADirectoryError) as exc:
+            raise _not_a_directory(directory) from exc
+        except OSError as exc:
+            raise _not_writable(directory, exc) from exc
 
         written: list[Path] = []
         for link, out in targets:
@@ -491,9 +506,12 @@ class WorkflowMixin:
                     details={"slot": slot, "filename": out.name},
                     status=response.status_code,
                 )
-            with open(out, "wb") as handle:
-                for chunk in response.iter_bytes():
-                    handle.write(chunk)
+            try:
+                with open(out, "wb") as handle:
+                    for chunk in response.iter_bytes():
+                        handle.write(chunk)
+            except OSError as exc:
+                raise _not_writable(out, exc) from exc
 
 
 # --------------------------------------------------------------------------
@@ -655,6 +673,24 @@ def _open_findings(observation: PublicObservation) -> list[PublicFinding]:
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
+
+
+def _not_a_directory(path: Path) -> IotaHubError:
+    return IotaHubError(
+        "not_a_directory",
+        f"{path} is not a directory.",
+        hint="Pass a directory to write the files into.",
+        details={"path": str(path)},
+    )
+
+
+def _not_writable(path: Path, cause: OSError) -> IotaHubError:
+    return IotaHubError(
+        "not_writable",
+        f"Cannot write {path}: {cause.strerror or cause}.",
+        hint="Check the permissions, or download into another directory.",
+        details={"path": str(path)},
+    )
 
 
 def _safe_name(link: PublicFileLink | PublicEventFileLink) -> str:

@@ -14,6 +14,7 @@ anything is created so a folder the API would refuse fails before any call.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -71,9 +72,9 @@ class MappingError(IotaHubError):
     """A folder the rules cannot map to exactly one observation.
 
     Codes: ``ambiguous_files`` (two candidates for one slot),
-    ``missing_files`` (a required slot has none, or an explicit path cannot be
-    read), ``invalid_extension`` (an explicit override has the wrong extension),
-    ``not_a_directory``, and the
+    ``missing_files`` (a required slot has none, or a folder or an explicit
+    path cannot be read), ``invalid_extension`` (an explicit override has the
+    wrong extension), ``not_a_directory``, and the
     attachment rules: ``blocked_attachment``, ``attachment_too_large`` and
     ``too_many_attachments``.
     """
@@ -127,30 +128,13 @@ def map_folder(
     checked for all of them at once (:func:`check_attachments`).
     """
     base = Path(directory)
-    if not base.is_dir():
-        raise MappingError(
-            "not_a_directory",
-            f"{base} is not a directory.",
-            hint="Pass the folder holding one observation's files.",
-            details={"path": str(base)},
-        )
-
+    entries = _list_folder(base)
     overrides = _overrides(
         report=report,
         lightcurve=lightcurve,
         log=log,
         vizier=vizier,
         aperture_record=aperture_record,
-    )
-    # Sorted by name, codepoint order: ``Path`` ordering is case-insensitive
-    # on Windows, and the attachments are declared in this order everywhere.
-    entries = sorted(
-        (
-            entry
-            for entry in base.iterdir()
-            if entry.is_file() and not entry.name.startswith(".")
-        ),
-        key=lambda entry: entry.name,
     )
 
     slots: dict[str, Path] = {}
@@ -183,12 +167,12 @@ def map_folder(
     seen = {path.resolve() for path in mapping.attachments}
     for value in attach:
         path = Path(value)
-        if not path.is_file():
+        if not os.path.isfile(path):
             raise MappingError(
                 "missing_files",
                 f"No such file to attach: {path}",
                 hint="Check the path passed to --attach.",
-                details={"path": str(path)},
+                details={"missing": [ATTACHMENT_SLOT], "path": str(path)},
             )
         if path.resolve() in seen or path.resolve() in claimed:
             continue
@@ -282,6 +266,37 @@ def _blocked_extension(filename: str) -> str | None:
 # -- rules ------------------------------------------------------------------
 
 
+def _list_folder(base: Path) -> list[Path]:
+    """The folder's own visible files, or an error if it cannot be listed.
+
+    Sorted by name, codepoint order: ``Path`` ordering is case-insensitive on
+    Windows, and the attachments are declared in this order everywhere.
+    """
+    try:
+        if not base.is_dir():
+            raise MappingError(
+                "not_a_directory",
+                f"{base} is not a directory.",
+                hint="Pass the folder holding one observation's files.",
+                details={"path": str(base)},
+            )
+        return sorted(
+            (
+                entry
+                for entry in base.iterdir()
+                if entry.is_file() and not entry.name.startswith(".")
+            ),
+            key=lambda entry: entry.name,
+        )
+    except OSError as exc:
+        raise MappingError(
+            "missing_files",
+            f"Cannot read the folder {base}: {exc.strerror or exc}.",
+            hint="Check the folder's permissions.",
+            details={"missing": list(REQUIRED_SLOTS), "directory": str(base)},
+        ) from exc
+
+
 def _matches(slot: str, path: Path) -> bool:
     if path.suffix.lower() not in EXTENSIONS[slot]:
         return False
@@ -297,7 +312,7 @@ def _overrides(**paths: str | Path | None) -> dict[str, Path]:
         if value is None:
             continue
         path = Path(value)
-        if not path.is_file():
+        if not os.path.isfile(path):
             raise MappingError(
                 "missing_files",
                 f"No such file for the {slot} slot: {path}",

@@ -11,6 +11,7 @@ import io
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -326,7 +327,7 @@ def test_a_blocked_attachment_fails_fast_with_exit_2(
     result = run(runner, "--json", "submit", str(folder))
     assert result.exit_code == 2
     assert mock_api.requests == []
-    error = json.loads(result.stderr[result.stderr.index("{") :])
+    error = json.loads(result.stderr)
     assert error["code"] == "blocked_attachment"
     assert error["details"]["files"] == ["reduce.py"]
 
@@ -1327,8 +1328,7 @@ def test_the_json_error_carries_status_and_retry_after(
     )
     result = run(runner, "observations", "list", "--json")
     assert result.exit_code == 5
-    # The `Target:` line shares stderr with the error document.
-    payload = json.loads(result.stderr[result.stderr.index("{") :])
+    payload = json.loads(result.stderr)
     assert payload["status"] == 429
     assert payload["retry_after"] == 3.0
     assert payload["exit_code"] == 5
@@ -1551,7 +1551,7 @@ def test_a_rejected_pasted_link_is_the_apis_code(
     result = run(runner, "--json", "drafts", "owc", OBS_ID, "--link", OWC_A)
 
     assert result.exit_code == 1
-    error = json.loads(result.stderr[result.stderr.index("{") :])
+    error = json.loads(result.stderr)
     assert error["code"] == "owc_link_mismatch"
 
 
@@ -1848,7 +1848,7 @@ def test_an_amend_with_another_identity_exits_2_with_the_changes(
         runner, "--json", "drafts", "files", "add", OBS_ID, "report", str(REPORT)
     )
     assert result.exit_code == 2
-    error = json.loads(result.stderr[result.stderr.index("{") :])
+    error = json.loads(result.stderr)
     assert error["code"] == "identity_changed"
     assert error["details"]["changed"] == changed
     assert error["exit_code"] == 2
@@ -2023,7 +2023,9 @@ def test_styled_only_on_a_colour_terminal(
 
 def test_a_repeated_progress_line_prints_once(
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(cli_module._OPTIONS, "json", False)
     cli_module._LAST_PROGRESS[:] = []
     for message in ["Waiting for checks...", "Waiting for checks...", "Done"]:
         cli_module._progress(message)
@@ -2153,7 +2155,7 @@ def test_drafts_files_add_on_a_bad_path_is_a_usage_error(
     assert result.exit_code == 2
     assert mock_api.requests == []
     if as_json:
-        error = json.loads(result.stderr[result.stderr.index("{") :])
+        error = json.loads(result.stderr)
         assert error["code"] == "missing_files"
         assert error["details"] == {"missing": [slot], "path": missing}
     else:
@@ -2355,3 +2357,435 @@ def test_files_download_says_nothing_extra_when_files_arrive(
 
     assert result.exit_code == 0
     assert "No files to download" not in result.stderr
+
+
+# -- auth login and logout select a profile like every other command ---------
+
+
+def _script_key_check(mock_api: MockAPI) -> None:
+    mock_api.json("GET", OBSERVATIONS, {"items": [], "next_cursor": None})
+
+
+def _at_a_terminal(monkeypatch: pytest.MonkeyPatch, *, answer: bool = True) -> dict:
+    """A stdin that is a TTY, whatever CliRunner installs; returns what was asked."""
+    asked: dict = {"questions": [], "key_prompts": 0}
+
+    def fake_confirm(text: str, **kwargs) -> bool:
+        asked["questions"].append(text)
+        if not answer:
+            raise cli_module.typer.Abort()
+        return True
+
+    def fake_prompt(text: str, **kwargs) -> str:
+        asked["key_prompts"] += 1
+        return "iotahub_new_secrettail"
+
+    monkeypatch.setattr(cli_module, "sys", SimpleNamespace(stdin=_Tty()))
+    monkeypatch.setattr(cli_module.typer, "confirm", fake_confirm)
+    monkeypatch.setattr(cli_module.typer, "prompt", fake_prompt)
+    return asked
+
+
+def test_bare_logout_removes_the_default_profile_and_names_it(
+    runner: CliRunner, config_file: Path
+) -> None:
+    config.save_profile("dev", api_key="iotahub_dev_tail", base_url=BASE_URL)
+
+    result = run(runner, "auth", "logout")
+
+    assert result.exit_code == 0
+    assert "Removed profile 'dev'" in result.stdout
+    assert "dev" not in (config.load_config().get("profiles") or {})
+
+
+def test_bare_login_writes_the_default_profile_not_a_new_one(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    config.save_profile("dev", api_key="iotahub_old_tail", base_url=BASE_URL)
+    _script_key_check(mock_api)
+
+    result = run(runner, "--json", "auth", "login", input="iotahub_new_tail\n")
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["profile"] == "dev"
+    assert list(config.load_config()["profiles"]) == ["dev"]
+
+
+def test_the_first_ever_login_creates_default_and_replaces_nothing(
+    runner: CliRunner,
+    mock_api: MockAPI,
+    config_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _script_key_check(mock_api)
+    asked = _at_a_terminal(monkeypatch)
+
+    result = run(runner, "--json", "auth", "login")
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["profile"] == "default"
+    assert payload["replaced"] is False
+    assert asked == {"questions": [], "key_prompts": 1}
+    assert "Replaced" not in result.stderr
+    stored = config.load_config()
+    assert stored["default_profile"] == "default"
+    assert list(stored["profiles"]) == ["default"]
+
+
+def test_a_piped_login_says_which_profile_it_replaced(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    old, new = "iotahub_old_oldsecret", "iotahub_new_newsecret"
+    config.save_profile("dev", api_key=old, base_url=BASE_URL)
+    _script_key_check(mock_api)
+
+    result = run(runner, "auth", "login", input=f"{new}\n")
+
+    assert result.exit_code == 0
+    assert "Profile:      dev" in result.stdout
+    assert (
+        f"Replaced profile 'dev', which held key iotahub_old_... for {BASE_URL}."
+        in result.stderr
+    )
+    assert config.load_config()["profiles"]["dev"]["api_key"] == new
+    output = result.stdout + result.stderr
+    assert old not in output and new not in output
+
+
+def test_a_piped_login_under_json_reports_the_replacement_too(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    config.save_profile("dev", api_key="iotahub_old_tail", base_url=BASE_URL)
+    _script_key_check(mock_api)
+
+    result = run(runner, "--json", "auth", "login", input="iotahub_new_tail\n")
+
+    assert json.loads(result.stdout)["replaced"] is True
+    assert "Replaced profile 'dev'" in result.stderr
+
+
+def test_a_terminal_login_asks_before_replacing_a_key_and_can_be_declined(
+    runner: CliRunner, mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config.save_profile("dev", api_key="iotahub_old_tail", base_url=BASE_URL)
+    asked = _at_a_terminal(monkeypatch, answer=False)
+
+    result = run(runner, "auth", "login")
+
+    assert result.exit_code == 1
+    assert asked["questions"] == [
+        f"Profile 'dev' already holds key iotahub_old_... for {BASE_URL}. "
+        f"Replace it with a key for {BASE_URL}?"
+    ]
+    # Declining comes before the key is asked for, and writes nothing.
+    assert asked["key_prompts"] == 0
+    assert mock_api.requests == []
+    assert config.load_config()["profiles"]["dev"]["api_key"] == "iotahub_old_tail"
+
+
+def test_a_terminal_login_replaces_the_key_once_confirmed(
+    runner: CliRunner, mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config.save_profile("dev", api_key="iotahub_old_tail", base_url=BASE_URL)
+    _script_key_check(mock_api)
+    asked = _at_a_terminal(monkeypatch)
+
+    result = run(runner, "auth", "login")
+
+    assert result.exit_code == 0
+    assert len(asked["questions"]) == 1
+    assert "Replaced profile 'dev'" in result.stderr
+    stored = config.load_config()["profiles"]["dev"]["api_key"]
+    assert stored == "iotahub_new_secrettail"
+
+
+def test_yes_skips_the_question_but_not_the_notice(
+    runner: CliRunner, mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config.save_profile("dev", api_key="iotahub_old_tail", base_url=BASE_URL)
+    _script_key_check(mock_api)
+    asked = _at_a_terminal(monkeypatch)
+
+    result = run(runner, "auth", "login", "--yes")
+
+    assert result.exit_code == 0
+    assert asked["questions"] == []
+    assert "Replaced profile 'dev'" in result.stderr
+
+
+def test_login_base_url_names_both_targets_of_the_selected_profile(
+    runner: CliRunner, mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config.save_profile("dev", api_key="iotahub_old_tail", base_url=BASE_URL)
+    _script_key_check(mock_api)
+    asked = _at_a_terminal(monkeypatch)
+
+    result = run(runner, "auth", "login", "--base-url", OTHER_URL)
+
+    assert result.exit_code == 0
+    assert BASE_URL in asked["questions"][0]
+    assert OTHER_URL in asked["questions"][0]
+    assert config.load_config()["profiles"]["dev"]["base_url"] == OTHER_URL
+
+
+def test_a_login_keeps_the_target_stored_in_the_selected_profile(
+    runner: CliRunner, mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config.save_profile("dev", api_key="iotahub_old_tail", base_url=OTHER_URL)
+    monkeypatch.delenv("IOTA_HUB_BASE_URL")
+    _script_key_check(mock_api)
+
+    result = run(runner, "--json", "auth", "login", input="iotahub_new_tail\n")
+
+    assert json.loads(result.stdout)["base_url"] == OTHER_URL
+
+
+# -- --json errors are nothing but the document -------------------------------
+
+
+def test_a_json_error_after_progress_is_still_one_document(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    """A non-default target and a progress line both come before this failure."""
+    mock_api.json(
+        "POST",
+        DRAFTS,
+        {"code": "file_too_large", "message": "Too big."},
+        status=422,
+    )
+    result = run(runner, "--json", "submit", str(OBSERVATION_DIR))
+
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["code"] == "file_too_large"
+    assert result.stdout == ""
+
+
+def test_a_successful_json_run_still_prints_target_and_progress(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    script_submit(
+        mock_api, observation(readiness=ready(state="blocked"), checks=checks())
+    )
+    result = run(runner, "--json", "submit", str(OBSERVATION_DIR), "--no-wait")
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["outcome"] == "draft"
+    assert result.stderr.startswith(f"Target: {BASE_URL}\n")
+    assert "Finalizing draft..." in result.stderr
+
+
+def test_a_json_run_that_exits_not_ready_keeps_its_notes(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    script_submit(
+        mock_api,
+        observation(readiness=ready(state="blocked", open_findings=1), checks=checks()),
+    )
+    result = run(runner, "--json", "submit", str(OBSERVATION_DIR))
+
+    assert result.exit_code == 4
+    assert json.loads(result.stdout)["outcome"] == "needs_attention"
+    assert f"Target: {BASE_URL}" in result.stderr
+
+
+def test_a_failed_login_under_json_prints_no_target_line(runner: CliRunner) -> None:
+    result = run(runner, "--json", "auth", "login", input="hunter2\n")
+
+    assert result.exit_code == 3
+    assert json.loads(result.stderr)["code"] == "malformed_api_key"
+
+
+# -- the draft id on a failed submit ------------------------------------------
+
+
+def test_submit_json_names_the_draft_when_an_upload_fails_twice(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "POST",
+        DRAFTS,
+        {
+            "observation": observation(),
+            "uploads": [upload_target("report", REPORT.name)],
+        },
+        status=201,
+    )
+    mock_api.add("POST", BUCKET, httpx.Response(403))
+    mock_api.json(
+        "POST",
+        f"{GET}/files/report/upload/init",
+        upload_target("report", REPORT.name),
+    )
+
+    result = run(runner, "--json", "submit", str(OBSERVATION_DIR))
+
+    error = json.loads(result.stderr)
+    assert error["code"] == "upload_failed"
+    assert error["details"]["observation_id"] == OBS_ID
+
+
+# -- local paths that cannot be used ------------------------------------------
+
+
+def _refuse(*_args, **_kwargs):
+    raise PermissionError(13, "Permission denied")
+
+
+def test_an_unreadable_submit_folder_is_a_usage_error(
+    runner: CliRunner,
+    mock_api: MockAPI,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Path, "iterdir", _refuse)
+
+    result = run(runner, "--json", "submit", str(tmp_path))
+
+    assert result.exit_code == 2
+    assert json.loads(result.stderr)["code"] == "missing_files"
+    assert mock_api.requests == []
+
+
+def _script_one_file(mock_api: MockAPI, filename: str = "curve.csv") -> None:
+    mock_api.json(
+        "GET",
+        f"{GET}/files",
+        {
+            "observation_id": OBS_ID,
+            "expires_in": 900,
+            "files": [
+                {
+                    "slot": "lightcurve",
+                    "filename": filename,
+                    "size_bytes": 4,
+                    "url": "https://s3.example.test/download/curve.csv",
+                    "expires_in": 900,
+                }
+            ],
+        },
+    )
+    mock_api.add("GET", "/download/curve.csv", httpx.Response(200, content=b"t,v\n"))
+
+
+def test_a_download_destination_without_permission_is_a_usage_error(
+    runner: CliRunner,
+    mock_api: MockAPI,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _script_one_file(mock_api)
+    monkeypatch.setattr(Path, "mkdir", _refuse)
+
+    result = run(
+        runner,
+        "--json",
+        "files",
+        "download",
+        "observation",
+        OBS_ID,
+        "-o",
+        str(tmp_path / "out"),
+    )
+
+    assert result.exit_code == 2
+    error = json.loads(result.stderr)
+    assert error["code"] == "not_writable"
+    assert error["details"]["path"] == str(tmp_path / "out")
+
+
+def test_a_download_file_without_permission_is_a_usage_error(
+    runner: CliRunner,
+    mock_api: MockAPI,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _script_one_file(mock_api)
+    monkeypatch.setattr("builtins.open", _refuse)
+
+    result = run(
+        runner,
+        "--json",
+        "files",
+        "download",
+        "observation",
+        OBS_ID,
+        "-o",
+        str(tmp_path),
+    )
+
+    assert result.exit_code == 2
+    error = json.loads(result.stderr)
+    assert error["code"] == "not_writable"
+    assert error["details"]["path"] == str(tmp_path / "curve.csv")
+
+
+@pytest.mark.parametrize("flags", [[], ["--force"]])
+def test_a_directory_named_like_a_download_is_a_usage_error(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path, flags: list[str]
+) -> None:
+    _script_one_file(mock_api)
+    (tmp_path / "curve.csv").mkdir()
+
+    result = run(
+        runner,
+        "--json",
+        "files",
+        "download",
+        "observation",
+        OBS_ID,
+        "-o",
+        str(tmp_path),
+        *flags,
+    )
+
+    assert result.exit_code == 2
+    error = json.loads(result.stderr)
+    assert error["code"] == "not_writable"
+    assert error["details"]["path"] == str(tmp_path / "curve.csv")
+    # Refused before any byte was fetched.
+    assert [r.url.path for r in mock_api.requests] == [f"{GET}/files"]
+
+
+def test_an_unwritable_config_directory_is_a_usage_error(
+    runner: CliRunner, mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret = "iotahub_k1_supersecrettail"
+    _script_key_check(mock_api)
+    monkeypatch.setattr(Path, "mkdir", _refuse)
+
+    result = run(runner, "--json", "auth", "login", input=f"{secret}\n")
+
+    assert result.exit_code == 2
+    assert json.loads(result.stderr)["code"] == "not_writable"
+    assert secret not in result.stdout + result.stderr
+
+
+def test_download_with_nothing_matched_does_not_create_the_directory(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    mock_api.json(
+        "GET",
+        f"{GET}/files",
+        {"observation_id": OBS_ID, "expires_in": 900, "files": []},
+    )
+    newdir = tmp_path / "newdir"
+
+    result = run(runner, "files", "download", "observation", OBS_ID, "-o", str(newdir))
+
+    assert result.exit_code == 0
+    assert not newdir.exists()
+
+
+def test_a_bad_attach_path_carries_details_missing(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    missing = str(tmp_path / "nope.png")
+
+    result = run(runner, "--json", "submit", str(OBSERVATION_DIR), "--attach", missing)
+
+    assert result.exit_code == 2
+    error = json.loads(result.stderr)
+    assert error["code"] == "missing_files"
+    assert error["details"] == {"missing": ["attachment"], "path": missing}
+    assert mock_api.requests == []

@@ -13,6 +13,7 @@ from iota_hub import (
     ConflictError,
     IotaHubError,
     RequestError,
+    TransportError,
     next_actions_commands,
     sha256_base64,
 )
@@ -605,6 +606,8 @@ def test_a_second_upload_failure_raises_and_leaves_the_draft(client, mock_api):
 
     assert excinfo.value.code == "upload_failed"
     assert excinfo.value.details["slot"] == "lightcurve"
+    # The draft stays, and this is the only place its id is reported.
+    assert excinfo.value.details["observation_id"] == OBS_ID
     assert len(requests_to(mock_api, INIT_LIGHTCURVE)) == 1
     # Nothing was finalized, and the draft was not deleted for the caller.
     assert requests_to(mock_api, FINALIZE) == []
@@ -1239,6 +1242,41 @@ def test_failed_finalize_names_the_draft(client, mock_api, sleeps):
     assert sleeps == []
 
 
+def test_a_request_failing_during_the_wait_names_the_draft(client, mock_api):
+    script_create(mock_api)
+    script_upload(mock_api)
+    mock_api.json("POST", FINALIZE, observation())
+    mock_api.add("GET", GET, httpx.ConnectError("down"))
+
+    with pytest.raises(TransportError) as excinfo:
+        client.submit_files(FILES)
+
+    assert excinfo.value.details == {"observation_id": OBS_ID}
+
+
+def test_a_failed_submit_names_the_draft(client, mock_api):
+    script_create(mock_api)
+    script_upload(mock_api)
+    mock_api.json("POST", FINALIZE, observation())
+    mock_api.json(
+        "GET",
+        GET,
+        observation(
+            readiness=readiness(),
+            checks={"run_id": "r", "status": "complete", "checks_current": True},
+            next_actions=["submit"],
+        ),
+    )
+    mock_api.json(
+        "POST", SUBMIT, {"code": "checks_stale", "message": "Stale."}, status=409
+    )
+
+    with pytest.raises(ConflictError) as excinfo:
+        client.submit_files(FILES)
+
+    assert excinfo.value.details == {"observation_id": OBS_ID}
+
+
 def test_failed_finalize_keeps_what_the_api_said(client, mock_api):
     _script_failed_finalize(
         mock_api,
@@ -1263,3 +1301,42 @@ def test_download_files_returns_nothing_for_an_empty_listing(
     )
 
     assert client.download_files("event", "evt_1", tmp_path) == []
+
+
+def test_download_files_creates_no_directory_for_an_empty_slot(
+    client, mock_api, tmp_path
+):
+    script_file_list(mock_api)
+    dest = tmp_path / "new" / "dir"
+
+    assert client.download_files("observation", OBS_ID, dest, slot="damit") == []
+    assert not (tmp_path / "new").exists()
+
+
+def test_download_files_creates_no_directory_for_a_refused_listing(
+    client, mock_api, tmp_path
+):
+    mock_api.json(
+        "GET",
+        FILE_LIST,
+        {
+            "observation_id": OBS_ID,
+            "expires_in": 900,
+            "files": [
+                {
+                    "slot": "report",
+                    "filename": "..",
+                    "size_bytes": 1,
+                    "url": "https://s3.example.test/x",
+                    "expires_in": 900,
+                }
+            ],
+        },
+    )
+    dest = tmp_path / "new"
+
+    with pytest.raises(IotaHubError) as excinfo:
+        client.download_files("observation", OBS_ID, dest)
+
+    assert excinfo.value.code == "download_failed"
+    assert not dest.exists()

@@ -138,6 +138,11 @@ JSON too: `usage_error`, exit code `2`.
   observation in the web app before it is submitted.
 - If a `Target: <base URL>` line appears on stderr, the command is **not**
   pointed at production. Confirm with the observer that this is intended.
+  With `--json` it appears only after a run that succeeded; check with
+  `iota-hub auth status --json` first if the target matters.
+- `iota-hub auth login` replaces the key of the selected profile (`--profile`,
+  `IOTA_HUB_PROFILE`, `default_profile`, then `default`). Name `--profile` when
+  adding a second one.
 - An ambiguous mapping (two `.csv` files, no report, a spreadsheet *and* a
   `.json`) is exit code `2`. Do not pick one — show the observer the candidates
   and use the explicit flag they name (`--report`, `--lightcurve`, `--log`,

@@ -9,10 +9,12 @@ import pytest
 
 from iota_hub import DEFAULT_BASE_URL, AuthError, IotaHubError, key_prefix, resolve
 from iota_hub.config import (
+    _write_config,
     config_file_path,
     delete_profile,
     load_config,
     save_profile,
+    select_profile,
 )
 
 FLAG_KEY = "iotahub_flagid_flagsecret"
@@ -298,5 +300,101 @@ def test_a_control_character_in_the_key_is_refused(tmp_path):
         save_profile(
             "dev", api_key="iotahub_a_b\x01c", base_url=DEV_URL, config_path=path
         )
+
+    assert excinfo.value.code == "invalid_config"
+
+
+# -- which profile a command means ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("config", "flag", "env", "expected"),
+    [
+        ({"default_profile": "a"}, "flag", {"IOTA_HUB_PROFILE": "b"}, ("flag", True)),
+        ({"default_profile": "a"}, None, {"IOTA_HUB_PROFILE": "b"}, ("b", True)),
+        ({"default_profile": "a", "profiles": {"a": {}}}, None, {}, ("a", False)),
+        (
+            {"default_profile": "gone", "profiles": {"a": {}}},
+            None,
+            {},
+            ("default", False),
+        ),
+        ({"profiles": {"a": {}}}, None, {}, ("default", False)),
+        ({}, None, {}, ("default", False)),
+    ],
+)
+def test_select_profile_order(config, flag, env, expected):
+    assert select_profile(config, flag, env=env) == expected
+
+
+def test_resolve_falls_back_to_a_profile_named_default(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        f'[profiles.default]\nbase_url = "{DEV_URL}"\napi_key = "{PROFILE_KEY}"\n',
+        encoding="utf-8",
+    )
+
+    settings = resolve(env={}, config_path=path)
+
+    assert settings.profile_name == "default"
+    assert settings.api_key == PROFILE_KEY
+
+
+def test_saving_a_profile_does_not_retarget_a_profile_named_default(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        f'[profiles.default]\nbase_url = "{DEV_URL}"\napi_key = "{PROFILE_KEY}"\n',
+        encoding="utf-8",
+    )
+
+    save_profile("other", api_key=FLAG_KEY, base_url=DEV_URL, config_path=path)
+
+    assert resolve(env={}, config_path=path).profile_name == "default"
+
+
+def test_saving_a_profile_replaces_a_stale_default_profile(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('default_profile = "gone"\n', encoding="utf-8")
+
+    save_profile("dev", api_key=PROFILE_KEY, base_url=DEV_URL, config_path=path)
+
+    assert load_config(path)["default_profile"] == "dev"
+
+
+# -- a config file that cannot be used --------------------------------------
+
+
+def test_a_config_path_below_a_file_is_not_writable(tmp_path):
+    blocker = tmp_path / "file"
+    blocker.write_text("x", encoding="utf-8")
+    # Not the stored path itself: load_config would read through it first.
+    with pytest.raises(IotaHubError) as excinfo:
+        _write_config({}, blocker / "config.toml")
+
+    assert excinfo.value.code == "not_writable"
+    assert excinfo.value.details["path"] == str(blocker / "config.toml")
+
+
+def test_a_refused_config_write_never_mentions_the_key(tmp_path, monkeypatch):
+    def refuse(*_args, **_kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(os, "open", refuse)
+
+    with pytest.raises(IotaHubError) as excinfo:
+        save_profile(
+            "dev",
+            api_key=PROFILE_KEY,
+            base_url=DEV_URL,
+            config_path=tmp_path / "config.toml",
+        )
+
+    assert excinfo.value.code == "not_writable"
+    assert PROFILE_KEY not in str(excinfo.value)
+
+
+def test_a_config_file_that_cannot_be_read_is_invalid_config(tmp_path):
+    with pytest.raises(IotaHubError) as excinfo:
+        load_config(tmp_path)  # a directory
 
     assert excinfo.value.code == "invalid_config"

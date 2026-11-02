@@ -234,6 +234,7 @@ Common examples:
 | `missing_files` | Add the report to the folder or correct the file path. |
 | `invalid_extension` | Use a supported file type. |
 | `not_a_directory` | Pass the path to a folder. |
+| `not_writable` | Fix the permissions on the named path, or choose another. |
 | `unknown_profile` | Check the profile name or create it with `auth login`. |
 | `usage_error` | Check the command's `--help`. |
 | `timeout` | Checks have not finished. Use `drafts show <id>` to check progress. |
@@ -248,13 +249,20 @@ Use a named profile to save a key and API address together:
     iota-hub auth login --profile <name> --base-url <API base URL>
     iota-hub observations list --profile <name>
 
-You can also select a profile with `IOTA_HUB_PROFILE`. Command-line settings
+Every command, `auth login` and `auth logout` included, uses `--profile`, then
+`IOTA_HUB_PROFILE`, then the config file's `default_profile` (the first profile
+you saved), then `default`. Both auth commands print the profile they used. If
+that profile already holds a key, `auth login` asks first on a terminal (`--yes`
+skips the question); with a piped key, it replaces the key and says so.
+
+Command-line settings
 take precedence over environment variables, followed by saved settings and
 defaults. API keys are supplied through login or `IOTA_HUB_API_KEY`, which
 overrides a profile's saved key even with `--profile`.
 
 When using a non-default API address, the CLI prints it on stderr (as `Target:` when not
-on a terminal).
+on a terminal). With `--json`, this line and progress messages appear when the command
+ends, and only if it succeeded: a failed command's stderr is just the JSON error.
 Settings are stored in:
 
     Linux     ~/.config/iota-hub/config.toml
