@@ -1081,7 +1081,7 @@
             "type": "integer"
           },
           "code": {
-            "description": "Check identifier to use in error-handling logic",
+            "description": "Check identifier. Use this in your code, not the check name.",
             "title": "Code",
             "type": "string"
           },
@@ -4886,7 +4886,7 @@
   ],
   "servers": [
     {
-      "description": "The environment serving this document. Until the production release, only the development deployment serves the public API, and that is where third-party developers build: sign up there, create a key, and point your client at this base URL. The production base URL is published at release.",
+      "description": "API base URL for this deployment.",
       "url": "https://d7gigln4gk.execute-api.us-west-2.amazonaws.com/dev/api/public/v1"
     }
   ],
