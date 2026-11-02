@@ -52,9 +52,11 @@ result = client.submit_folder("20180305_9721_Doty_Observer_POS")
 print(result.outcome, result.observation_id, result.observation.web_url)
 ```
 
+When the folder is ambiguous, name a slot's file with `report=`,
+`lightcurve=`, `log=`, `vizier=` or `aperture_record=`. The other arguments:
+
 | Argument                | Effect                                                   |
 | ----------------------- | -------------------------------------------------------- |
-| `report=`, `lightcurve=`, `log=`, `vizier=`, `aperture_record=` | pick the file for a slot when the folder is ambiguous |
 | `attachments=False`     | upload only the slots; the rest come back on `result.ignored` |
 | `attach=[path, ...]`    | add attachments from elsewhere                           |
 | `submit=False`          | stop at a clean draft (`outcome == "ready"`)             |
