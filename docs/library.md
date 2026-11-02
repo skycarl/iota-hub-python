@@ -46,6 +46,9 @@ with Client(settings.api_key, settings.base_url) as client:
 Omit `profile` to use the default selection. Settings passed to `resolve()`
 take precedence over environment variables (`IOTA_HUB_API_KEY`,
 `IOTA_HUB_BASE_URL`, `IOTA_HUB_PROFILE`), followed by saved settings and defaults.
+`profile` only selects saved settings: `IOTA_HUB_API_KEY` still overrides its
+saved key, and an `IOTA_HUB_BASE_URL` that differs from the URL saved with that
+key raises `IotaHubError` with code `invalid_config`.
 
 ## Submit an observation
 
@@ -238,7 +241,7 @@ for event in client.iter_events(date_from="2024-01-01", date_to="2024-12-31"):
 observation = client.get_observation(obs_id)
 event = client.get_event(event_id)
 client.download_files("observation", obs_id, "downloads/")
-client.download_files("event", event_id, "downloads/", slot="lightcurve")
+client.download_files("event", event_id, "downloads/", slot="occelmnt")
 ```
 
 `iter_observations` and `iter_events` retrieve all pages. The corresponding

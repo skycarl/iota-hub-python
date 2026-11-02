@@ -193,7 +193,7 @@ default, and the config file lives where the platform puts configuration:
 | -------- | -------------------------------------------------------- |
 | Linux    | `~/.config/iota-hub/config.toml`                          |
 | macOS    | `~/Library/Application Support/iota-hub/config.toml`      |
-| Windows  | `%APPDATA%\iota-hub\config.toml`                          |
+| Windows  | `%LOCALAPPDATA%\iota-hub\config.toml`                     |
 
 On POSIX the file is written `0600`. On Windows the protection is the ACL on
 your user profile directory; the tool does not set permissions itself. There is

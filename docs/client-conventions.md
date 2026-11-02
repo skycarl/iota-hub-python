@@ -111,7 +111,7 @@ reports it:
 |---|---|
 | Linux | `~/.config/iota-hub/config.toml` |
 | macOS | `~/Library/Application Support/iota-hub/config.toml` |
-| Windows | `%APPDATA%\iota-hub\config.toml` |
+| Windows | `%LOCALAPPDATA%\iota-hub\config.toml` |
 
 It is TOML, and it stores the key **and** the base URL together per profile, so
 a dev key is never sent to prod or the reverse:
@@ -194,12 +194,6 @@ No non-production URL is baked into a published client.
 **The key never travels in cleartext.** *Decision:* a base URL must be
 `https`, except `http` to `localhost`, `127.0.0.1` or `::1`. Anything else is
 `invalid_config`, raised when the client is constructed, before any request.
-
-> **Note.** `spec/openapi.json` carries `servers[0].url` = `<base>/public/v1`
-> *and* path keys that begin with `/public/v1`. Compose a request from the base
-> URL and the path **suffix**, as the table above does; do not naively
-> concatenate the server URL with the path key. (Reported upstream; once that
-> is fixed this note can go.)
 
 ## 5. Authentication and User-Agent
 

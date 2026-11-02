@@ -156,8 +156,8 @@ def config_file_path(config_path: str | Path | None = None) -> Path:
     """Where the config lives: the platform config dir, or an explicit path."""
     if config_path is not None:
         return Path(config_path)
-    # ``appauthor=False`` keeps Windows at %APPDATA%\iota-hub rather than
-    # %APPDATA%\iota-hub\iota-hub, which is what the docs promise.
+    # ``appauthor=False`` keeps Windows at %LOCALAPPDATA%\iota-hub rather than
+    # %LOCALAPPDATA%\iota-hub\iota-hub, which is what the docs promise.
     return Path(user_config_dir("iota-hub", appauthor=False)) / CONFIG_FILENAME
 
 

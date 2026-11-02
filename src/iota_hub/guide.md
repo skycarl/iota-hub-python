@@ -130,7 +130,7 @@ dismissal later:
     iota-hub drafts dismiss <id> <fingerprint> --note "why this is acceptable"
     iota-hub drafts dismiss <id> <fingerprint> --undo
 
-Each finding has an identifier called a `fingerprint`, shown by `drafts show`. Missing required files
+Each finding has an identifier called a `fingerprint`, shown by `drafts show` (labeled `ID` on a terminal). Missing required files
 or information must be supplied before submission.
 
 Other draft commands:
@@ -180,7 +180,7 @@ needed.
     iota-hub events list --date-from 2024-01-01 --date-to 2024-12-31
     iota-hub events show <id>
     iota-hub files download observation <id> -o ./downloads
-    iota-hub files download event <id> --slot lightcurve -o ./downloads
+    iota-hub files download event <id> --slot occelmnt -o ./downloads
 
 Use `--help` on a command to see its filters and options.
 `observations list` and `events list` return one page of results. Add `--all` to retrieve every page.
@@ -197,9 +197,9 @@ error code in scripts, since message wording can change.
 | --------- | ------- |
 | `0` | Success |
 | `1` | General error, including `already_processed` |
-| `2` | Invalid arguments, files or request, including `identity_changed` |
+| `2` | Invalid command-line arguments or local files, or `identity_changed` |
 | `3` | Authentication or permission error |
-| `4` | The draft needs attention, is not ready or is still being checked after a timeout |
+| `4` | `submit` or `drafts submit` found the draft needs attention or not ready, or a wait timed out |
 | `5` | Rate limit reached |
 
 A successful `observations check` lookup exits with `0` even when nothing
@@ -249,14 +249,16 @@ Use a named profile to save a key and API address together:
 
 You can also select a profile with `IOTA_HUB_PROFILE`. Command-line settings
 take precedence over environment variables, followed by saved settings and
-defaults. API keys are supplied through login or `IOTA_HUB_API_KEY`.
+defaults. API keys are supplied through login or `IOTA_HUB_API_KEY`, which
+overrides a profile's saved key even with `--profile`.
 
-When using a non-default API address, the CLI prints it on stderr as `Target:`.
+When using a non-default API address, the CLI prints it on stderr (as `Target:` when not
+on a terminal).
 Settings are stored in:
 
     Linux     ~/.config/iota-hub/config.toml
     macOS     ~/Library/Application Support/iota-hub/config.toml
-    Windows   %APPDATA%\iota-hub\config.toml
+    Windows   %LOCALAPPDATA%\iota-hub\config.toml
 
 ## Related documentation
 
