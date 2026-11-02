@@ -285,4 +285,5 @@ key when retrying the same operation to avoid repeating it.
 - [CLI guide](https://iota-hub.com/developers/cli)
 - [HTTP API guide](https://iota-hub.com/developers/api)
 - [API reference](https://iota-hub.com/developers/reference)
+- [Observer checks](https://iota-hub.com/developers/checks)
 - [Source and client conventions](https://github.com/skycarl/iota-hub-python)

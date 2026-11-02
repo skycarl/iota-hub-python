@@ -265,5 +265,6 @@ Settings are stored in:
 - [Python library guide](https://iota-hub.com/developers/library)
 - [HTTP API guide](https://iota-hub.com/developers/api)
 - [API reference](https://iota-hub.com/developers/reference)
+- [Observer checks](https://iota-hub.com/developers/checks)
 - [OpenAPI document](https://iota-hub.com/developers/openapi.json)
 - [Source and client conventions](https://github.com/skycarl/iota-hub-python)
