@@ -143,6 +143,9 @@ JSON too: `usage_error`, exit code `2`.
 - `iota-hub auth login` replaces the key of the selected profile (`--profile`,
   `IOTA_HUB_PROFILE`, `default_profile`, then `default`). Name `--profile` when
   adding a second one.
+- `iota-hub auth logout` of the default profile leaves no default. Commands that
+  name no profile then use one named `default`, or fail with `missing_api_key`
+  (exit `3`) -- name `--profile` rather than assuming where they go.
 - An ambiguous mapping (two `.csv` files, no report, a spreadsheet *and* a
   `.json`) is exit code `2`. Do not pick one — show the observer the candidates
   and use the explicit flag they name (`--report`, `--lightcurve`, `--log`,

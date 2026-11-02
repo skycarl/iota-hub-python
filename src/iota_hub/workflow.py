@@ -9,14 +9,18 @@ the two change together.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import shutil
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import httpx
+
 from ._http import sha256_base64
-from .errors import IotaHubError
+from .errors import IotaHubError, TransportError
 from .files import (
     ATTACHMENT_SLOT,
     SLOTS,
@@ -358,9 +362,11 @@ class WorkflowMixin:
         The links are presigned, so they are fetched **without** the API key.
         Nothing is skipped silently: an existing file is ``file_exists`` unless
         ``overwrite`` is set, a link S3 refuses (an expired one answers ``403``)
-        is ``download_failed``, and a destination that cannot be written is
-        ``not_writable``. ``dest`` is created only when there is something to
-        put in it.
+        is ``download_failed``, a network failure is ``transport_error``, and a
+        destination that cannot be written is ``not_writable``. A file appears
+        under its own name only once it is complete, so a failure never leaves
+        a partial one, though files finished before it stay. ``dest`` is
+        created only when there is something to put in it.
         """
         if kind == "observation":
             links = self.list_observation_files(id).files
@@ -495,23 +501,44 @@ class WorkflowMixin:
     def _download(self, url: str, out: Path, *, slot: str) -> None:
         # ``self.http.client`` sends no API key of its own (the key is a
         # per-request header on API calls), which is what a presigned URL wants.
-        with self.http.client.stream("GET", url) as response:
-            if not response.is_success:
-                response.read()
-                raise IotaHubError(
-                    "download_failed",
-                    f"The download link for {out.name} was refused with HTTP "
-                    f"{response.status_code}.",
-                    hint="Links expire; list the files again for fresh ones.",
-                    details={"slot": slot, "filename": out.name},
-                    status=response.status_code,
-                )
-            try:
-                with open(out, "wb") as handle:
+        #
+        # Written beside the destination and renamed on success, so a failure
+        # leaves ``out`` as it was: never a partial file. The temp name is not
+        # derived from ``out.name``, which may already be as long as a name can
+        # be, and its leading dot keeps ``submit`` from ever picking it up.
+        temp = out.parent / f".iota-hub-{uuid.uuid4().hex}.part"
+        try:
+            with self.http.client.stream("GET", url) as response:
+                if not response.is_success:
+                    response.read()
+                    raise IotaHubError(
+                        "download_failed",
+                        f"The download link for {out.name} was refused with HTTP "
+                        f"{response.status_code}.",
+                        hint="Links expire; list the files again for fresh ones.",
+                        details={"slot": slot, "filename": out.name},
+                        status=response.status_code,
+                    )
+                with open(temp, "xb") as handle:
                     for chunk in response.iter_bytes():
                         handle.write(chunk)
-            except OSError as exc:
-                raise _not_writable(out, exc) from exc
+            if os.name != "nt" and os.path.exists(out):
+                # An overwrite keeps the mode the caller gave the file.
+                shutil.copymode(out, temp)
+            os.replace(temp, out)
+        except httpx.HTTPError as exc:
+            # The message names the file, not the URL: a presigned URL is a
+            # credential for as long as it lasts.
+            raise TransportError(
+                f"download of {out.name} failed: {exc}", cause=exc
+            ) from exc
+        except OSError as exc:
+            raise _not_writable(out, exc) from exc
+        finally:
+            # Suppressed: the unlink must not mask the error being raised, and
+            # a directory that refused the write may refuse this too.
+            with contextlib.suppress(OSError):
+                temp.unlink()
 
 
 # --------------------------------------------------------------------------

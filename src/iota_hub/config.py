@@ -8,7 +8,9 @@ most a caller ever sees is :func:`key_prefix`.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -229,7 +231,11 @@ def save_profile(
 
 
 def delete_profile(name: str, *, config_path: str | Path | None = None) -> bool:
-    """Forget one profile. ``False`` if there was nothing to forget."""
+    """Forget one profile. ``False`` if there was nothing to forget.
+
+    If it was ``default_profile``, no profile takes its place: bare commands
+    fall back to a profile named ``default``, as :func:`select_profile` says.
+    """
     config = load_config(config_path)
     profiles = dict(config.get("profiles") or {})
     if name not in profiles:
@@ -237,12 +243,9 @@ def delete_profile(name: str, *, config_path: str | Path | None = None) -> bool:
     del profiles[name]
     config["profiles"] = profiles
     if config.get("default_profile") == name:
-        # Point at whatever is left rather than at a profile that is gone.
-        remaining = sorted(profiles)
-        if remaining:
-            config["default_profile"] = remaining[0]
-        else:
-            config.pop("default_profile", None)
+        # Cleared, never repointed: choosing another profile here would quietly
+        # aim every later bare command at a different deployment.
+        del config["default_profile"]
     _write_config(config, config_path)
     return True
 
@@ -250,18 +253,25 @@ def delete_profile(name: str, *, config_path: str | Path | None = None) -> bool:
 def _write_config(config: dict, config_path: str | Path | None) -> Path:
     path = config_file_path(config_path)
     text = _to_toml(config)
+    temp = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        # 0600 at creation, so the key is never briefly world-readable. On
-        # Windows the mode is ignored and the user profile directory's ACL is
-        # the protection — which is what the docs promise there.
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # A symlinked config (a dotfiles manager) stays a symlink: the replace
+        # lands on the file it points at.
+        target = os.path.realpath(path)
+        # mkstemp is 0600 at creation, so the key is never briefly
+        # world-readable, and the replace leaves the file 0600 whatever it was
+        # before. On Windows the mode is ignored and the user profile
+        # directory's ACL is the protection — which is what the docs promise.
+        descriptor, temp = tempfile.mkstemp(
+            dir=os.path.dirname(target), prefix=".config-", suffix=".tmp"
+        )
         with open(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text)
-        if os.name != "nt":
-            # O_CREAT's mode only applies to a file this call created; an
-            # existing one keeps whatever it had until we say otherwise.
-            os.chmod(path, 0o600)
+            handle.flush()
+            os.fsync(handle.fileno())
+        # All or nothing: a failure above leaves the old file untouched.
+        os.replace(temp, target)
     except OSError as exc:
         raise IotaHubError(
             "not_writable",
@@ -272,6 +282,10 @@ def _write_config(config: dict, config_path: str | Path | None) -> Path:
             ),
             details={"path": str(path)},
         ) from exc
+    finally:
+        if temp is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(temp)
     return path
 
 

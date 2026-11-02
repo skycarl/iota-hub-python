@@ -2789,3 +2789,159 @@ def test_a_bad_attach_path_carries_details_missing(
     assert error["code"] == "missing_files"
     assert error["details"] == {"missing": ["attachment"], "path": missing}
     assert mock_api.requests == []
+
+
+# -- logout never aims bare commands somewhere new -----------------------------
+
+
+def test_logout_of_the_default_profile_clears_it_and_says_so(
+    runner: CliRunner, mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _store_profiles("prod", "beta", "alpha")
+
+    result = run(runner, "auth", "logout")
+
+    assert result.exit_code == 0
+    assert "Removed profile 'prod'" in result.stdout
+    assert "no default is set" in result.stderr
+    assert "Remaining profiles: alpha, beta." in result.stderr
+    assert "no stored key" in result.stderr
+    assert "default_profile" not in config.load_config()
+
+    # A later bare command gets the ordinary error, not one of the others' keys.
+    monkeypatch.delenv("IOTA_HUB_API_KEY")
+    monkeypatch.delenv("IOTA_HUB_BASE_URL")
+    bare = run(runner, "--json", "observations", "list")
+    assert bare.exit_code == 3
+    assert json.loads(bare.stderr)["code"] == "missing_api_key"
+    assert mock_api.requests == []
+
+
+def test_logout_names_where_bare_commands_fall_back_to(runner: CliRunner) -> None:
+    _store_profiles("prod", "default")
+
+    result = run(runner, "auth", "logout")
+
+    assert result.exit_code == 0
+    assert "Remaining profiles: default." in result.stderr
+    assert f"now uses 'default' ({BASE_URL})" in result.stderr
+
+
+def test_logout_under_json_keeps_its_document_and_says_so_on_stderr(
+    runner: CliRunner,
+) -> None:
+    _store_profiles("prod", "alpha")
+
+    result = run(runner, "--json", "auth", "logout")
+
+    assert result.exit_code == 0
+    assert set(json.loads(result.stdout)) == {"profile", "deleted", "config_file"}
+    assert "Remaining profiles: alpha." in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("stored", "flags"),
+    [(["prod", "alpha"], ["--profile", "alpha"]), (["prod"], [])],
+    ids=["another-profile", "the-last-profile"],
+)
+def test_logout_says_nothing_when_no_bare_command_changes_course(
+    runner: CliRunner, stored: list[str], flags: list[str]
+) -> None:
+    _store_profiles(*stored)
+
+    result = run(runner, "auth", "logout", *flags)
+
+    assert result.exit_code == 0
+    assert result.stderr == ""
+
+
+# -- a declined prompt under --json ---------------------------------------------
+
+
+def test_declining_a_prompt_under_json_is_a_json_error(
+    runner: CliRunner, mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _at_a_terminal(monkeypatch, answer=False)
+
+    result = run(runner, "--json", "drafts", "delete", OBS_ID)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    error = json.loads(result.stderr)
+    assert error["code"] == "aborted"
+    assert error["exit_code"] == 1
+    assert error["hint"]
+    assert mock_api.requests == []
+
+
+def test_a_declined_login_under_json_prints_only_the_error_document(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _store_profiles("dev")
+    _at_a_terminal(monkeypatch, answer=False)
+
+    # The Target: note is held by then; the document must still be all of stderr.
+    result = run(runner, "--json", "auth", "login", "--base-url", OTHER_URL)
+
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["code"] == "aborted"
+
+
+def test_declining_a_prompt_without_json_still_says_aborted(
+    mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    def decline(text: str, **kwargs) -> bool:
+        raise cli_module.typer.Abort()
+
+    monkeypatch.setattr(sys, "argv", ["iota-hub", "drafts", "delete", OBS_ID])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(cli_module.typer, "confirm", decline)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_module.main()
+
+    assert excinfo.value.code == 1
+    assert capsys.readouterr().err.strip() == "Aborted!"
+    assert mock_api.requests == []
+
+
+# -- download failures and malformed responses reach the handler -----------------
+
+
+def test_a_download_network_failure_is_a_clean_transport_error(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    _script_one_file(mock_api)
+    mock_api._routes[("GET", "/download/curve.csv")] = [httpx.ReadError("reset")]
+
+    result = run(
+        runner,
+        "--json",
+        "files",
+        "download",
+        "observation",
+        OBS_ID,
+        "-o",
+        str(tmp_path),
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["code"] == "transport_error"
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("flags", [[], ["--json"]])
+def test_a_malformed_response_is_a_clean_error(
+    runner: CliRunner, mock_api: MockAPI, flags: list[str]
+) -> None:
+    mock_api.json("GET", GET, {"unexpected": "value-from-the-body"})
+
+    result = run(runner, "drafts", "show", OBS_ID, *flags)
+
+    assert result.exit_code == 1
+    # Only the handler's own exit, not an exception that escaped it.
+    assert isinstance(result.exception, SystemExit)
+    assert "Traceback" not in result.stderr
+    assert "invalid_response" in result.stderr
+    assert f"GET {GET}" in result.stderr
+    assert "value-from-the-body" not in result.stdout + result.stderr

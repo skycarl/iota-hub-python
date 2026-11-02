@@ -170,7 +170,9 @@ export IOTA_HUB_API_KEY=...      # the CI and agent path, no login step
 `iota-hub auth status` shows which profile is in use, the target base URL and
 the identifying prefix of the key (`iotahub_<key_id>_...`, never the secret),
 and makes one cheap read to say whether the key is actually valid.
-`iota-hub auth logout` removes a stored profile.
+`iota-hub auth logout` removes a stored profile. If that was the default, no
+other profile takes its place: it lists what remains on stderr, and commands that
+name no profile use one named `default`, or else report that no key is configured.
 
 Both select a profile like every other command: `--profile`, then
 `IOTA_HUB_PROFILE`, then the config file's `default_profile` (the first profile

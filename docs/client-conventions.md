@@ -54,7 +54,15 @@ replacement):
   (and every destination is
   checked before the first byte is written, so a refusal leaves no half-done
   download), a directory named like a file being downloaded is `not_writable`
-  with or without `overwrite`, and a link S3 refuses is `download_failed`. An
+  with or without `overwrite`, a link S3 refuses is `download_failed`, and a
+  network failure is `transport_error` (not retried, like an S3 upload, § 6:
+  running the command again fetches fresh links). A file is written to a temp
+  file in `dest` and renamed over its name once complete, so a failure never
+  leaves a partial file and a failed overwrite leaves the old file as it was.
+  Files finished before the failure stay, so the re-run needs `overwrite`
+  (`--force`). A successful overwrite replaces the file: it keeps the old
+  file's mode on POSIX, needs a writable `dest`, and replaces a symlink rather
+  than writing through it. An
   empty result is not a failure: `dest` is not created, the CLI exits `0`,
   `--json` prints `{"files": []}`, and plain output says so on stderr. The API's event file list is empty until the event
   is `COMPLETE` for a caller without reviewer access,
@@ -138,6 +146,10 @@ api_key  = "iotahub_<key_id>_<secret>"
 
 - On POSIX the file is `0600`. On Windows the user profile directory's ACL is
   the protection, and the docs say so rather than promising permissions.
+- **Written atomically.** A write goes to a temp file (`0600` from creation) in
+  the same directory, then replaces the config file in one step, so a failed
+  write leaves the old file whole and never an empty one. A symlinked config
+  file stays a symlink: the file it points at is what gets replaced.
 - **What may be written.** Strings written to the file escape `\` and `"`, so a
   base URL carrying either round-trips. A control character (U+0000–U+001F,
   U+007F) cannot go in a TOML string at all — not in the profile name, the base
@@ -168,6 +180,16 @@ exist is `unknown_profile`; a config file that is not valid TOML is
 `invalid_config`, and so is one that cannot be read. A stored `default_profile`
 that no longer exists is simply ignored, so deleting a profile never wedges the
 CLI.
+
+**Logging out never re-aims bare commands.** *Decision:* removing the profile
+named by `default_profile` clears `default_profile`; a client must not pick a
+replacement from what is left, because the next bare command could then reach
+another deployment, possibly production. Bare commands then follow the order
+below: a profile named `default` if there is one, otherwise the ordinary
+`missing_api_key`. If profiles remain, `auth logout` says on stderr that no
+default is set, lists them, and says what a bare command now does (held under
+`--json` like any note, § 13; the document does not change). Removing the last
+profile, or any other profile, has nothing to report.
 
 **One way to select a profile.** *Decision:* every command, `auth login` and
 `auth logout` included, selects `--profile`, else `IOTA_HUB_PROFILE`, else
@@ -463,6 +485,8 @@ and the CLI maps each one to an exit code (§ 12):
 | `unknown_profile` | a profile was named and the config file has no such profile |
 | `invalid_config` | the config file is not valid TOML or cannot be read, or a profile name, base URL or key carries something that cannot be stored in it (§ 3); a base URL that is not `https` (§ 4); `IOTA_HUB_BASE_URL` disagreeing with a profile's stored key (§ 3) |
 | `confirmation_required` | a destructive command would have had to prompt, and stdin is not a TTY (§ 13); the `hint` names `--yes` |
+| `aborted` | under `--json`, a person declined or cancelled a prompt (§ 13). Plain output prints `Aborted!` instead; the exit code is the same |
+| `invalid_response` | a `2xx` whose body is not JSON or does not match the operation's schema; `status` is what the API answered, `details.call` is the method and path, and `details.fields` lists the fields in question (up to 10), never their values. Not retried |
 | `usage_error` | the invocation itself was rejected by the argument parser (§ 12) |
 
 `already_submitted` is no longer one of them: `drafts submit` on a submitted
@@ -633,8 +657,8 @@ and the attachment rules `blocked_attachment`, `attachment_too_large`,
 is **usage**, `2` (§ 11b), and `already_processed` and `already_submitted` are
 plain conflicts, `1`;
 `timeout`, and an `outcome` of `needs_attention`, are **not ready**, `4`;
-`upload_failed`, `download_failed`, `file_exists` and `invalid_config` are
-plain errors, `1`. An `outcome` of `ready` or `draft` is a success the caller
+`upload_failed`, `download_failed`, `file_exists`, `invalid_config`, `aborted`
+and `invalid_response` are plain errors, `1`. An `outcome` of `ready` or `draft` is a success the caller
 asked for, so `0`.
 
 One function decides all of it, and one handler wraps every command — a code
@@ -696,7 +720,11 @@ instead of exiting `1`, which is what the API's own hint says to do. With
   ends, so under `--json` the `Target:` line, progress and warning lines are held
   back: printed on stderr when the run succeeds (exit `4` on `needs_attention`
   included, since stdout carries the document), dropped when it fails. The cost is
-  no live progress under `--json`.
+  no live progress under `--json`. The one thing that can precede the document is
+  a prompt the terminal already showed (a prompt is written to stderr, above):
+  a person who answers one with `n` is at a terminal, not parsing it. That
+  refusal is `aborted`, not `confirmation_required`: a prompt *was* possible, and
+  `aborted` keeps the exit code `1` it has without `--json`.
 - **Plain and styled.** The plain text is the contract: what a pipe, a file,
   an agent or a test sees, and what every rule in this section describes.
   *Decision (2026-10-31):* on a terminal the same facts may be **styled** --

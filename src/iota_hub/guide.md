@@ -253,7 +253,10 @@ Every command, `auth login` and `auth logout` included, uses `--profile`, then
 `IOTA_HUB_PROFILE`, then the config file's `default_profile` (the first profile
 you saved), then `default`. Both auth commands print the profile they used. If
 that profile already holds a key, `auth login` asks first on a terminal (`--yes`
-skips the question); with a piped key, it replaces the key and says so.
+skips the question); with a piped key, it replaces the key and says so. Logging
+out of the default profile does not pick another: `auth logout` lists what remains,
+and commands that name no profile use one named `default`, or else report that no
+key is configured.
 
 Command-line settings
 take precedence over environment variables, followed by saved settings and

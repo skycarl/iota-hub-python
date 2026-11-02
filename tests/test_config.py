@@ -183,7 +183,7 @@ def test_a_second_profile_does_not_steal_the_default(config_path):
     assert sorted(config["profiles"]) == ["dev", "prod"]
 
 
-def test_deleting_a_profile_moves_the_default_off_it(config_path):
+def test_deleting_the_default_profile_clears_it_rather_than_repointing(config_path):
     save_profile(
         "prod",
         api_key="iotahub_p_s",
@@ -195,8 +195,41 @@ def test_deleting_a_profile_moves_the_default_off_it(config_path):
     assert delete_profile("dev", config_path=config_path) is False
 
     config = load_config(config_path)
-    assert config["default_profile"] == "prod"
+    assert "default_profile" not in config
     assert "dev" not in config["profiles"]
+    # A bare command does not land on what is left: there is nothing to select.
+    assert select_profile(config, env={}) == ("default", False)
+    with pytest.raises(AuthError) as excinfo:
+        resolve(env={}, config_path=config_path)
+    assert excinfo.value.code == "missing_api_key"
+
+
+def test_deleting_the_default_profile_falls_back_to_one_named_default(config_path):
+    save_profile(
+        "default",
+        api_key="iotahub_d_s",
+        base_url=DEFAULT_BASE_URL,
+        config_path=config_path,
+    )
+
+    delete_profile("dev", config_path=config_path)
+
+    settings = resolve(env={}, config_path=config_path)
+    assert settings.profile_name == "default"
+    assert settings.api_key == "iotahub_d_s"
+
+
+def test_deleting_another_profile_leaves_the_default_alone(config_path):
+    save_profile(
+        "prod",
+        api_key="iotahub_p_s",
+        base_url=DEFAULT_BASE_URL,
+        config_path=config_path,
+    )
+
+    delete_profile("prod", config_path=config_path)
+
+    assert load_config(config_path)["default_profile"] == "dev"
 
 
 def test_deleting_the_last_profile_leaves_a_valid_file(config_path):
@@ -233,6 +266,59 @@ def test_the_file_is_not_readable_by_anyone_else(tmp_path):
     save_profile("dev", api_key=PROFILE_KEY, base_url=DEV_URL, config_path=path)
 
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+@posix_only
+def test_a_new_config_file_is_created_0600(tmp_path):
+    path = tmp_path / "config.toml"
+
+    save_profile("dev", api_key=PROFILE_KEY, base_url=DEV_URL, config_path=path)
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize("step", ["fsync", "replace"])
+def test_a_failed_config_write_leaves_the_old_file_whole(
+    config_path, monkeypatch, step
+):
+    before = config_path.read_text(encoding="utf-8")
+
+    def fail(*_args, **_kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, step, fail)
+
+    with pytest.raises(IotaHubError) as excinfo:
+        save_profile(
+            "prod",
+            api_key="iotahub_p_s",
+            base_url=DEFAULT_BASE_URL,
+            config_path=config_path,
+        )
+
+    assert excinfo.value.code == "not_writable"
+    assert config_path.read_text(encoding="utf-8") == before
+    assert [path.name for path in config_path.parent.iterdir()] == ["config.toml"]
+
+
+def test_a_config_write_leaves_no_temp_file(config_path):
+    assert [path.name for path in config_path.parent.iterdir()] == ["config.toml"]
+
+
+@posix_only
+def test_a_symlinked_config_file_stays_a_symlink(tmp_path):
+    real = tmp_path / "dotfiles" / "iota-hub.toml"
+    real.parent.mkdir()
+    real.write_text("", encoding="utf-8")
+    link = tmp_path / "config.toml"
+    link.symlink_to(real)
+
+    save_profile("dev", api_key=PROFILE_KEY, base_url=DEV_URL, config_path=link)
+
+    assert link.is_symlink()
+    assert PROFILE_KEY in real.read_text(encoding="utf-8")
+    assert stat.S_IMODE(real.stat().st_mode) == 0o600
+    assert [path.name for path in real.parent.iterdir()] == ["iota-hub.toml"]
 
 
 # -- the key is never printed -----------------------------------------------

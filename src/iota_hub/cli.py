@@ -178,6 +178,22 @@ def handle_errors(command):
         except IotaHubError as error:
             _HELD_NOTES[:] = []
             _fail(error)
+        except typer.Abort:
+            # A prompt declined or cancelled. Plain output keeps main()'s
+            # "Aborted!"; --json still owes its one error document.
+            _HELD_NOTES[:] = []
+            if not _OPTIONS.json:
+                raise
+            _fail(
+                IotaHubError(
+                    "aborted",
+                    "Stopped at a prompt: it was declined or cancelled.",
+                    hint=(
+                        "Run the command again; --yes skips a confirmation on "
+                        "the commands that ask for one."
+                    ),
+                )
+            )
         finally:
             for line in _HELD_NOTES:
                 _err(line)
@@ -1193,20 +1209,41 @@ def auth_logout() -> None:
     """Forget one profile's stored key and base URL.
 
     The profile is selected like every other command's: --profile, then
-    IOTA_HUB_PROFILE, then default_profile, then "default".
+    IOTA_HUB_PROFILE, then default_profile, then "default". Removing
+    default_profile clears it: no other profile is chosen in its place.
 
     Example: iota-hub auth logout --profile dev
     """
     name = _auth_profile()
+    before = config.load_config()
     deleted = config.delete_profile(name)
     path = config.config_file_path()
     if _OPTIONS.json:
         _emit({"profile": name, "deleted": deleted, "config_file": str(path)})
-        return
-    if deleted:
+    elif deleted:
         _out(f"Removed profile '{name}' from {_pasteable(path)}")
     else:
         _out(f"No profile named '{name}' in {_pasteable(path)}")
+    if deleted and before.get("default_profile") == name:
+        remaining = {k: v for k, v in before["profiles"].items() if k != name}
+        if remaining:
+            _note_cleared_default(name, remaining)
+
+
+def _note_cleared_default(name: str, remaining: dict[str, dict[str, str]]) -> None:
+    """Say where bare commands go now that ``default_profile`` is gone."""
+    _note(
+        f"'{name}' was the default profile; no default is set now. "
+        f"Remaining profiles: {', '.join(sorted(remaining))}."
+    )
+    if "default" in remaining:
+        target = remaining["default"].get("base_url") or DEFAULT_BASE_URL
+        _note(f"A command that names no profile now uses 'default' ({target}).")
+    else:
+        _note(
+            "A command that names no profile now has no stored key; "
+            "pass --profile or set IOTA_HUB_PROFILE."
+        )
 
 
 # --------------------------------------------------------------------------

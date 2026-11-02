@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 from pathlib import Path
 
 import httpx
@@ -826,6 +828,98 @@ def test_an_expired_link_is_download_failed(client, mock_api, tmp_path):
 
     assert excinfo.value.code == "download_failed"
     assert excinfo.value.status == 403
+
+
+class _DiesMidway(httpx.SyncByteStream):
+    """A response body that delivers some bytes and then loses the connection."""
+
+    def __iter__(self):
+        yield b"partial"
+        raise httpx.ReadError("connection reset")
+
+
+def test_a_network_failure_on_a_download_is_transport_error(client, mock_api, tmp_path):
+    script_file_list(mock_api)
+    mock_api.add("GET", REPORT_URL, httpx.ConnectError("dns failure"))
+
+    with pytest.raises(TransportError) as excinfo:
+        client.download_files("observation", OBS_ID, tmp_path)
+
+    assert excinfo.value.code == "transport_error"
+    assert "report.xlsx" in excinfo.value.message
+    # A presigned URL is a credential: it stays out of the message.
+    assert "sig=" not in str(excinfo.value)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_download_that_dies_midway_leaves_no_partial_file(client, mock_api, tmp_path):
+    script_file_list(mock_api)
+    mock_api.add("GET", REPORT_URL, httpx.Response(200, stream=_DiesMidway()))
+
+    with pytest.raises(TransportError):
+        client.download_files("observation", OBS_ID, tmp_path)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_failed_overwrite_keeps_the_old_file(client, mock_api, tmp_path):
+    script_file_list(mock_api)
+    existing = tmp_path / "report.xlsx"
+    existing.write_bytes(b"the old one")
+    mock_api.add("GET", REPORT_URL, httpx.Response(200, stream=_DiesMidway()))
+
+    with pytest.raises(TransportError):
+        client.download_files("observation", OBS_ID, tmp_path, overwrite=True)
+
+    assert existing.read_bytes() == b"the old one"
+    assert [path.name for path in tmp_path.iterdir()] == ["report.xlsx"]
+
+
+def test_files_finished_before_a_failure_stay_complete(client, mock_api, tmp_path):
+    script_file_list(mock_api)
+    mock_api.add("GET", REPORT_URL, httpx.Response(200, content=b"whole"))
+    mock_api.add("GET", CURVE_URL, httpx.Response(200, stream=_DiesMidway()))
+
+    with pytest.raises(TransportError):
+        client.download_files("observation", OBS_ID, tmp_path)
+
+    assert (tmp_path / "report.xlsx").read_bytes() == b"whole"
+    assert [path.name for path in tmp_path.iterdir()] == ["report.xlsx"]
+
+
+def test_a_refused_rename_is_not_writable_and_leaves_no_temp_file(
+    client, mock_api, tmp_path, monkeypatch
+):
+    script_file_list(mock_api)
+    mock_api.add("GET", REPORT_URL, httpx.Response(200, content=b"whole"))
+
+    def refuse(*_args, **_kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(os, "replace", refuse)
+
+    with pytest.raises(IotaHubError) as excinfo:
+        client.download_files("observation", OBS_ID, tmp_path)
+
+    assert excinfo.value.code == "not_writable"
+    assert excinfo.value.details["path"] == str(tmp_path / "report.xlsx")
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes only")
+def test_an_overwrite_keeps_the_files_mode(client, mock_api, tmp_path):
+    script_file_list(mock_api)
+    existing = tmp_path / "report.xlsx"
+    existing.write_bytes(b"old")
+    existing.chmod(0o600)
+    (tmp_path / "curve.csv").write_bytes(b"old")
+    mock_api.add("GET", REPORT_URL, httpx.Response(200, content=b"new"))
+    mock_api.add("GET", CURVE_URL, httpx.Response(200, content=b"new"))
+
+    client.download_files("observation", OBS_ID, tmp_path, overwrite=True)
+
+    assert existing.read_bytes() == b"new"
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o600
 
 
 def test_download_files_reads_event_files_too(client, mock_api, tmp_path):

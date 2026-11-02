@@ -12,13 +12,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from time import sleep as _default_sleep
-from typing import Any
+from typing import Any, TypeVar
 from urllib.parse import quote
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ._http import DEFAULT_BASE_URL, Transport
+from .errors import IotaHubError
 from .models import (
     PublicCheckRequest,
     PublicCheckResponse,
@@ -41,6 +42,8 @@ from .models import (
     PublicUploadTarget,
 )
 from .workflow import WorkflowMixin
+
+_Model = TypeVar("_Model", bound=BaseModel)
 
 
 class Client(WorkflowMixin):
@@ -102,7 +105,7 @@ class Client(WorkflowMixin):
             json=_body(body),
             idempotency_key=idempotency_key,
         )
-        return PublicDraftCreated.model_validate(response.json())
+        return _parse(PublicDraftCreated, response)
 
     def finalize_draft(
         self, observation_id: str, *, idempotency_key: str | None = None
@@ -113,7 +116,7 @@ class Client(WorkflowMixin):
             f"/observations/{_seg(observation_id)}/finalize",
             idempotency_key=idempotency_key,
         )
-        return PublicObservation.model_validate(response.json())
+        return _parse(PublicObservation, response)
 
     def init_file_upload(
         self,
@@ -129,7 +132,7 @@ class Client(WorkflowMixin):
             f"/observations/{_seg(observation_id)}/files/{_seg(slot)}/upload/init",
             json=_body(PublicInitUploadRequest(filename=filename, sha256=sha256)),
         )
-        return PublicUploadTarget.model_validate(response.json())
+        return _parse(PublicUploadTarget, response)
 
     def finalize_file_upload(
         self,
@@ -149,14 +152,14 @@ class Client(WorkflowMixin):
             ),
             idempotency_key=idempotency_key,
         )
-        return PublicObservation.model_validate(response.json())
+        return _parse(PublicObservation, response)
 
     def delete_file(self, observation_id: str, slot: str) -> PublicObservation:
         """``public_delete_file`` — clear one slot."""
         response = self.http.request(
             "DELETE", f"/observations/{_seg(observation_id)}/files/{_seg(slot)}"
         )
-        return PublicObservation.model_validate(response.json())
+        return _parse(PublicObservation, response)
 
     def init_attachment_upload(
         self,
@@ -171,7 +174,7 @@ class Client(WorkflowMixin):
             f"/observations/{_seg(observation_id)}/attachments/upload/init",
             json=_body(PublicInitUploadRequest(filename=filename, sha256=sha256)),
         )
-        return PublicUploadTarget.model_validate(response.json())
+        return _parse(PublicUploadTarget, response)
 
     def finalize_attachment_upload(
         self,
@@ -193,7 +196,7 @@ class Client(WorkflowMixin):
             ),
             idempotency_key=idempotency_key,
         )
-        return PublicObservation.model_validate(response.json())
+        return _parse(PublicObservation, response)
 
     def delete_attachment(
         self, observation_id: str, attachment_id: str
@@ -203,14 +206,14 @@ class Client(WorkflowMixin):
             "DELETE",
             f"/observations/{_seg(observation_id)}/attachments/{_seg(attachment_id)}",
         )
-        return PublicObservation.model_validate(response.json())
+        return _parse(PublicObservation, response)
 
     def run_checks(self, observation_id: str) -> PublicChecks:
         """``public_run_checks`` — start an observer check run (``202``)."""
         response = self.http.request(
             "POST", f"/observations/{_seg(observation_id)}/validation/runs"
         )
-        return PublicChecks.model_validate(response.json())
+        return _parse(PublicChecks, response)
 
     def dismiss_finding(
         self, observation_id: str, fingerprint: str, *, note: str
@@ -222,7 +225,7 @@ class Client(WorkflowMixin):
             f"/validation/findings/{_seg(fingerprint)}/dismiss",
             json=_body(PublicDismissRequest(note=note)),
         )
-        return PublicChecks.model_validate(response.json())
+        return _parse(PublicChecks, response)
 
     def undo_dismissal(self, observation_id: str, fingerprint: str) -> PublicChecks:
         """``public_undo_dismissal`` — undo one dismissal."""
@@ -231,7 +234,7 @@ class Client(WorkflowMixin):
             f"/observations/{_seg(observation_id)}"
             f"/validation/findings/{_seg(fingerprint)}/dismiss",
         )
-        return PublicChecks.model_validate(response.json())
+        return _parse(PublicChecks, response)
 
     def update_draft(
         self,
@@ -265,7 +268,7 @@ class Client(WorkflowMixin):
             f"/observations/{_seg(observation_id)}",
             json=request.model_dump(mode="json", exclude_unset=True),
         )
-        return PublicObservation.model_validate(response.json())
+        return _parse(PublicObservation, response)
 
     def submit_draft(
         self,
@@ -288,7 +291,7 @@ class Client(WorkflowMixin):
             ),
             idempotency_key=idempotency_key,
         )
-        return PublicObservation.model_validate(response.json())
+        return _parse(PublicObservation, response)
 
     def delete_draft(self, observation_id: str) -> None:
         """``public_delete_draft`` — throw away an unsubmitted draft (``204``)."""
@@ -321,7 +324,7 @@ class Client(WorkflowMixin):
             station=station,
         )
         response = self.http.request("POST", "/observations/check", json=_body(request))
-        return PublicCheckResponse.model_validate(response.json())
+        return _parse(PublicCheckResponse, response)
 
     def list_events(
         self,
@@ -360,17 +363,17 @@ class Client(WorkflowMixin):
                 "cursor": cursor,
             },
         )
-        return PublicEventList.model_validate(response.json())
+        return _parse(PublicEventList, response)
 
     def get_event(self, event_id: str) -> PublicEvent:
         """``public_get_event``."""
         response = self.http.request("GET", f"/events/{_seg(event_id)}")
-        return PublicEvent.model_validate(response.json())
+        return _parse(PublicEvent, response)
 
     def list_event_files(self, event_id: str) -> PublicEventFileList:
         """``public_list_event_files`` — presigned download links."""
         response = self.http.request("GET", f"/events/{_seg(event_id)}/files")
-        return PublicEventFileList.model_validate(response.json())
+        return _parse(PublicEventFileList, response)
 
     def list_observations(
         self,
@@ -411,19 +414,19 @@ class Client(WorkflowMixin):
                 "cursor": cursor,
             },
         )
-        return PublicObservationList.model_validate(response.json())
+        return _parse(PublicObservationList, response)
 
     def get_observation(self, observation_id: str) -> PublicObservation:
         """``public_get_observation`` — the resource a client polls."""
         response = self.http.request("GET", f"/observations/{_seg(observation_id)}")
-        return PublicObservation.model_validate(response.json())
+        return _parse(PublicObservation, response)
 
     def list_observation_files(self, observation_id: str) -> PublicFileList:
         """``public_list_observation_files`` — presigned download links."""
         response = self.http.request(
             "GET", f"/observations/{_seg(observation_id)}/files"
         )
-        return PublicFileList.model_validate(response.json())
+        return _parse(PublicFileList, response)
 
     # ------------------------------------------------------------ pagination
 
@@ -454,6 +457,35 @@ class Client(WorkflowMixin):
     # of the methods above, and nothing above this line may grow a policy
     # decision.
     # --------------------------------------------------------------------
+
+
+def _parse(model: type[_Model], response: httpx.Response) -> _Model:
+    """One successful response as its model, or ``invalid_response``.
+
+    The error says which call and which fields, never the body: that is the
+    server's data, and pydantic's own message would quote it. Hence the
+    ``from None``, too.
+    """
+    try:
+        return model.model_validate(response.json())
+    except ValueError as exc:  # bad JSON and pydantic's ValidationError are both
+        call = f"{response.request.method} {response.request.url.path}"
+        details: dict[str, Any] = {"call": call}
+        if isinstance(exc, ValidationError):
+            details["fields"] = [
+                ".".join(str(part) for part in error["loc"]) or "(the whole body)"
+                for error in exc.errors(include_input=False)[:10]
+            ]
+        raise IotaHubError(
+            "invalid_response",
+            f"The API's answer to {call} is not what this client expects.",
+            hint=(
+                "Check the base URL, and upgrade iota-hub. If it persists, "
+                "report the call and the fields named here."
+            ),
+            details=details,
+            status=response.status_code,
+        ) from None
 
 
 def _seg(value: str) -> str:

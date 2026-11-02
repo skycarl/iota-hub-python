@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 from conftest import SPEC_PATH, body_of
 
-from iota_hub import Client, models
+from iota_hub import Client, IotaHubError, models
 from iota_hub.models import PublicDeclaredFile
 
 OBSERVATION = {
@@ -492,3 +493,44 @@ def test_the_owc_and_skipped_fields_parse(client, mock_api):
     assert observation.checks.skipped[0].check_number == 11
     assert observation.owc.choice == "matched"
     assert observation.owc.resolution.status == "matched"
+
+
+# -- a successful response that is not what the schema says --------------------
+
+
+GET_OBSERVATION = "/public/v1/observations/obs_1"
+SECRET_VALUE = "a-value-from-the-body"
+
+
+@pytest.mark.parametrize(
+    ("response", "fields"),
+    [
+        (
+            httpx.Response(200, json={"created_at": SECRET_VALUE}),
+            ["observation_id", "submission_status"],
+        ),
+        (httpx.Response(200, json=[SECRET_VALUE]), ["(the whole body)"]),
+        (httpx.Response(200, text=f"<html>{SECRET_VALUE}</html>"), None),
+        (httpx.Response(200), None),
+    ],
+    ids=["missing-fields", "not-an-object", "not-json", "empty"],
+)
+def test_a_malformed_response_is_invalid_response(client, mock_api, response, fields):
+    mock_api.add("GET", GET_OBSERVATION, response)
+
+    with pytest.raises(IotaHubError) as excinfo:
+        client.get_observation("obs_1")
+
+    error = excinfo.value
+    assert error.code == "invalid_response"
+    assert error.status == 200
+    assert error.hint
+    assert error.details["call"] == f"GET {GET_OBSERVATION}"
+    if fields is None:
+        assert "fields" not in error.details
+    else:
+        assert set(fields) <= set(error.details["fields"])
+    # Which call failed, never what it said.
+    assert SECRET_VALUE not in str(error) + repr(error.details)
+    # Not a transport failure: the same answer would come back.
+    assert len(mock_api.requests) == 1
