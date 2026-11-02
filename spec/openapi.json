@@ -4597,7 +4597,7 @@
                         }
                       ],
                       "fingerprint": "f3a91c4e7b20",
-                      "how_to_fix": "The asteroid, star or date differs between your files and this observation. Correct the report or the light curve \u2014 whichever is wrong \u2014 and upload it again.",
+                      "how_to_fix": "The asteroid, star or date differs between your files and this observation. Correct whichever file is wrong, the report or the light curve, and upload it again.",
                       "message": "The light curve names a different star than the report.",
                       "name": "Observation identity",
                       "severity": "warning"
@@ -4720,7 +4720,7 @@
                         }
                       ],
                       "fingerprint": "f3a91c4e7b20",
-                      "how_to_fix": "The asteroid, star or date differs between your files and this observation. Correct the report or the light curve \u2014 whichever is wrong \u2014 and upload it again.",
+                      "how_to_fix": "The asteroid, star or date differs between your files and this observation. Correct whichever file is wrong, the report or the light curve, and upload it again.",
                       "message": "The light curve names a different star than the report.",
                       "name": "Observation identity",
                       "severity": "warning"
