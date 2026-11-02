@@ -14,7 +14,7 @@ Python 3.10 or newer, on Windows, macOS or Linux.
 
 ## Authenticate
 
-Create a key on <https://iota-hub.com/developers> (API keys). Give it to the
+Create a key on <https://iota-hub.com/developers/keys>. Give it to the
 tool one of two ways, never as a command-line argument:
 
     iota-hub auth login               # hidden prompt, stored per profile
@@ -183,7 +183,7 @@ the target is not the default. The config file lives at:
 ## Where the rest lives
 
 - What belongs in each file: <https://iota-hub.com/data-submission>
-- API keys: <https://iota-hub.com/developers>
+- API keys: <https://iota-hub.com/developers/keys>
 - The Python library: <https://iota-hub.com/developers/library>
 - The HTTP API: <https://iota-hub.com/developers/api>, the reference at
   `/developers/reference`, the OpenAPI document at `/developers/openapi.json`

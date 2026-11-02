@@ -15,7 +15,7 @@ the `iota-hub` command; the library does not need it.
 
 ## Connect
 
-Create a key on <https://iota-hub.com/developers> (API keys). Never write it
+Create a key on <https://iota-hub.com/developers/keys>. Never write it
 into source code; read it from the environment or the config file.
 
 ```python
@@ -225,7 +225,7 @@ both are at <https://iota-hub.com/developers/api>.
 ## Where the rest lives
 
 - What belongs in each file: <https://iota-hub.com/data-submission>
-- API keys: <https://iota-hub.com/developers>
+- API keys: <https://iota-hub.com/developers/keys>
 - The command-line tool: <https://iota-hub.com/developers/cli>
 - The HTTP API: <https://iota-hub.com/developers/api>, the reference at
   `/developers/reference`

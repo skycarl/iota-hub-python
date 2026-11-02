@@ -158,4 +158,4 @@ JSON too: `usage_error`, exit code `2`.
 
 `iota-hub guide` prints the full workflow guide offline. The HTTP API behind all
 of this is documented at <https://iota-hub.com/developers/api>; keys are
-created on <https://iota-hub.com/developers>.
+created on <https://iota-hub.com/developers/keys>.
