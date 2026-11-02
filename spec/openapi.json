@@ -349,7 +349,7 @@
             "type": "string"
           },
           "dismissed_by": {
-            "description": "User ID of the person who dismissed the finding",
+            "description": "Name of the person who dismissed the finding",
             "title": "Dismissed By",
             "type": "string"
           },
@@ -734,7 +734,7 @@
             "type": "integer"
           },
           "slot": {
-            "description": "File type, such as lightcurve or attachment",
+            "description": "File type, such as occelmnt or attachment",
             "title": "Slot",
             "type": "string"
           },
@@ -1497,7 +1497,7 @@
                 }
               ]
             },
-            "description": "Current file per slot (report, lightcurve, log, vizier); null for an empty slot. The optional aperture_record slot is listed only when it holds a file.",
+            "description": "Current file per slot (report, lightcurve, log, vizier); null for an empty slot or a file your account cannot view. The optional aperture_record slot is listed only when it holds a file.",
             "title": "Files",
             "type": "object"
           },
@@ -2106,7 +2106,7 @@
             }
           },
           {
-            "description": "Only events with date_window_utc >= this ISO 8601 date",
+            "description": "Only events with date_window_utc >= this ISO 8601 datetime",
             "in": "query",
             "name": "date_from",
             "required": false,
@@ -2119,12 +2119,12 @@
                   "type": "null"
                 }
               ],
-              "description": "Only events with date_window_utc >= this ISO 8601 date",
+              "description": "Only events with date_window_utc >= this ISO 8601 datetime",
               "title": "Date From"
             }
           },
           {
-            "description": "Only events with date_window_utc <= this ISO 8601 date",
+            "description": "Only events with date_window_utc <= this ISO 8601 datetime",
             "in": "query",
             "name": "date_to",
             "required": false,
@@ -2137,7 +2137,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Only events with date_window_utc <= this ISO 8601 date",
+              "description": "Only events with date_window_utc <= this ISO 8601 datetime",
               "title": "Date To"
             }
           },
@@ -2922,9 +2922,7 @@
                       "confirm_unnumbered_asteroid_id": false
                     },
                     "next_actions": [
-                      "upload:report",
-                      "upload:lightcurve",
-                      "upload:log"
+                      "upload:report"
                     ],
                     "observation_id": "obs_01HZY4A1",
                     "observer_user_id": "usr_observer_1",
@@ -2933,9 +2931,12 @@
                       "dismissed_findings": 0,
                       "event_files_blocked": false,
                       "missing_required": [
-                        "report",
-                        "lightcurve",
-                        "log"
+                        "result_type",
+                        "asteroid_id",
+                        "asteroid_name",
+                        "star",
+                        "observed_at_utc",
+                        "report"
                       ],
                       "open_findings": 0,
                       "state": "in_progress"
@@ -3823,9 +3824,7 @@
                     "confirm_unnumbered_asteroid_id": false
                   },
                   "next_actions": [
-                    "upload:report",
-                    "upload:lightcurve",
-                    "upload:log"
+                    "upload:report"
                   ],
                   "observation_id": "obs_01HZY4A1",
                   "observer_user_id": "usr_observer_1",
@@ -3834,9 +3833,12 @@
                     "dismissed_findings": 0,
                     "event_files_blocked": false,
                     "missing_required": [
-                      "report",
-                      "lightcurve",
-                      "log"
+                      "result_type",
+                      "asteroid_id",
+                      "asteroid_name",
+                      "star",
+                      "observed_at_utc",
+                      "report"
                     ],
                     "open_findings": 0,
                     "state": "in_progress"
@@ -4599,8 +4601,8 @@
                       "fingerprint": "f3a91c4e7b20",
                       "how_to_fix": "The asteroid, star or date differs between your files and this observation. Correct whichever file is wrong, the report or the light curve, and upload it again.",
                       "message": "The light curve names a different star than the report.",
-                      "name": "Observation identity",
-                      "severity": "warning"
+                      "name": "Identity matches your files",
+                      "severity": "fail"
                     }
                   ],
                   "open_findings": 1,
@@ -4702,7 +4704,7 @@
                       "code": "observation_identity",
                       "dismissal": {
                         "dismissed_at": "2026-03-15T08:20:00Z",
-                        "dismissed_by": "usr_observer_1",
+                        "dismissed_by": "A. Observer",
                         "note": "Star id typo in the light curve header; timings are correct.",
                         "via": "api"
                       },
@@ -4722,8 +4724,8 @@
                       "fingerprint": "f3a91c4e7b20",
                       "how_to_fix": "The asteroid, star or date differs between your files and this observation. Correct whichever file is wrong, the report or the light curve, and upload it again.",
                       "message": "The light curve names a different star than the report.",
-                      "name": "Observation identity",
-                      "severity": "warning"
+                      "name": "Identity matches your files",
+                      "severity": "fail"
                     }
                   ],
                   "open_findings": 0,
