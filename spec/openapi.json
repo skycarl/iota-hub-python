@@ -1582,7 +1582,7 @@
                 "type": "null"
               }
             ],
-            "description": "ISO 8601 submit timestamp; null for drafts",
+            "description": "ISO 8601 submit timestamp; null for drafts, imported observations and observations from before draft submission",
             "title": "Submitted At"
           },
           "updated_at": {
@@ -2691,6 +2691,8 @@
             "schema": {
               "default": 25,
               "description": "Page size, 1-100",
+              "maximum": 100,
+              "minimum": 1,
               "title": "Limit",
               "type": "integer"
             }
@@ -3018,7 +3020,7 @@
     },
     "/public/v1/observations/{observation_id}": {
       "delete": {
-        "description": "Delete an unsubmitted draft and its files. Submitted observations cannot be deleted through this API (`409 already_submitted`). Contact a coordinator if one needs to be removed.",
+        "description": "Delete an unsubmitted draft and its files. Submitted observations cannot be deleted through this API (`409 already_submitted`). Contact a coordinator if one needs to be removed.\n\nAnother user's submitted observation returns `403 forbidden`; another user's draft returns `404 not_found`.",
         "operationId": "public_delete_draft",
         "parameters": [
           {
@@ -3035,13 +3037,25 @@
           "204": {
             "description": "Draft deleted (no body)"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "forbidden",
+                  "hint": "Your account cannot perform this action. An API key has exactly the privileges you have in the web app.",
+                  "message": "This observation belongs to another user."
+                }
+              }
+            },
+            "description": "`forbidden` \u2014 another user's submitted observation"
+          },
           "404": {
             "content": {
               "application/json": {
                 "example": {
                   "code": "not_found",
                   "hint": "Check the id, and that the resource is visible to your account.",
-                  "message": "Draft not found"
+                  "message": "Observation not found"
                 }
               }
             },
@@ -4391,7 +4405,7 @@
     },
     "/public/v1/observations/{observation_id}/submit": {
       "post": {
-        "description": "Submit a draft and attach it to a matching or newly created event. Optionally send `version` to ensure the draft has not changed since you read it. An outdated version returns `409 stale_version`; omitting it submits the current version.\n\nIf the observation is already submitted, the request returns `200` with its current state.\n\nSubmission can fail with `422 missing_required`, `409 open_findings`, `409 checks_stale`, `409 stale_version`, `409 event_files_conflict` or `422 owc_link_mismatch`. The response's `details` identify missing items, open findings or OWC differences where applicable. Errors caused by the observation's state include `status`, `observation_id` and `amendment_count` in `details`.\n\nAn unresolved OWC link does not prevent submission. Check 11 is skipped when no link is available.",
+        "description": "Submit a draft and attach it to a matching or newly created event. Optionally send `version` to ensure the draft has not changed since you read it. An outdated version returns `409 stale_version`; omitting it submits the current version.\n\nIf the observation is already submitted, the request returns `200` with its current state.\n\nSubmission can fail with `422 missing_required`, `409 open_findings`, `409 checks_stale`, `409 stale_version`, `409 event_files_conflict` or `422 owc_link_mismatch`. The response's `details` identify missing items, open findings or OWC differences where applicable. Errors caused by the observation's state include `status`, `observation_id` and `amendment_count` in `details`.\n\nAn unresolved OWC link does not prevent submission. Check 11 is skipped when no link is available.\n\nAnother user's submitted observation returns `403 forbidden`; another user's draft returns `404 not_found`.",
         "operationId": "public_submit_draft",
         "parameters": [
           {
@@ -4485,6 +4499,18 @@
               }
             },
             "description": "Submitted (or already submitted: its current state)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "forbidden",
+                  "hint": "Your account cannot perform this action. An API key has exactly the privileges you have in the web app.",
+                  "message": "This observation belongs to another user."
+                }
+              }
+            },
+            "description": "`forbidden` \u2014 another user's submitted observation"
           },
           "404": {
             "content": {
