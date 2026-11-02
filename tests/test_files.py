@@ -125,27 +125,26 @@ def test_two_reports_point_at_the_multi_station_limitation(tmp_path):
     assert "not supported yet" in error.hint
 
 
-def test_a_missing_log_is_missing_files(tmp_path):
+def test_a_folder_with_only_a_report_maps(tmp_path):
+    """A negative needs no light curve or log; the server decides, not the client."""
     folder = copy_observation(tmp_path / "obs")
     next(folder.glob("*_log.txt")).unlink()
+    next(folder.glob("*.csv")).unlink()
 
-    with pytest.raises(MappingError) as excinfo:
-        map_folder(folder)
+    mapping = map_folder(folder)
 
-    error = excinfo.value
-    assert error.code == "missing_files"
-    assert error.details["missing"] == ["log"]
-    assert "--log PATH" in error.hint
+    assert list(mapping.slots) == ["report"]
+    assert mapping.missing_required() == []
 
 
 def test_a_txt_without_log_in_its_name_is_ignored_not_mapped(tmp_path):
     folder = copy_observation(tmp_path / "obs")
     next(folder.glob("*_log.txt")).rename(folder / "session_notes.txt")
 
-    with pytest.raises(MappingError) as excinfo:
-        map_folder(folder)
+    mapping = map_folder(folder)
 
-    assert excinfo.value.code == "missing_files"
+    assert "log" not in mapping.slots
+    assert [path.name for path in mapping.attachments] == ["session_notes.txt"]
     assert map_folder(folder, log=folder / "session_notes.txt").ignored == []
 
 
@@ -426,8 +425,8 @@ def test_an_explicit_log_may_be_any_txt(tmp_path):
     fit = folder / "tangra_fit.txt"
     fit.write_text("fit\n")
 
-    with pytest.raises(MappingError):
-        map_folder(folder)  # the folder rule still wants 'log' in the name
+    # The folder rule still wants 'log' in the name, so alone it is an attachment.
+    assert "log" not in map_folder(folder).slots
     mapping = map_folder(folder, log=fit)
 
     assert mapping.slots["log"] == fit

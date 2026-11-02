@@ -430,7 +430,7 @@ and the CLI maps each one to an exit code (§ 12):
 | `file_exists` | a download would overwrite an existing file and `overwrite` was not asked for |
 | `timeout` | `wait_for_checks` gave up (§ 8) |
 | `ambiguous_files` | two candidates for one slot (§ 11); `details.slot`, `details.candidates` |
-| `missing_files` | a required slot has no candidate, or an explicit path is not there; `details.missing` |
+| `missing_files` | the folder has no report, or an explicit path is not there; `details.missing` |
 | `invalid_extension` | an explicit path has the wrong extension for its slot |
 | `not_a_directory` | the folder to submit is not a directory |
 | `blocked_attachment` | an attachment has a type the API refuses (§ 11a); `details.files`, `details.blocked_extensions` |
@@ -458,13 +458,16 @@ naming convention (`YYYYMMDD_<number>_<name>_<lastname>_POS|NEG[-X]`,
 | Slot | Rule | Flag |
 |---|---|---|
 | `report` | exactly one `.xlsx` / `.xls` / `.json` | `--report` |
-| `lightcurve` | exactly one `.csv` | `--lightcurve` |
-| `log` | exactly one `.txt` whose name contains `log` (case-insensitive) | `--log` |
+| `lightcurve` | at most one `.csv` | `--lightcurve` |
+| `log` | at most one `.txt` whose name contains `log` (case-insensitive) | `--log` |
 | `vizier` | at most one `.dat` | `--vizier` |
 | `aperture_record` | at most one `.lc` / `.pymovie` | `--aperture-record` |
 
-`report`, `lightcurve` and `log` are required; `vizier` and `aperture_record`
-are optional, and never reported as missing.
+Only `report` is required at this stage. `lightcurve` and `log` depend on the
+result: POS and UNSURE need them, NEG does not. A client cannot know the result
+until the server has read the report, so it does not check them; the server
+reports them in `readiness.missing_required`. `vizier` and `aperture_record` are
+optional, and never reported as missing.
 
 - **The report has two formats**, and the slot takes exactly one of them: the
   NA spreadsheet (`.xlsx`/`.xls`, still the primary report) or a Tangra JSON
@@ -483,7 +486,7 @@ are optional, and never reported as missing.
 
 - The listing is **non-recursive**, and skips subdirectories and dotfiles.
   Extensions match case-insensitively (`.CSV` is a light curve).
-- **Never guess.** Two candidates for one slot, or none for a required one, is
+- **Never guess.** Two candidates for one slot, or no report, is
   an error that names the file(s) and the explicit flag to resolve it
   (`--lightcurve PATH`): `ambiguous_files` (with `details.slot` and
   `details.candidates`) or `missing_files` (with `details.missing`).

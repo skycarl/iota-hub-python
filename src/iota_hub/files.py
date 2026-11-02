@@ -22,8 +22,10 @@ from .errors import IotaHubError
 #: Every slot the public API accepts, in the order a client fills them.
 SLOTS = ("report", "lightcurve", "log", "vizier", "aperture_record")
 
-#: The slots a draft cannot be submitted without.
-REQUIRED_SLOTS = ("report", "lightcurve", "log")
+#: The slots every observation needs. The light curve and log depend on the
+#: result (POS/UNSURE need them, NEG does not), which only the server knows once
+#: it has read the report: it reports them in ``readiness.missing_required``.
+REQUIRED_SLOTS = ("report",)
 
 #: The server's allow-list (``observation_file_validation.py``), slot by slot.
 EXTENSIONS: dict[str, tuple[str, ...]] = {
@@ -107,8 +109,8 @@ def map_folder(
     | Slot | Rule |
     |---|---|
     | ``report`` | exactly one ``.xlsx``/``.xls``/``.json`` |
-    | ``lightcurve`` | exactly one ``.csv`` |
-    | ``log`` | exactly one ``.txt`` whose name contains ``log`` |
+    | ``lightcurve`` | at most one ``.csv`` |
+    | ``log`` | at most one ``.txt`` whose name contains ``log`` |
     | ``vizier`` | at most one ``.dat`` |
     | ``aperture_record`` | at most one ``.lc``/``.pymovie`` |
 
@@ -319,16 +321,11 @@ def _ambiguous(slot: str, candidates: list[Path]) -> MappingError:
 
 
 def _missing(directory: Path, missing: list[str]) -> MappingError:
-    rules = {
-        "report": "one .xlsx, .xls or .json file",
-        "lightcurve": "one .csv file",
-        "log": "one .txt file with 'log' in its name",
-    }
-    wanted = "; ".join(f"{slot}: {rules[slot]}" for slot in missing)
     flags = " ".join(f"{FLAGS[slot]} PATH" for slot in missing)
     return MappingError(
         "missing_files",
-        f"{directory} has no {' or '.join(missing)} file ({wanted}).",
+        f"{directory} has no {' or '.join(missing)} file "
+        "(one .xlsx, .xls or .json file).",
         hint=f"Add the file to the folder, or name it explicitly: {flags}.",
         details={"missing": missing, "directory": str(directory)},
     )

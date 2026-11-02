@@ -95,10 +95,14 @@ is no classification and no content sniffing:
 | Slot              | Rule                                                     | Required |
 | ----------------- | -------------------------------------------------------- | -------- |
 | `report`          | exactly one `.xlsx` / `.xls`, or a Tangra `.json` report | yes      |
-| `lightcurve`      | exactly one `.csv`                                       | yes      |
-| `log`             | exactly one `.txt` whose name contains `log`             | yes      |
+| `lightcurve`      | at most one `.csv`                                       | POS/UNSURE |
+| `log`             | at most one `.txt` whose name contains `log`             | POS/UNSURE |
 | `vizier`          | at most one `.dat`                                       | no       |
 | `aperture_record` | at most one Tangra `.lc` or PyMovie `.pymovie`           | no       |
+
+A folder with no report stops the command before anything is sent. Only the Hub
+knows the result, once it has read the report, so a POS or UNSURE observation
+with no light curve or log becomes a draft that lists what it still needs.
 
 The listing is non-recursive and skips subdirectories and dotfiles; extensions
 match case-insensitively, so `.CSV` is a light curve.
@@ -126,8 +130,8 @@ uploaded**; `--attach PATH` (repeatable) adds a file from outside the folder.
 `iota-hub drafts files rm <id> attachment <attachment_id>` removes one (the ids
 are in `iota-hub drafts show <id>`).
 
-**Ambiguity is an error, never a guess.** Two candidates for one slot, or none
-for a required one, stops the command with the names of the files involved and
+**Ambiguity is an error, never a guess.** Two candidates for one slot, or no
+report, stops the command with the names of the files involved and
 the flag that settles it. The overrides are `--report PATH`,
 `--lightcurve PATH`, `--log PATH`, `--vizier PATH` and `--aperture-record PATH`;
 each is checked only for the slot's extension. The "contains `log`" rule only

@@ -2,7 +2,7 @@
   "components": {
     "schemas": {
       "PublicAttachment": {
-        "description": "One optional attachment on an observation.\n\nSame shape as :class:`PublicFileVersion` plus the id a client removes it\nby (``DELETE /public/v1/observations/{id}/attachments/{attachment_id}``).",
+        "description": "An additional file on an observation. Use `attachment_id` to remove it.",
         "properties": {
           "attachment_id": {
             "description": "Id to remove this attachment by",
@@ -41,7 +41,7 @@
         "type": "object"
       },
       "PublicCheckEvent": {
-        "description": "An event for the identity's asteroid + star + date. Id and status only.",
+        "description": "A matching event for the asteroid, star and date.",
         "properties": {
           "event_id": {
             "title": "Event Id",
@@ -61,7 +61,7 @@
         "type": "object"
       },
       "PublicCheckObservation": {
-        "description": "The caller's own observation that matched the identity.",
+        "description": "Your matching draft or submitted observation.",
         "properties": {
           "amendment_count": {
             "description": "How many times files were replaced after submit",
@@ -100,7 +100,7 @@
       },
       "PublicCheckRequest": {
         "additionalProperties": false,
-        "description": "Body of ``POST /public/v1/observations/check``: an observation's identity.\n\nText compares case-insensitively with whitespace runs collapsed.\n``asteroid_id`` and ``star_catalog`` compare only when given; ``station``\nalways compares, and absent, null and ``\"\"`` are the same station.",
+        "description": "Observation details to match against existing records. Text matching ignores case\nand repeated whitespace. `asteroid_id` and `star_catalog` are compared only when\nsupplied. Station is always compared; omitted, null and empty-string values are\nequivalent.",
         "examples": [
           {
             "asteroid_id": "1036",
@@ -175,7 +175,7 @@
         "type": "object"
       },
       "PublicCheckResponse": {
-        "description": "Answer of ``POST /public/v1/observations/check``.\n\n``found`` is ``observation`` when you already have a draft or submission\nwith this identity (the most recent if several; ``event`` is then its\nattached event, if any), ``event`` when you have none but a matching event\nexists, else ``none``. Another user's observation is never returned.",
+        "description": "The lookup result. `found` is `observation` when a matching draft or submission\nbelongs to you (the most recent if several match). Its attached event is\nincluded if available. Otherwise, `found` is `event` when a matching event\nexists, or `none` when neither was found. Other users' observations are not\nreturned.",
         "properties": {
           "event": {
             "anyOf": [
@@ -214,7 +214,7 @@
         "type": "object"
       },
       "PublicChecks": {
-        "description": "The latest observer-check run on a draft, flattened for clients.",
+        "description": "The latest observer check run and its findings.",
         "properties": {
           "checks_current": {
             "default": false,
@@ -248,7 +248,7 @@
             "type": "string"
           },
           "skipped": {
-            "description": "Checks that did not run, with the reason, in check order. They never block submit \u2014 which is exactly why a client should show them: a `ready` draft may still have skipped checks.",
+            "description": "Checks that could not run, with their reasons. These do not prevent submission, even when the draft is ready.",
             "items": {
               "$ref": "#/components/schemas/PublicSkippedCheck"
             },
@@ -270,7 +270,7 @@
       },
       "PublicDeclaredFile": {
         "additionalProperties": false,
-        "description": "One file a client declares up front when creating a draft.",
+        "description": "A file to upload when creating a draft.",
         "properties": {
           "filename": {
             "description": "Filename, with extension",
@@ -287,7 +287,7 @@
                 "type": "null"
               }
             ],
-            "description": "Optional base64-encoded SHA-256 of the file's bytes, exactly as S3 wants it in `x-amz-checksum-sha256`. When given, the presigned target carries the digest in its `fields` and S3 verifies the upload against it; when omitted, the upload is presigned without a checksum condition.",
+            "description": "Optional base64-encoded SHA-256 checksum of the file. When supplied, the upload form includes `x-amz-checksum-sha256` and S3 checks that the uploaded file matches. Without it, S3 does not verify a checksum.",
             "title": "Sha256"
           },
           "size": {
@@ -341,7 +341,7 @@
         "type": "object"
       },
       "PublicDismissal": {
-        "description": "A dismissal recorded against a finding.\n\n``via`` says which channel dismissed it (``\"web\"`` / ``\"api\"``, D9); it is\n``None`` on records made before the field existed.",
+        "description": "A finding dismissal and its explanation. `via` identifies whether it was made\nthrough the web app or API, or is null for older records.",
         "properties": {
           "dismissed_at": {
             "description": "ISO 8601 timestamp of the dismissal",
@@ -349,12 +349,12 @@
             "type": "string"
           },
           "dismissed_by": {
-            "description": "User id of the dismisser",
+            "description": "User ID of the person who dismissed the finding",
             "title": "Dismissed By",
             "type": "string"
           },
           "note": {
-            "description": "The required justification note",
+            "description": "Explanation for dismissing the finding",
             "title": "Note",
             "type": "string"
           },
@@ -381,7 +381,7 @@
       },
       "PublicDraftCreateRequest": {
         "additionalProperties": false,
-        "description": "Body of ``POST /public/v1/observations/drafts``.\n\nThe nine report-derived fields are deliberately absent: they come\nfrom parsing the report at finalize, and sending them is a ``422\nreport_derived_fields`` (design \u00a7 5).",
+        "description": "Files and settings for a new draft. Observation details are read from the uploaded\nreport. Supplying those details here returns `422 report_derived_fields`.",
         "examples": [
           {
             "auto_submit_when_clean": false,
@@ -417,7 +417,7 @@
         "properties": {
           "auto_submit_when_clean": {
             "default": false,
-            "description": "Submit automatically when a check run completes with no open findings. Never dismisses anything (D9).",
+            "description": "Submit automatically when checks finish and the draft is ready. Findings are not dismissed automatically.",
             "title": "Auto Submit When Clean",
             "type": "boolean"
           },
@@ -434,14 +434,14 @@
         "type": "object"
       },
       "PublicDraftCreated": {
-        "description": "Response to the collapsed draft-create call (design \u00a7 4 step 1).",
+        "description": "The newly created draft and upload instructions for its files.",
         "properties": {
           "observation": {
             "$ref": "#/components/schemas/PublicObservation",
             "description": "The newly created draft"
           },
           "uploads": {
-            "description": "One presigned target per declared file",
+            "description": "One upload URL and set of form fields per file",
             "items": {
               "$ref": "#/components/schemas/PublicUploadTarget"
             },
@@ -457,7 +457,7 @@
       },
       "PublicDraftUpdateRequest": {
         "additionalProperties": false,
-        "description": "Body of ``PATCH /public/v1/observations/{id}`` \u2014 the client-owned fields.\n\nOnly what the observer decides: the OWC link, the unnumbered-asteroid\nconfirmation, comments and the required-files bypass. A field left out is\nunchanged. The nine report-derived fields are ``422\nreport_derived_fields`` \u2014 upload a corrected report instead.",
+        "description": "Changes to a draft: OWC link, asteroid confirmation, comments or required-file\nexemption. Omitted fields stay unchanged. To change details read from the\nreport, upload a corrected report. Supplying report fields here returns `422\nreport_derived_fields`.",
         "examples": [
           {
             "owc_event": "1917-2448-97311-649282-U033649",
@@ -479,7 +479,7 @@
                 "type": "null"
               }
             ],
-            "description": "Take the alternative-processing-software bypass: lightcurve and log are then not required for a POS/UNSURE submit.",
+            "description": "Allow a POS/UNSURE observation processed with other software to be submitted without the light curve and log.",
             "title": "Bypass Required Files"
           },
           "comments": {
@@ -537,7 +537,7 @@
             "title": "Owc Link Choice"
           },
           "version": {
-            "description": "The version you last read. A mismatch answers 409 stale_version so a concurrent change is never overwritten unseen.",
+            "description": "The version you last read. Returns 409 stale_version if the draft has changed since then.",
             "title": "Version",
             "type": "integer"
           }
@@ -549,10 +549,10 @@
         "type": "object"
       },
       "PublicError": {
-        "description": "The public API's problem-details body.\n\n``code`` is the contract \u2014 clients branch on it, never on ``message``.",
+        "description": "An API error. Use `code` in error-handling logic; message wording can change.",
         "properties": {
           "code": {
-            "description": "Stable machine-readable error code",
+            "description": "Error identifier to use in error-handling logic",
             "title": "Code",
             "type": "string"
           },
@@ -578,7 +578,7 @@
                 "type": "null"
               }
             ],
-            "description": "What to do next; filled from CODE_HINTS when the code is known",
+            "description": "Suggested action to resolve the error, when available",
             "title": "Hint"
           },
           "message": {
@@ -649,7 +649,7 @@
                 "type": "null"
               }
             ],
-            "description": "Current file per single-file event slot, or null when the event carries no required-files structure for this caller.",
+            "description": "Current event files, grouped by file type. Null when file information is unavailable or your account cannot view it.",
             "title": "Files"
           },
           "observation_ids": {
@@ -716,7 +716,7 @@
         "type": "object"
       },
       "PublicEventFileLink": {
-        "description": "A time-limited download link for one event file.\n\n``slot`` repeats for the multi-file slots (``damit``, ``ground_track``).",
+        "description": "A temporary download link for an event file. Multiple files can share the `damit` or\n`ground_track` slot.",
         "properties": {
           "expires_in": {
             "description": "Seconds until the URL expires",
@@ -734,12 +734,12 @@
             "type": "integer"
           },
           "slot": {
-            "description": "Slot the file occupies",
+            "description": "File type, such as lightcurve or attachment",
             "title": "Slot",
             "type": "string"
           },
           "url": {
-            "description": "Presigned GET URL",
+            "description": "Temporary download URL; use without an API key",
             "title": "Url",
             "type": "string"
           }
@@ -783,7 +783,7 @@
         "type": "object"
       },
       "PublicEventList": {
-        "description": "A cursor-paginated page of events.",
+        "description": "One page of events.",
         "properties": {
           "items": {
             "items": {
@@ -801,7 +801,7 @@
                 "type": "null"
               }
             ],
-            "description": "Pass as ?cursor= for the next page; null on the last",
+            "description": "Pass as the cursor query parameter to get the next page. Null on the last page.",
             "title": "Next Cursor"
           }
         },
@@ -809,7 +809,7 @@
         "type": "object"
       },
       "PublicEvidence": {
-        "description": "One evidence row backing a finding.\n\nThe internal row's rendering hints are kept \u2014 a client that prints the\nevidence needs the column labels and the ``mismatch`` flag to avoid\npresenting a lookup result as an error.",
+        "description": "Values used to explain a finding. Use `expected_label` and `actual_label` as column\nheadings. A false `mismatch` means the row provides information rather than\nreporting a problem.",
         "properties": {
           "actual": {
             "description": "Value actually found",
@@ -847,7 +847,7 @@
                 "type": "null"
               }
             ],
-            "description": "Machine-readable key of the file the value came from",
+            "description": "Identifier of the file the value came from",
             "title": "File Ref"
           },
           "mismatch": {
@@ -902,12 +902,12 @@
             "type": "integer"
           },
           "slot": {
-            "description": "Slot the file occupies",
+            "description": "File type, such as lightcurve or attachment",
             "title": "Slot",
             "type": "string"
           },
           "url": {
-            "description": "Presigned GET URL",
+            "description": "Temporary download URL; use without an API key",
             "title": "Url",
             "type": "string"
           }
@@ -951,7 +951,7 @@
                 "type": "null"
               }
             ],
-            "description": "Presigned URL for all files as one archive, if offered",
+            "description": "Temporary download URL for all files as a ZIP archive, when available",
             "title": "Zip Url"
           }
         },
@@ -963,7 +963,7 @@
         "type": "object"
       },
       "PublicFileVersion": {
-        "description": "The current file in one slot, as the public API describes it.\n\nDeliberately omits the internal version history, S3 keys, uploader ids and\ntombstone bookkeeping: a client gets the download URL from the ``/files``\nendpoint, not from here.",
+        "description": "Information about a currently uploaded file. Request the corresponding `/files`\nendpoint for its download link.",
         "properties": {
           "content_type": {
             "anyOf": [
@@ -988,7 +988,7 @@
             "type": "integer"
           },
           "slot": {
-            "description": "File slot this version occupies",
+            "description": "File type, such as report or lightcurve",
             "title": "Slot",
             "type": "string"
           },
@@ -1073,7 +1073,7 @@
         "type": "object"
       },
       "PublicFinding": {
-        "description": "One issue an observer check surfaced on a draft.",
+        "description": "A problem reported by an observer check.",
         "properties": {
           "check_number": {
             "description": "Observer catalog number of the check that produced this finding; 0 for a check the current catalog no longer knows.",
@@ -1081,7 +1081,7 @@
             "type": "integer"
           },
           "code": {
-            "description": "Stable check identifier (the check_id) \u2014 branch on this",
+            "description": "Check identifier to use in error-handling logic",
             "title": "Code",
             "type": "string"
           },
@@ -1139,7 +1139,7 @@
             "type": "string"
           },
           "name": {
-            "description": "Observer-facing name of the check",
+            "description": "Check name",
             "title": "Name",
             "type": "string"
           },
@@ -1184,7 +1184,7 @@
                 "type": "null"
               }
             ],
-            "description": "Optional base64-encoded SHA-256 of the file's bytes, exactly as S3 wants it in `x-amz-checksum-sha256`. When given, the presigned target carries the digest in its `fields` and S3 verifies the upload against it; when omitted, the upload is presigned without a checksum condition.",
+            "description": "Optional base64-encoded SHA-256 checksum of the file. When supplied, the upload form includes `x-amz-checksum-sha256` and S3 checks that the uploaded file matches. Without it, S3 does not verify a checksum.",
             "title": "Sha256"
           }
         },
@@ -1249,7 +1249,7 @@
         "type": "object"
       },
       "PublicOWCCandidate": {
-        "description": "One OWC event the draft's report could belong to.",
+        "description": "A possible Occult Watcher Cloud event for this observation.",
         "properties": {
           "asteroid": {
             "anyOf": [
@@ -1330,7 +1330,7 @@
         "type": "object"
       },
       "PublicOWCMismatch": {
-        "description": "One clear disagreement between the report and an OWC event.",
+        "description": "A difference between the report and an Occult Watcher Cloud event.",
         "properties": {
           "field": {
             "description": "'asteroid_name', 'star' or 'date'",
@@ -1357,7 +1357,7 @@
         "type": "object"
       },
       "PublicOWCResolution": {
-        "description": "What the server's OWC auto-match found for the report.",
+        "description": "The result of matching the report to an Occult Watcher Cloud event.",
         "properties": {
           "candidates": {
             "description": "The OWC events considered",
@@ -1424,7 +1424,7 @@
         "type": "object"
       },
       "PublicObservation": {
-        "description": "An observation (draft or submitted) as the public API returns it.\n\nSelf-describing by design: a client polls this one resource and learns the\nsubmission state, what is still missing, the latest check findings, and\nthe verbs to act on next (design \u00a7 7).",
+        "description": "An observation or draft, including its status, files and latest check results. For a\ndraft, `next_actions` lists the steps needed for submission.",
         "properties": {
           "amended_at": {
             "anyOf": [
@@ -1445,7 +1445,7 @@
             "type": "integer"
           },
           "attachments": {
-            "description": "Optional attachments (any file the fixed slots do not take), in upload order. Empty when there are none, or when the caller may not see this observation's files.",
+            "description": "Additional files, in upload order. Empty if no attachments exist or your account cannot view the files.",
             "items": {
               "$ref": "#/components/schemas/PublicAttachment"
             },
@@ -1506,7 +1506,7 @@
             "description": "Identity and result fields"
           },
           "next_actions": {
-            "description": "Stable verbs for what to do next",
+            "description": "Actions needed to finish the draft",
             "items": {
               "type": "string"
             },
@@ -1532,7 +1532,7 @@
                 "type": "null"
               }
             ],
-            "description": "The Occult Watcher Cloud link and, on a draft, the server's auto-match outcome. Unresolved never blocks submit, but observer check 11 is skipped without a link."
+            "description": "The Occult Watcher Cloud link and, for drafts, the automatic match result. A missing link does not prevent submission, but check 11 is skipped."
           },
           "readiness": {
             "anyOf": [
@@ -1543,7 +1543,7 @@
                 "type": "null"
               }
             ],
-            "description": "Derived readiness; null for submitted observations"
+            "description": "What is needed for submission; null for submitted observations"
           },
           "report_parse": {
             "anyOf": [
@@ -1554,11 +1554,11 @@
                 "type": "null"
               }
             ],
-            "description": "Outcome of the report parse, on the response to a call that finalized the report slot."
+            "description": "Result of reading the report, included in responses that finalize a report upload."
           },
           "status": {
             "default": "draft",
-            "description": "Derived at read time, never stored. 'draft' \u2014 not submitted; 'submitted' \u2014 submitted, unchanged since; 'amended' \u2014 the owner has changed a file since submitting; 'locked' \u2014 its event is in review or later, so the owner can no longer change its files (a coordinator still can).",
+            "description": "'draft': not submitted. 'submitted': submitted without later owner file changes. 'amended': the owner changed a submitted file. 'locked': the event is in review or later, so only authorized reviewers or coordinators can change its files.",
             "enum": [
               "draft",
               "submitted",
@@ -1591,7 +1591,7 @@
             "type": "string"
           },
           "version": {
-            "description": "Optimistic-concurrency version; echo it back on submit",
+            "description": "Current version. Include it when updating or submitting to detect changes made since you read the observation.",
             "title": "Version",
             "type": "integer"
           },
@@ -1621,7 +1621,7 @@
         "type": "object"
       },
       "PublicObservationList": {
-        "description": "A cursor-paginated page of observations.",
+        "description": "One page of observations.",
         "properties": {
           "items": {
             "items": {
@@ -1639,7 +1639,7 @@
                 "type": "null"
               }
             ],
-            "description": "Pass as ?cursor= for the next page; null on the last",
+            "description": "Pass as the cursor query parameter to get the next page. Null on the last page.",
             "title": "Next Cursor"
           }
         },
@@ -1647,7 +1647,7 @@
         "type": "object"
       },
       "PublicObservationMetadata": {
-        "description": "The observation's identity and result fields.\n\nThe first nine are **report-derived**: they are written from the parsed\nreport (spreadsheet or Tangra JSON) and cannot be set directly (design\n\u00a7 5). The last two\nare observer-owned flags that change what submit requires.",
+        "description": "Observation details read from the report, plus comments and submission settings. To\ncorrect details from the report, upload a corrected report.",
         "properties": {
           "asteroid_id": {
             "anyOf": [
@@ -1658,7 +1658,7 @@
                 "type": "null"
               }
             ],
-            "description": "Report-derived",
+            "description": "Read from the report",
             "title": "Asteroid Id"
           },
           "asteroid_name": {
@@ -1670,12 +1670,12 @@
                 "type": "null"
               }
             ],
-            "description": "Report-derived",
+            "description": "Read from the report",
             "title": "Asteroid Name"
           },
           "bypass_required_files": {
             "default": false,
-            "description": "The observer took the alternative-processing-software bypass, so lightcurve and log are not required for a POS/UNSURE submit.",
+            "description": "The observer uses other processing software and has chosen to submit a POS/UNSURE observation without the light curve and log.",
             "title": "Bypass Required Files",
             "type": "boolean"
           },
@@ -1693,7 +1693,7 @@
           },
           "confirm_unnumbered_asteroid_id": {
             "default": false,
-            "description": "The observer confirmed a non-numeric asteroid id is deliberate",
+            "description": "The observer confirmed that the asteroid identifier is intentional",
             "title": "Confirm Unnumbered Asteroid Id",
             "type": "boolean"
           },
@@ -1706,7 +1706,7 @@
                 "type": "null"
               }
             ],
-            "description": "Report-derived",
+            "description": "Read from the report",
             "title": "Observed At Utc"
           },
           "observer_email": {
@@ -1718,7 +1718,7 @@
                 "type": "null"
               }
             ],
-            "description": "Report-derived",
+            "description": "Read from the report",
             "title": "Observer Email"
           },
           "observer_name": {
@@ -1730,7 +1730,7 @@
                 "type": "null"
               }
             ],
-            "description": "Report-derived",
+            "description": "Read from the report",
             "title": "Observer Name"
           },
           "result_type": {
@@ -1754,7 +1754,7 @@
                 "type": "null"
               }
             ],
-            "description": "Report-derived",
+            "description": "Read from the report",
             "title": "Star Catalog"
           },
           "star_id": {
@@ -1766,7 +1766,7 @@
                 "type": "null"
               }
             ],
-            "description": "Report-derived",
+            "description": "Read from the report",
             "title": "Star Id"
           },
           "station": {
@@ -1786,7 +1786,7 @@
         "type": "object"
       },
       "PublicReadiness": {
-        "description": "Derived submit readiness of a draft (never stored).",
+        "description": "What a draft needs before it can be submitted.",
         "properties": {
           "checks_current": {
             "default": false,
@@ -1802,7 +1802,7 @@
           },
           "event_files_blocked": {
             "default": false,
-            "description": "Staged event files would conflict with an existing event on submit",
+            "description": "Uploaded event files conflict with files already on the event",
             "title": "Event Files Blocked",
             "type": "boolean"
           },
@@ -1845,7 +1845,7 @@
         "type": "object"
       },
       "PublicReportParse": {
-        "description": "Outcome of the server-side parse of the ``report`` slot.",
+        "description": "Whether the Hub read the uploaded report successfully.",
         "properties": {
           "code": {
             "anyOf": [
@@ -1884,7 +1884,7 @@
         "type": "object"
       },
       "PublicSkippedCheck": {
-        "description": "An observer check that did not run on this draft, and why.\n\nA skipped check never blocks submit, so a client that only reads\n``findings`` would never learn the check did not happen. This is where it\ndoes.",
+        "description": "A check that could not run, with the reason. Skipped checks do not prevent\nsubmission.",
         "properties": {
           "check_number": {
             "description": "Observer catalog number of the check; 0 for a check the current catalog no longer knows.",
@@ -1897,7 +1897,7 @@
             "type": "string"
           },
           "name": {
-            "description": "Observer-facing name of the check",
+            "description": "Check name",
             "title": "Name",
             "type": "string"
           },
@@ -1907,7 +1907,7 @@
             "type": "string"
           },
           "status": {
-            "description": "'skipped' (a precondition was unmet) or 'error' (the check crashed and produced no verdict).",
+            "description": "'skipped' when required information was unavailable, or 'error' when the check failed to run.",
             "title": "Status",
             "type": "string"
           }
@@ -1941,7 +1941,7 @@
                 "type": "null"
               }
             ],
-            "description": "Optional. The version you last read: a mismatch answers 409 stale_version so a concurrent change is never submitted unseen. Omitted, the current version is submitted.",
+            "description": "The version you last read. Returns 409 stale_version if it has changed. Omit to submit the current version.",
             "title": "Version"
           }
         },
@@ -1949,7 +1949,7 @@
         "type": "object"
       },
       "PublicUploadTarget": {
-        "description": "A presigned POST target for one declared file.\n\nUpload with a multipart POST: the ``fields`` go in the form body and the\nfile part comes last.",
+        "description": "An upload URL and form fields for one file. Send all returned fields in a multipart\nPOST, with the file as the last part.",
         "properties": {
           "attachment_id": {
             "anyOf": [
@@ -1972,7 +1972,7 @@
             "type": "object"
           },
           "file_key": {
-            "description": "Opaque key identifying this upload",
+            "description": "Upload identifier; pass it unchanged when finalizing",
             "title": "File Key",
             "type": "string"
           },
@@ -1982,7 +1982,7 @@
             "type": "string"
           },
           "slot": {
-            "description": "Slot this target fills",
+            "description": "File type this upload is for",
             "title": "Slot",
             "type": "string"
           },
@@ -2004,7 +2004,7 @@
     },
     "securitySchemes": {
       "ApiKeyAuth": {
-        "description": "Personal API key, created on your IOTA Hub profile page and shown once. Format `iotahub_<key_id>_<secret>`. Scopes are fixed at creation: `read` for every read, `observations:write` for every write.",
+        "description": "Create a key at /developers/keys. The full key is shown only once. Format: `iotahub_<key_id>_<secret>`. Choose its permissions when creating it: `read` for reading data and `observations:write` for creating or changing observations.",
         "in": "header",
         "name": "X-API-Key",
         "type": "apiKey"
@@ -2016,7 +2016,7 @@
       "email": "support@iota-hub.org",
       "name": "IOTA Hub Support"
     },
-    "description": "The versioned public surface of IOTA Hub, for scripts and agents: create an observation draft, upload its files, run the observer checks, fix or dismiss findings, submit \u2014 plus read access to events, observations and their files.\n\nAuthentication is the `X-API-Key` header alone. A key acts as its owner: it can never do or see more than that person can in the web app. There is no CORS on this surface, so keys stay out of browsers \u2014 call it from a script, not from a page.\n\nThe quickstart, error table and limits are at /developers/api; keys are managed at /developers.",
+    "description": "Submit observations, manage drafts and download files with the IOTA Hub API.\n\nSend your API key in the `X-API-Key` header. Access depends on your account permissions and the permissions selected for the key. Use keys in scripts and server applications, not browser code.\n\nStart with the [HTTP API guide](/developers/api). Create and manage keys on the [API keys page](/developers/keys).",
     "license": {
       "name": "MIT"
     },
@@ -2027,7 +2027,7 @@
   "paths": {
     "/public/v1/events": {
       "get": {
-        "description": "List occultation events, newest first, with the same filters the web app offers. Results are cursor-paginated: pass the `next_cursor` from one page as `?cursor=` to get the next, and stop when it is null.\n\nEvent files are only included for callers who can see them in the UI \u2014 before an event is COMPLETE, `files` is null unless you hold `event.files.view_pre_complete`.",
+        "description": "List events, newest first by default. Use the query parameters to filter results. Pass `next_cursor` as the next request's `cursor` parameter to retrieve another page. A null cursor means there are no more pages.\n\nBefore an event is `COMPLETE`, `files` is null unless your account has `event.files.view_pre_complete` permission.",
         "operationId": "public_list_events",
         "parameters": [
           {
@@ -2333,7 +2333,7 @@
     },
     "/public/v1/events/{event_id}": {
       "get": {
-        "description": "Fetch a single event. Files are included only when you could see them in the web app (see `GET /public/v1/events/{event_id}/files` for download links).",
+        "description": "Get an event. File information follows your account permissions. Use `GET /public/v1/events/{event_id}/files` for download links.",
         "operationId": "public_get_event",
         "parameters": [
           {
@@ -2411,7 +2411,7 @@
     },
     "/public/v1/events/{event_id}/files": {
       "get": {
-        "description": "Time-limited presigned GET URLs for the current version of every populated event file slot, plus every attachment. `slot` repeats for the multi-file slots (`damit`, `ground_track`) and is `attachment` for attachments. Attachments are listed only for callers with `observation.view_pii`.\n\nEvent files are private until the event is COMPLETE: before that, a caller without `event.files.view_pre_complete` gets an empty list rather than an error \u2014 the same thing the web app shows them.",
+        "description": "Get temporary download links for event files. Multiple files can share the `damit` or `ground_track` slot. Attachments use `slot: \"attachment\"` and require `observation.view_pii` permission.\n\nBefore the event is `COMPLETE`, this endpoint returns an empty list unless your account has `event.files.view_pre_complete` permission.",
         "operationId": "public_list_event_files",
         "parameters": [
           {
@@ -2472,7 +2472,7 @@
     },
     "/public/v1/observations": {
       "get": {
-        "description": "List submitted observations, newest first, with the same filters the web app offers. Cursor-paginated: pass `next_cursor` as `?cursor=`.\n\nPass `submission_status=draft` to list **your own** drafts instead; drafts are never visible to anyone but their owner, whatever else is in the query. Observer email addresses are present only on observations you own, unless your account can see them in the UI.",
+        "description": "List submitted observations, newest first by default. Use the query parameters to filter results. Pass `next_cursor` as the next request's `cursor` parameter to retrieve another page.\n\nUse `submission_status=draft` to list your own drafts. Other users' drafts are not included. Observer email addresses are returned for your own observations, or when your account has permission to view them.",
         "operationId": "public_list_observations",
         "parameters": [
           {
@@ -2791,7 +2791,7 @@
     },
     "/public/v1/observations/check": {
       "post": {
-        "description": "Look up an observation by its natural identity before creating one, so a client that lost a create response (or is re-run) resumes the existing draft instead of creating a second.\n\n`found` is `observation` when **you** already have a draft or submission for this asteroid, star, UTC date and station (the most recent if several), with its `status`, `amendment_count` and `web_url`; `event` is then its attached event, if any. Otherwise `found` is `event` when an event for that asteroid + star + date exists (its id and status only \u2014 what the Events list shows), else `none`. Another user's observation is never returned.\n\nText compares case-insensitively with whitespace collapsed. `asteroid_id` and `star_catalog` compare only when given; without `asteroid_id` no event lookup is made. `station` always compares: absent, null and `\"\"` are the same station, and each station is its own observation.",
+        "description": "Check whether you already have a draft or submission for the specified asteroid, star, UTC date and station. Use this before repeating a submission.\n\nThe `found` field indicates the result:\n\n- `observation`: a matching observation belongs to you. The `observation` field contains its ID, status, amendment count and web URL. If several match, the most recent is returned. The `event` field contains its attached event, if any.\n- `event`: you have no matching observation, but an event matches the asteroid, star and date. The `event` field contains its ID and status.\n- `none`: neither was found.\n\nOther users' observations are not returned. Text matching ignores case and repeated whitespace. `asteroid_id` and `star_catalog` are compared only when supplied. Event lookup requires `asteroid_id`. Station is always compared; omitted, null and empty-string station values are equivalent.",
         "operationId": "public_check_observation",
         "requestBody": {
           "content": {
@@ -2868,7 +2868,7 @@
     },
     "/public/v1/observations/drafts": {
       "post": {
-        "description": "Create a draft observation and, in the same call, presign one upload target per declared file. POST each file straight to S3 with the returned `upload_url` and `fields`, then call `finalize`.\n\nIdentity fields (observer, asteroid, star, time, result) are not accepted: they are read from the report spreadsheet when the `report` slot is finalized.\n\nThe optional `aperture_record` slot takes a PyMovie `.pymovie` aperture record or a Tangra `.lc` file, up to 500 MB.\n\nDeclare any other file (plots, notes) with `slot: \"attachment\"`, repeated once per file. Attachments follow the web app's rules: at most 25 per observation, 50 MB each, and executable/script extensions are refused. Each attachment target carries the `attachment_id` it will be stored under.",
+        "description": "Create a draft and get an upload URL and form fields for each file. Upload each file directly to S3, then call `finalize`.\n\nThe Hub reads the observer, asteroid, star, time and result from the report spreadsheet or Tangra JSON report. These fields cannot be set in this request.\n\nThe optional `aperture_record` file can be a PyMovie `.pymovie` or Tangra `.lc` file, up to 500 MB.\n\nFor extra files such as plots or notes, use `slot: \"attachment\"` for each file. An observation can have up to 25 attachments, each up to 50 MB. Executables and scripts are not allowed. Save each returned `attachment_id` for finalization or removal.",
         "operationId": "public_create_draft",
         "parameters": [
           {
@@ -3009,7 +3009,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "summary": "Create a draft and presign its uploads",
+        "summary": "Create a draft and get upload URLs",
         "tags": [
           "Public API v1"
         ]
@@ -3017,7 +3017,7 @@
     },
     "/public/v1/observations/{observation_id}": {
       "delete": {
-        "description": "Delete a draft and every file on it. A submitted observation is never deleted through this API (`409 already_submitted`) \u2014 ask a coordinator.",
+        "description": "Delete an unsubmitted draft and its files. Submitted observations cannot be deleted through this API (`409 already_submitted`). Contact a coordinator if one needs to be removed.",
         "operationId": "public_delete_draft",
         "parameters": [
           {
@@ -3085,7 +3085,7 @@
         ]
       },
       "get": {
-        "description": "Fetch a single observation or draft. A draft answers only to its owner \u2014 to anyone else it is a 404, so an id can never be probed for existence.\n\nFor a draft the response is self-describing: `readiness` says what is still missing, `checks` carries the latest observer-check run (null when it has never been checked), and `next_actions` gives the stable verbs to follow next.",
+        "description": "Get an observation or draft. Only the owner can read a draft; other callers receive `404`.\n\nFor drafts, `readiness` describes what is needed for submission, `checks` contains the latest check results (or null if checks have never run), and `next_actions` lists the next steps.",
         "operationId": "public_get_observation",
         "parameters": [
           {
@@ -3169,7 +3169,7 @@
         ]
       },
       "patch": {
-        "description": "Set what the observer decides on a draft: the OWC link (`owc_link_choice` + `owc_event`), the unnumbered-asteroid confirmation, comments, and the required-files bypass. Omitted fields are unchanged. Any change starts a new check run.\n\nThe server auto-matches the OWC event itself after the report is finalized; read `owc.resolution` for the outcome. Use this call when it could not choose: `picked` takes an id from `owc.resolution.candidates`, `pasted` takes any OWC id or URL and is validated against OWC and against the report, `proceed_unlinked` records a deliberate \"no link\".\n\nStable codes: `409 stale_version`, `422 report_derived_fields` (`details.fields`), `422 owc_not_a_candidate`, `422 owc_link_unparseable`, `422 owc_link_not_found`, `422 owc_link_mismatch` (`details.violations`), `503 owc_unavailable`.",
+        "description": "Update a draft's OWC link, asteroid confirmation, comments or required-file exemption. Fields omitted from the request stay unchanged. Changes start a new check run. Include the latest `version`; an outdated version returns `409 stale_version`.\n\nThe Hub tries to match an Occult Watcher Cloud (OWC) event after reading the report. Read `owc.resolution` for the result. To select an event yourself, set `owc_link_choice`:\n\n- `picked`: set `owc_event` to an ID from `owc.resolution.candidates`.\n- `pasted`: set `owc_event` to an OWC ID or URL. The Hub verifies it against OWC and the report.\n- `proceed_unlinked`: continue without an OWC link.\n\nReport fields cannot be edited here (`422 report_derived_fields`, with `details.fields`). OWC errors include `422 owc_not_a_candidate`, `422 owc_link_unparseable`, `422 owc_link_not_found`, `422 owc_link_mismatch` (with `details.violations`) and `503 owc_unavailable`.",
         "operationId": "public_update_draft",
         "parameters": [
           {
@@ -3356,7 +3356,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "summary": "Set a draft's client-owned fields",
+        "summary": "Update draft details",
         "tags": [
           "Public API v1"
         ]
@@ -3364,7 +3364,7 @@
     },
     "/public/v1/observations/{observation_id}/attachments/upload/finalize": {
       "post": {
-        "description": "Commit a staged attachment onto the observation. The stored size is the committed object's real size. Attachments are not read by the observer checks, so adding one never makes a check run stale.",
+        "description": "Save an uploaded attachment to the observation. The Hub records its actual uploaded size. Attachments are not used by observer checks, so adding one does not require new checks.",
         "operationId": "public_finalize_attachment_upload",
         "parameters": [
           {
@@ -3510,7 +3510,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "summary": "Commit one attachment upload",
+        "summary": "Save an uploaded attachment",
         "tags": [
           "Public API v1"
         ]
@@ -3518,7 +3518,7 @@
     },
     "/public/v1/observations/{observation_id}/attachments/upload/init": {
       "post": {
-        "description": "Presign an upload for one more attachment. The target's `attachment_id` is what the finalize call and a later removal take.\n\nSame rules as the web app: at most 25 attachments per observation (`422 validation_error`, `details.max_allowed`), 50 MB each (enforced by S3 against the presigned policy), and executable/script extensions are refused (`422 validation_error`, `details.blocked_extension`).",
+        "description": "Get an upload URL and form fields for an attachment. Save the returned `attachment_id` for finalization or removal.\n\nAn observation can have up to 25 attachments, each up to 50 MB. Exceeding the count returns `422 validation_error` with `details.max_allowed`. Executables and scripts return `422 validation_error` with `details.blocked_extension`. S3 enforces the upload size limit.",
         "operationId": "public_init_attachment_upload",
         "parameters": [
           {
@@ -3592,7 +3592,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "summary": "Presign one attachment upload",
+        "summary": "Get an attachment upload URL",
         "tags": [
           "Public API v1"
         ]
@@ -3600,7 +3600,7 @@
     },
     "/public/v1/observations/{observation_id}/attachments/{attachment_id}": {
       "delete": {
-        "description": "Remove an attachment by its `attachment_id`. An attachment that was declared at create but never finalized is simply forgotten, so the collapsed `finalize` stops waiting for it.",
+        "description": "Remove an attachment by its `attachment_id`. This can also cancel an attachment listed when creating the draft but not yet finalized. Draft finalization will no longer require that attachment.",
         "operationId": "public_delete_attachment",
         "parameters": [
           {
@@ -3726,7 +3726,7 @@
     },
     "/public/v1/observations/{observation_id}/files": {
       "get": {
-        "description": "Time-limited presigned GET URLs for the current version of every populated slot, plus every attachment (`slot` is `attachment` for those) and the export zip when one exists.\n\nYou can download files from your own observations; downloading someone else's needs the same permission the web app requires (`observation.view_pii`), otherwise the call is a 403.",
+        "description": "Get temporary download links for observation files, attachments and an export ZIP if available. Attachments use `slot: \"attachment\"`.\n\nYou can download your own observation files. Downloading another observer's files requires `observation.view_pii` permission; without it, the API returns `403`.",
         "operationId": "public_list_observation_files",
         "parameters": [
           {
@@ -3787,7 +3787,7 @@
     },
     "/public/v1/observations/{observation_id}/files/{slot}": {
       "delete": {
-        "description": "Clear a slot. On a draft this is the observer's own file; clearing the `report` slot also clears the nine report-derived fields it owns, so they return to `readiness.missing_required`.",
+        "description": "Remove a file from the observation. Removing a draft's report also clears the details read from that report. Required information must be supplied again before submission.\n\nOwners cannot remove files from submitted observations (`403 forbidden`).",
         "operationId": "public_delete_file",
         "parameters": [
           {
@@ -3890,7 +3890,7 @@
     },
     "/public/v1/observations/{observation_id}/files/{slot}/upload/finalize": {
       "post": {
-        "description": "Commit a staged upload onto the observation. Finalizing the `report` slot of a draft re-parses the workbook and rewrites the identity fields; `report_parse` says how that went.\n\nOn a **submitted** observation this is the owner's amend: it stamps `amended_at`, increments `amendment_count` and turns `status` to `amended`. A replaced report is parsed before anything is stored; one describing a different observation (asteroid, star, UTC date, result or station) is `422 identity_changed` with `details.changed`, and the observation is left exactly as it was. Once its event is in review or later the owner is refused with `409 already_processed`.",
+        "description": "Save an uploaded file to the observation. On a draft, replacing the report updates the observation details read from it. The response's `report_parse` field indicates whether the report was read successfully.\n\nWhen an owner replaces a submitted file, the API sets `amended_at`, increments `amendment_count` and changes the status to `amended`. A replacement report must identify the same asteroid, star, UTC date, result and station. Otherwise, the API returns `422 identity_changed`, lists the differences in `details.changed` and leaves the observation unchanged.\n\nOnce the event enters review, owner uploads are rejected with `409 already_processed`.",
         "operationId": "public_finalize_file_upload",
         "parameters": [
           {
@@ -4113,7 +4113,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "summary": "Commit one file upload",
+        "summary": "Save an uploaded file",
         "tags": [
           "Public API v1"
         ]
@@ -4121,7 +4121,7 @@
     },
     "/public/v1/observations/{observation_id}/files/{slot}/upload/init": {
       "post": {
-        "description": "Presign a single slot's upload \u2014 the fix loop's replacement for a file the checks complained about, and on a submitted observation the owner's **amend**. Once the observation's event is in review or later the owner is refused with `409 already_processed`.",
+        "description": "Get an upload URL and form fields for a replacement file. Upload the file, then call the corresponding `upload/finalize` endpoint.\n\nOwners can replace files on drafts and submitted observations. Once the event enters review, owner uploads are rejected with `409 already_processed`.",
         "operationId": "public_init_file_upload",
         "parameters": [
           {
@@ -4220,7 +4220,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "summary": "Presign one file upload",
+        "summary": "Get a file upload URL",
         "tags": [
           "Public API v1"
         ]
@@ -4228,7 +4228,7 @@
     },
     "/public/v1/observations/{observation_id}/finalize": {
       "post": {
-        "description": "Verify that every file declared at create landed in S3, commit each one onto the draft, parse the report, and make sure an observer check run is under way. Poll `GET /public/v1/observations/{id}` for the result.\n\nA slot whose object is missing answers `409 upload_missing` with `details.slot`; the uploads that did land stay staged, so uploading the missing one and calling finalize again completes the draft.",
+        "description": "Finish the uploads, read the report and start observer checks. The Hub first verifies that every file listed when creating the draft has been uploaded. Request `GET /public/v1/observations/{id}` to check progress.\n\nIf a file is missing, the API returns `409 upload_missing` with its file type in `details.slot`. Upload the missing file and retry. Files already uploaded are retained.",
         "operationId": "public_finalize_draft",
         "parameters": [
           {
@@ -4381,7 +4381,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "summary": "Commit the declared uploads and start the checks",
+        "summary": "Finish uploads and start checks",
         "tags": [
           "Public API v1"
         ]
@@ -4389,7 +4389,7 @@
     },
     "/public/v1/observations/{observation_id}/submit": {
       "post": {
-        "description": "Submit the draft: match or create its event, attach, and flip it to `submitted`. The body is optional: send `{version}` to refuse a draft that changed since you read it (`409 stale_version`), or nothing to submit the current version.\n\nSubmitting an observation that is already submitted answers **200** with its current state, so a retry after a lost response is safe.\n\nStable codes: `422 missing_required` (`details.missing_required`), `409 open_findings` (`details.open_findings`), `409 checks_stale`, `409 stale_version`, `409 event_files_conflict`, `422 owc_link_mismatch` (a pasted OWC link that disagrees with the report; `details.violations`). State refusals carry `details.status`, `details.observation_id` and `details.amendment_count`.\n\nAn unresolved OWC link never blocks submit \u2014 but observer check 11 is then skipped (see `checks.skipped`).",
+        "description": "Submit a draft and attach it to a matching or newly created event. Optionally send `version` to ensure the draft has not changed since you read it. An outdated version returns `409 stale_version`; omitting it submits the current version.\n\nIf the observation is already submitted, the request returns `200` with its current state.\n\nSubmission can fail with `422 missing_required`, `409 open_findings`, `409 checks_stale`, `409 stale_version`, `409 event_files_conflict` or `422 owc_link_mismatch`. The response's `details` identify missing items, open findings or OWC differences where applicable. Errors caused by the observation's state include `status`, `observation_id` and `amendment_count` in `details`.\n\nAn unresolved OWC link does not prevent submission. Check 11 is skipped when no link is available.",
         "operationId": "public_submit_draft",
         "parameters": [
           {
@@ -4550,7 +4550,7 @@
     },
     "/public/v1/observations/{observation_id}/validation/findings/{fingerprint}/dismiss": {
       "delete": {
-        "description": "Undo a dismissal, so the finding blocks submit again.",
+        "description": "Undo a dismissal. The finding must then be fixed or dismissed before submission.",
         "operationId": "public_undo_dismissal",
         "parameters": [
           {
@@ -4657,7 +4657,7 @@
         ]
       },
       "post": {
-        "description": "Dismiss one finding with a written explanation, so it stops blocking submit. The note and the fact that an API key made the dismissal are carried onto the event at submit and read by the reviewer \u2014 dismissing hides nothing.\n\nA finding of the required-items check cannot be dismissed (`422 not_dismissable`): supply the missing item instead.",
+        "description": "Dismiss a finding with a written explanation. It will no longer prevent submission. The explanation and the use of an API key are recorded for the reviewer.\n\nA finding about a missing required item cannot be dismissed (`422 not_dismissable`). Supply the item instead.",
         "operationId": "public_dismiss_finding",
         "parameters": [
           {
@@ -4787,7 +4787,7 @@
     },
     "/public/v1/observations/{observation_id}/validation/runs": {
       "post": {
-        "description": "Start an observer check run over a draft and return it immediately with `status: running`. Poll `GET /public/v1/observations/{id}` for the findings.\n\nLimited to 100 runs per hour **per API key**; a 429 carries `Retry-After`.",
+        "description": "Start observer checks on a draft. The response returns immediately with `status: running`. Request `GET /public/v1/observations/{id}` to check progress and read findings.\n\nEach API key can start up to 100 runs per hour. A `429` response includes the retry delay in `Retry-After`.",
         "operationId": "public_run_checks",
         "parameters": [
           {
@@ -4892,7 +4892,7 @@
   ],
   "tags": [
     {
-      "description": "The versioned public surface at `/public/v1`, for scripts and agents. **Authentication is the `X-API-Key` header alone** \u2014 `Authorization` and the mock-auth headers are ignored here, and there is no CORS, so keys stay out of browsers. **A key acts as its owner**: it resolves to that user's real `UserContext`, so this surface can never do or see more than the same person can in the web app, and never less on the endpoints it exposes. Least privilege comes from the surface itself \u2014 reviewer and coordinator workflow is simply not mounted here \u2014 plus the key's scopes (`observations:write` for every write, `read` for every read). The response models are frozen and additive-only within v1; every error is problem-details (`{code, message, hint, details}`) with a stable `code` to branch on, and every 429 carries `Retry-After`. Submission is collapsed for scripts: create a draft declaring its files, POST each presigned target to S3, finalize, poll the observation resource (`readiness`, `checks`, `next_actions`), then submit.",
+      "description": "Submit observations and retrieve events, observations and files through `/public/v1`. Send an API key in the `X-API-Key` header. Access is limited by your account permissions and the key scopes: `read` for reads and `observations:write` for writes. Use the API from scripts or servers; browser requests are not supported. To submit, create a draft, upload each file, finalize, wait for checks and submit. Within v1, existing response fields remain compatible and new fields may be added. API errors include `code`, `message`, `hint` and `details`. Use `code` in error-handling logic. Rate-limit responses include `Retry-After`.",
       "name": "Public API v1"
     }
   ]

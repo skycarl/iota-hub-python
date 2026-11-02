@@ -142,6 +142,8 @@ JSON too: `usage_error`, exit code `2`.
   `.json`) is exit code `2`. Do not pick one — show the observer the candidates
   and use the explicit flag they name (`--report`, `--lightcurve`, `--log`,
   `--vizier`, `--aperture-record`).
+- A negative (NEG) needs no light curve or log. A POS or UNSURE without them
+  becomes a draft whose `readiness.missing_required` lists what it still needs.
 - The report is the NA spreadsheet (`.xlsx`/`.xls`) or a Tangra JSON report
   (`.json`); a Tangra `.lc` or PyMovie `.pymovie` goes in the optional
   `aperture_record` slot. `--log PATH` takes any `.txt` (e.g. a Tangra fit

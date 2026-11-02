@@ -1,191 +1,269 @@
 # IOTA Hub CLI guide
 
-Printed by `iota-hub guide`; also at <https://iota-hub.com/developers/cli>.
-Writing a program instead? The Python library has its own guide:
-<https://iota-hub.com/developers/library>.
+Use `iota-hub` to submit observations, manage drafts and download files from
+IOTA Hub. Run `iota-hub guide` to read this guide in your terminal.
 
 ## Install
 
-    uvx iota-hub --version            # run it without installing
-    uv tool install iota-hub          # or put it on your PATH, with uv
-    pipx install iota-hub             # or with pipx
+Requires Python 3.10 or newer on Windows, macOS or Linux.
 
-Python 3.10 or newer, on Windows, macOS or Linux.
+Install with either uv or pipx:
+
+    uv tool install iota-hub
+
+    pipx install iota-hub
+
+To run a command without installing the tool, use `uvx iota-hub`, for example:
+
+    uvx iota-hub --version
 
 ## Authenticate
 
-Create a key on <https://iota-hub.com/developers/keys>. Give it to the
-tool one of two ways, never as a command-line argument:
+Create an [API key](https://iota-hub.com/developers/keys), then run:
 
-    iota-hub auth login               # hidden prompt, stored per profile
-    export IOTA_HUB_API_KEY=...       # the CI and agent path, no login step
+    iota-hub auth login
 
-    iota-hub auth status              # profile, base URL, key prefix, valid?
-    iota-hub auth logout              # forget a stored profile
+Paste your key at the hidden prompt. The CLI checks the key and saves it for
+future commands.
+
+    iota-hub auth status    # Show your settings and check the key
+    iota-hub auth logout    # Remove the saved key and settings
+
+For automation, set the `IOTA_HUB_API_KEY` environment variable instead.
 
 ## Submit an observation
 
-One command, run in the folder holding one observation:
+Keep each observation's files in a separate folder, then run:
 
-    cd 20180305_9721_Doty_Observer_POS
-    iota-hub submit
+    iota-hub submit path/to/folder
 
-It creates the draft, uploads the files, finalizes, waits for the observer
-checks and submits when the draft is `ready`. A draft it cannot submit stays
-in your Drafts, to finish in the web app.
+Or run `iota-hub submit` from inside the folder.
 
-    iota-hub submit --draft           # everything except the final submit
-    iota-hub submit --dry-run         # print the mapping and target, call nothing
-    iota-hub submit --no-wait         # return after finalize with the draft id
-    iota-hub submit --timeout 900     # seconds to wait for checks (default 600)
-    iota-hub submit path/to/folder    # a folder other than the current one
+The command uploads your files, runs the observer checks and submits the
+observation when it is ready. If something needs attention, it leaves a
+draft for you to finish in the CLI or web app.
+
+| Option | Effect |
+| ------ | ------ |
+| `--draft` | Upload and run checks, but leave the observation as a draft. |
+| `--dry-run` | Preview the files and API address without uploading anything. |
+| `--no-wait` | Return the draft ID after uploading and starting checks. The command does not wait or submit. |
+| `--timeout 900` | Set the wait for checks to 900 seconds. The default is 600. Request time is additional. |
 
 ### Which file goes where
 
-Files map to slots by extension; there is no content sniffing.
+The CLI selects files by their extensions and filenames:
 
-| Slot              | Rule                                           | Required |
-| ----------------- | ---------------------------------------------- | -------- |
-| `report`          | exactly one `.xlsx` / `.xls` / `.json`         | yes      |
-| `lightcurve`      | exactly one `.csv`                             | yes      |
-| `log`             | exactly one `.txt` whose name contains `log`   | yes      |
-| `vizier`          | at most one `.dat`                             | no       |
-| `aperture_record` | at most one `.lc` / `.pymovie`                 | no       |
+| File | Filename requirements | Required |
+| ---- | --------------------- | -------- |
+| Report | One `.xlsx`, `.xls` or `.json` file | Yes |
+| Light curve | One `.csv` file | For POS/UNSURE |
+| Log | One `.txt` file with `log` in its name | For POS/UNSURE |
+| VizieR data | One `.dat` file | No |
+| Aperture record | One `.lc` or `.pymovie` file | No |
 
-Anything else in the folder (a PyOTE plot, notes) is uploaded as an
-attachment: at most 25, 50 MB each, no executables or scripts.
-`--no-attachments` uploads only the slots; `--attach PATH` adds a file from
-elsewhere.
+If more than one file matches, specify which one to use:
 
-Ambiguity is an error, never a guess. Two candidates for one slot, or none for
-a required one, stops the command and names the flag that settles it:
-`--report`, `--lightcurve`, `--log`, `--vizier` or `--aperture-record`.
+    iota-hub submit --lightcurve observation.csv
 
-    iota-hub submit --lightcurve 20180305_9721_Doty_Observer_POS.csv
+Use `--report`, `--lightcurve`, `--log`, `--vizier` or `--aperture-record`
+followed by the file path. The CLI reports these problems before uploading.
 
-One observation per directory: a folder holding several stations (`_POS-1`,
-`_POS-2`) is not supported.
+Negative (NEG) observations do not need a light curve or log. The CLI stops
+before uploading if the folder has no report. If a POS or UNSURE observation is
+missing its light curve or log, you get a draft that lists what it still needs.
+
+Submit each station's observation from a separate folder. The CLI cannot split
+a folder containing files for multiple stations.
+
+Other files in the folder are uploaded as attachments. You can include up to
+25 attachments, each up to 50 MB. Executables and scripts are not allowed.
+Use `--no-attachments` to exclude these extra files, or `--attach PATH` to add
+an attachment explicitly. Files whose names start with a dot and files in
+subfolders are excluded from automatic selection.
 
 ## Read the result
 
-`submit` ends in one of four outcomes:
+The command prints an outcome:
 
-| Outcome           | Meaning                                              | Exit |
-| ----------------- | ---------------------------------------------------- | ---- |
-| `submitted`       | the observation is submitted (or already was)         | 0    |
-| `ready`           | clean, but `--draft` left it a draft                  | 0    |
-| `needs_attention` | open findings, something missing, or the run errored  | 4    |
-| `draft`           | `--no-wait`: uploaded and finalized, not waited on    | 0    |
+| Outcome | Meaning |
+| ------- | ------- |
+| `submitted` | The observation has been submitted. |
+| `ready` | The draft is ready to submit. You used `--draft` to keep it as a draft. |
+| `needs_attention` | The draft has problems reported by the checks, missing information or a failed check run. |
+| `draft` | You used `--no-wait`. Files are uploaded, but the command has not waited for checks. |
 
-When it leaves a draft it prints `Web:`, the draft's page in the web app, and
-the literal next command for each action the API offers (`iota-hub drafts
-files add <id> lightcurve <path>`, `iota-hub drafts dismiss <id> <fingerprint>
---note "..."`, ...). One action has no command and is finished in the web app:
-resolving an event-files conflict.
+For an unfinished draft, the output includes a web link and commands for the
+next steps. Conflicts with existing event files must be resolved in the web app.
 
 ### Skipped checks and the OWC link
 
-A check that could not run is skipped and never blocks submit; `submit`
-prints a `WARNING` block on stderr listing each one. The usual one is check 11,
-which needs the Occult Watcher Cloud event. The Hub finds that event itself;
-when it cannot choose, the warning lists the candidates and the commands that
-settle it:
+Checks that could not run appear as warnings. They do not prevent submission.
+For example, check 11 needs a link to the Occult Watcher Cloud (OWC) event.
 
-    iota-hub drafts owc <id> --pick <owc_event_id>    # one of the candidates
-    iota-hub drafts owc <id> --link <url-or-id>       # any OWC event, checked
-    iota-hub drafts owc <id> --none                   # deliberately no link
+If the Hub cannot select an OWC event automatically, use one of these commands:
+
+    iota-hub drafts owc <id> --pick <owc_event_id>  # Select a suggested event
+    iota-hub drafts owc <id> --link <url-or-id>    # Link another OWC event
+    iota-hub drafts owc <id> --none                # Continue without a link
 
 ## Fix and resubmit
 
-    iota-hub drafts list                                  # your open drafts
-    iota-hub drafts show <id>                             # state and findings
-    iota-hub drafts files add <id> lightcurve <path>      # replace a file
-    iota-hub drafts files rm <id> vizier                  # clear a slot
-    iota-hub drafts files add <id> attachment <path>      # add an attachment
-    iota-hub drafts files rm <id> attachment <attachment_id>  # remove one
+List your drafts and inspect one using its observation ID:
+
+    iota-hub drafts list
+    iota-hub drafts show <id>
+
+Replace a file or add an attachment:
+
+    iota-hub drafts files add <id> lightcurve <path>
+    iota-hub drafts files add <id> attachment <path>
+
+Replacing a file automatically runs the checks again. To remove a file:
+
+    iota-hub drafts files rm <id> vizier
+    iota-hub drafts files rm <id> attachment <attachment_id>
+
+If a finding is acceptable, dismiss it with an explanation. You can undo the
+dismissal later:
+
     iota-hub drafts dismiss <id> <fingerprint> --note "why this is acceptable"
-    iota-hub drafts dismiss <id> <fingerprint> --undo     # undo a dismissal
-    iota-hub drafts owc <id> --pick <owc_event_id>        # settle the OWC link
-    iota-hub drafts confirm-asteroid <id>                 # unnumbered id is deliberate
-    iota-hub drafts comment <id> "text"                   # comment for the reviewer
-    iota-hub drafts check <id>                            # start a check run
-    iota-hub drafts submit <id>                           # submit when clean
-    iota-hub drafts delete <id> --yes                     # throw a draft away
+    iota-hub drafts dismiss <id> <fingerprint> --undo
 
-Replacing a file re-runs the checks by itself. A finding about a missing
-required item cannot be dismissed: supply the item. `drafts submit` on an
-observation that is already submitted succeeds.
+Each finding has an identifier called a `fingerprint`, shown by `drafts show`. Missing required files
+or information must be supplied before submission.
 
-## Already submitted? Check, and amend
+Other draft commands:
 
-Before creating a draft a script may have created already, look it up by what
-it observed:
+| Command | Action |
+| ------- | ------ |
+| `iota-hub drafts confirm-asteroid <id>` | Confirm that the asteroid designation was entered correctly when no number was given. |
+| `iota-hub drafts comment <id> "text"` | Set a comment for the reviewer. |
+| `iota-hub drafts check <id>` | Run checks and wait for the results. |
+| `iota-hub drafts submit <id>` | Submit a ready draft. |
+| `iota-hub drafts delete <id> --yes` | Delete an unsubmitted draft. |
 
-    iota-hub observations check --asteroid-id 9721 --asteroid-name Doty \
-        --star-id 1234-56789 --date 2018-03-05 [--star-catalog UCAC4] [--station 2]
+`drafts submit <id>` also succeeds if that observation is already submitted.
 
-`found` is `observation` (your own draft or submission), `event` (not yours,
-but the event exists) or `none`. It exits 0 whatever it finds.
+## Check for an existing observation
 
-To correct a submitted observation, replace the file; there is no separate
-amend command. The observation becomes `amended`. A replaced report must
-describe the same observation, else `identity_changed` (exit 2). Once the
-event is in review every file change is `already_processed` (exit 1); ask a
-coordinator.
+Before repeating a submission, check whether you already have a matching
+draft or submitted observation:
 
-## Reads and downloads
+    iota-hub observations check --asteroid-id 9721 --asteroid-name Doty --star-id 1234-56789 --date 2018-03-05
+
+Use the observation's UTC date. Add `--star-catalog UCAC4` or `--station 2`
+when needed to identify the observation.
+
+The result tells you whether your observation was found. If it was, use the
+returned ID to continue the draft or update the submission. If it was not,
+the result indicates whether a matching event exists in the Hub.
+
+## Update a submitted observation
+
+Use the same file command to replace a submitted file:
+
+    iota-hub drafts files add <id> lightcurve <path>
+
+The observation's status changes to `amended`. If you replace the report,
+it must still describe the same observation. Otherwise, the API rejects it
+with `identity_changed` (exit code `2`).
+
+Once the event enters review, you can no longer change its files
+(`already_processed`, exit code `1`). Contact a coordinator if a correction is
+needed.
+
+## Read observations and download files
 
     iota-hub observations list --submission-status draft
     iota-hub observations show <id>
     iota-hub events list --date-from 2024-01-01 --date-to 2024-12-31
     iota-hub events show <id>
     iota-hub files download observation <id> -o ./downloads
-    iota-hub files download event <id> --slot lightcurve -o ./downloads --force
+    iota-hub files download event <id> --slot lightcurve -o ./downloads
 
-Filters follow the API's query parameters as `--kebab-case` flags; `--help`
-lists them. A download never silently overwrites: pass `--force`.
+Use `--help` on a command to see its filters and options.
+`observations list` and `events list` return one page of results. Add `--all` to retrieve every page.
+
+Downloads preserve existing files. Add `--force` to overwrite them.
 
 ## Automation and agents
 
-- `--json` on any command prints exactly one JSON document on stdout; errors
-  are JSON on stderr in the API's problem-details shape plus `exit_code`.
-- Exit codes: `0` success, `1` error, `2` usage (bad flags, or an ambiguous or
-  incomplete mapping), `3` auth, `4` open findings or not ready, `5` rate
-  limited. Branch on `code` and the exit code, never on a message.
-- Retries, idempotency keys and upload checksums are handled for you. Do not
-  wrap a mutating command in your own retry loop.
-- The tool never prompts when stdin is not a TTY; destructive commands take
-  `--yes`. No color when piped or under `--json`.
-- `SKILL.md` in <https://github.com/skycarl/iota-hub-python> is a ready-made
-  skill for an agent.
+Add `--json` to get results as JSON on stdout. Errors are written as JSON to
+stderr, with a `code`, `message`, `hint`, `details` and `exit_code`. Use the
+error code in scripts, since message wording can change.
+
+| Exit code | Meaning |
+| --------- | ------- |
+| `0` | Success |
+| `1` | General error, including `already_processed` |
+| `2` | Invalid arguments, files or request, including `identity_changed` |
+| `3` | Authentication or permission error |
+| `4` | The draft needs attention, is not ready or is still being checked after a timeout |
+| `5` | Rate limit reached |
+
+A successful `observations check` lookup exits with `0` even when nothing
+matches. Read its JSON `found` field to distinguish the results:
+
+| `found` | Meaning |
+| ------- | ------- |
+| `observation` | A matching draft or submission belongs to you. |
+| `event` | No matching observation belongs to you, but a matching event exists. |
+| `none` | Neither was found. |
+
+The CLI retries temporary failures automatically and verifies file uploads.
+Avoid rerunning an entire submission, which can create another draft. Check for
+an existing observation before starting again.
+
+Commands do not prompt when input is redirected or piped. Pass `--yes` to
+confirm file removal or draft deletion in scripts. Output has no color when
+piped or when using `--json`.
+
+Agent instructions are available in
+[SKILL.md](https://github.com/skycarl/iota-hub-python/blob/main/SKILL.md).
 
 ## Errors
 
-Every failure carries a stable `code`: the API's (listed per operation in
-the reference at <https://iota-hub.com/developers/reference>) plus the tool's
-own, `ambiguous_files`, `missing_files`, `invalid_extension`,
-`not_a_directory`, `unknown_profile` and `usage_error` (all exit 2) and
-`timeout` (exit 4, checks still running).
+Errors include a code and, when available, instructions for fixing the problem.
+Common examples:
+
+| Code | What to do |
+| ---- | ---------- |
+| `ambiguous_files` | Specify which file to use with the relevant file option. |
+| `missing_files` | Add the report to the folder or correct the file path. |
+| `invalid_extension` | Use a supported file type. |
+| `not_a_directory` | Pass the path to a folder. |
+| `unknown_profile` | Check the profile name or create it with `auth login`. |
+| `usage_error` | Check the command's `--help`. |
+| `timeout` | Checks have not finished. Use `drafts show <id>` to check progress. |
+
+API error codes are listed in the
+[API reference](https://iota-hub.com/developers/reference).
 
 ## Profiles
 
-    iota-hub auth login --profile <name> --base-url <API base URL>
-    iota-hub observations list --profile <name>   # or IOTA_HUB_PROFILE=<name>
+Use a named profile to save a key and API address together:
 
-A profile stores a key with its base URL. Settings resolve flag > environment
-> config file > default; the tool prints `Target: <base URL>` on stderr when
-the target is not the default. The config file lives at:
+    iota-hub auth login --profile <name> --base-url <API base URL>
+    iota-hub observations list --profile <name>
+
+You can also select a profile with `IOTA_HUB_PROFILE`. Command-line settings
+take precedence over environment variables, followed by saved settings and
+defaults. API keys are supplied through login or `IOTA_HUB_API_KEY`.
+
+When using a non-default API address, the CLI prints it on stderr as `Target:`.
+Settings are stored in:
 
     Linux     ~/.config/iota-hub/config.toml
     macOS     ~/Library/Application Support/iota-hub/config.toml
     Windows   %APPDATA%\iota-hub\config.toml
 
-## Where the rest lives
+## Related documentation
 
-- What belongs in each file: <https://iota-hub.com/data-submission>
-- API keys: <https://iota-hub.com/developers/keys>
-- The Python library: <https://iota-hub.com/developers/library>
-- The HTTP API: <https://iota-hub.com/developers/api>, the reference at
-  `/developers/reference`, the OpenAPI document at `/developers/openapi.json`
-- Source, `SKILL.md`, client conventions:
-  <https://github.com/skycarl/iota-hub-python>
+- [Data submission requirements](https://iota-hub.com/data-submission)
+- [API keys](https://iota-hub.com/developers/keys)
+- [Python library guide](https://iota-hub.com/developers/library)
+- [HTTP API guide](https://iota-hub.com/developers/api)
+- [API reference](https://iota-hub.com/developers/reference)
+- [OpenAPI document](https://iota-hub.com/developers/openapi.json)
+- [Source and client conventions](https://github.com/skycarl/iota-hub-python)
