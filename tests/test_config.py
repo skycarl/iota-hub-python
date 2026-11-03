@@ -479,6 +479,51 @@ def test_a_refused_config_write_never_mentions_the_key(tmp_path, monkeypatch):
     assert PROFILE_KEY not in str(excinfo.value)
 
 
+def test_a_refused_config_write_fails_on_the_first_attempt(tmp_path, monkeypatch):
+    # tempfile.mkstemp retries a permission error on Windows almost forever.
+    attempts = []
+
+    def refuse(*_args, **_kwargs):
+        attempts.append(1)
+        assert len(attempts) == 1, "a refused write was retried"
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(os, "open", refuse)
+
+    with pytest.raises(IotaHubError) as excinfo:
+        save_profile(
+            "dev",
+            api_key=PROFILE_KEY,
+            base_url=DEV_URL,
+            config_path=tmp_path / "config.toml",
+        )
+
+    assert excinfo.value.code == "not_writable"
+
+
+def test_a_temp_name_clash_tries_another_name(tmp_path, monkeypatch):
+    real_open = os.open
+    clashes = []
+
+    def clash_once(*args, **kwargs):
+        if not clashes:
+            clashes.append(1)
+            raise FileExistsError(17, "File exists")
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(os, "open", clash_once)
+
+    save_profile(
+        "dev",
+        api_key=PROFILE_KEY,
+        base_url=DEV_URL,
+        config_path=tmp_path / "config.toml",
+    )
+
+    assert clashes
+    assert PROFILE_KEY in (tmp_path / "config.toml").read_text(encoding="utf-8")
+
+
 def test_a_config_file_that_cannot_be_read_is_invalid_config(tmp_path):
     with pytest.raises(IotaHubError) as excinfo:
         load_config(tmp_path)  # a directory

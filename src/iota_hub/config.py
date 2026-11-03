@@ -9,8 +9,9 @@ most a caller ever sees is :func:`key_prefix`.
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
-import tempfile
+import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,8 @@ from platformdirs import user_config_dir
 
 from ._http import DEFAULT_BASE_URL
 from .errors import AuthError, IotaHubError
+
+_TEMP_NAME_ATTEMPTS = 100
 
 try:  # Python 3.11+
     import tomllib
@@ -250,6 +253,29 @@ def delete_profile(name: str, *, config_path: str | Path | None = None) -> bool:
     return True
 
 
+def _create_temp_file(directory: str) -> tuple[int, str]:
+    """Create a private temp file in ``directory``, failing fast if refused.
+
+    Not ``tempfile.mkstemp``: on Windows it takes a permission error for a name
+    clash and retries about two billion times, so a folder whose ACL denies
+    writes would hang instead of raising.
+    """
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOINHERIT", 0)
+    )
+    for _ in range(_TEMP_NAME_ATTEMPTS):
+        temp = os.path.join(directory, f".config-{secrets.token_hex(8)}.tmp")
+        try:
+            return os.open(temp, flags, 0o600), temp
+        except FileExistsError:
+            continue
+    raise FileExistsError(errno.EEXIST, "No free temporary file name", directory)
+
+
 def _write_config(config: dict, config_path: str | Path | None) -> Path:
     path = config_file_path(config_path)
     text = _to_toml(config)
@@ -259,13 +285,11 @@ def _write_config(config: dict, config_path: str | Path | None) -> Path:
         # A symlinked config (a dotfiles manager) stays a symlink: the replace
         # lands on the file it points at.
         target = os.path.realpath(path)
-        # mkstemp is 0600 at creation, so the key is never briefly
+        # The temp file is 0600 at creation, so the key is never briefly
         # world-readable, and the replace leaves the file 0600 whatever it was
         # before. On Windows the mode is ignored and the user profile
         # directory's ACL is the protection — which is what the docs promise.
-        descriptor, temp = tempfile.mkstemp(
-            dir=os.path.dirname(target), prefix=".config-", suffix=".tmp"
-        )
+        descriptor, temp = _create_temp_file(os.path.dirname(target))
         with open(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text)
             handle.flush()

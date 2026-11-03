@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # uv reads this; setup-uv v3 has no python-version input.
+  UV_PYTHON: "3.13"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,8 +23,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
-        with:
-          python-version: "3.13"
 
       - name: Install dependencies
         run: uv sync --locked

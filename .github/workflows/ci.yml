@@ -12,6 +12,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # uv reads this; setup-uv v3 has no python-version input.
+  UV_PYTHON: "3.13"
+
 jobs:
   test:
     strategy:
@@ -20,13 +24,15 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.13"]
     runs-on: ${{ matrix.os }}
+    # A hung test should fail quickly, not hold the job for six hours.
+    timeout-minutes: 15
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
-        with:
-          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: uv sync --locked
@@ -51,8 +57,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
-        with:
-          python-version: "3.13"
 
       - name: Install dependencies
         run: uv sync --locked
@@ -85,8 +89,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
-        with:
-          python-version: "3.13"
 
       - name: Install dependencies
         run: uv sync --locked
@@ -109,8 +111,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3.2.4
-        with:
-          python-version: "3.13"
 
       - name: Install dependencies
         run: uv sync --locked
