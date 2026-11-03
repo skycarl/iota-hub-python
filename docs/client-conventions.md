@@ -1,136 +1,146 @@
 # IOTA Hub client conventions
 
-The language-neutral contract every IOTA Hub client implements. `iota-hub-python`
-is the reference implementation; a future `iota-hub-js` is a **port of this
-document**, not a second design (IOTA Hub `features/public-api/design.md` D15,
-§ 8.6).
+This document defines the behavior shared by IOTA Hub clients in every
+language. `iota-hub-python` is the reference implementation. Other clients must
+follow the same rules for configuration, retries, polling, file selection and
+output.
 
-What the API does is owned by the IOTA Hub repository — `specs/public-api.md`
-and its machine-readable rendering, the OpenAPI document vendored here as
-[`spec/openapi.json`](../spec/openapi.json). This document owns only what a
-*client* does: how it is configured, how it retries, how it polls, how it maps
-a folder to slots, and what it prints.
-
-Where the design left a choice open, this document makes it and says so.
-
----
+The API defines its own operations and schemas. A copy of its OpenAPI document
+is stored in [spec/openapi.json](../spec/openapi.json).
 
 ## 1. Two layers
 
-| Layer | What it is | How it is built |
-|---|---|---|
-| **Transport** | One method per public `operation_id`, one request each, no decisions. | May be generated from `spec/openapi.json`. Python hand-writes it to keep the dependency set small and the cold start fast — but it lands on the same names either way. |
-| **Workflow** | Everything the API cannot do for you: submit a folder, poll a run, download files, retry, upload to S3, map errors. | **Always hand-written**, in every language, to this document. |
+| Layer | Responsibility | Implementation |
+| ----- | -------------- | -------------- |
+| Transport | Methods for individual API operations and HTTP requests. | May be generated from OpenAPI. Python uses hand-written methods and models to limit dependencies and startup time. |
+| Workflow | Submission, polling, downloads, upload recovery and other client behavior. | Hand-written in each language, following this document. |
 
-The seam matters: nothing in the transport layer may make a policy decision
-(what to retry, how long to wait, which file is the light curve), and nothing in
-the workflow layer may talk HTTP directly.
+Keep retry policies, polling limits and file selection separate from individual
+endpoint methods. Workflow methods use the transport rather than making HTTP
+requests directly.
 
-**Transport surface** (sync; an async client is an addition, never a
-replacement):
+### Transport methods
 
-- one method per operation, plus `iter_<collection>` generators that follow
-  `next_cursor` until it is null and yield the individual items,
-- an `upload_to_s3(target, file)` that implements § 7,
-- a `sha256_base64(path)` helper,
-- an explicit `close()`, and the language's scope-bound equivalent.
+The synchronous client provides:
 
-**Workflow surface** (the names are part of this contract):
+- One method per public `operation_id`.
+- `iter_<collection>` generators that follow `next_cursor` until it is null
+  and yield individual items.
+- `upload_to_s3(target, file)` as specified in § 7.
+- `sha256_base64(path)`.
+- `close()` and the language's equivalent of a context manager.
 
-- `submit_folder(dir, …)` / `submit_files({slot: path}, …)` — map, create,
-  upload, finalize, wait, submit,
-- `wait_for_checks(observation_id, …)` — § 8,
-- `replace_file(observation_id, slot, path)` — the fix loop's init → upload →
-  finalize, in one call,
-- `add_attachment(observation_id, path)` — the same for one attachment (§ 11a);
-  removing one is the transport's `delete_attachment(observation_id,
-  attachment_id)`,
-- `download_files("observation" | "event", id, dest, …)` — list the files,
-  optionally filter by `slot` — **any** slot the listing names, not only the
-  five upload slots (an event carries `damit`, `ground_track`, `attachment`) —
-  and stream each presigned link into `dest`
-  **without the API key** (§ 5). Nothing is skipped silently: an existing file
-  is `file_exists` unless `overwrite` was asked for — `--force` on the CLI —
-  (and every destination is
-  checked before the first byte is written, so a refusal leaves no half-done
-  download), a directory named like a file being downloaded is `not_writable`
-  with or without `overwrite`, a link S3 refuses is `download_failed`, and a
-  network failure is `transport_error` (not retried, like an S3 upload, § 6:
-  running the command again fetches fresh links). A file is written to a temp
-  file in `dest` and renamed over its name once complete, so a failure never
-  leaves a partial file and a failed overwrite leaves the old file as it was.
-  Files finished before the failure stay, so the re-run needs `overwrite`
-  (`--force`). A successful overwrite replaces the file: it keeps the old
-  file's mode on POSIX, needs a writable `dest`, and replaces a symlink rather
-  than writing through it. An
-  empty result is not a failure: `dest` is not created, the CLI exits `0`,
-  `--json` prints `{"files": []}`, and plain output says so on stderr. The API's event file list is empty until the event
-  is `COMPLETE` for a caller without reviewer access,
-- `next_actions_commands(observation)` — the API's verbs as the literal
-  commands that answer them (§ 13). It lives in the *library*, not the CLI, so
-  an embedder prints the same guidance the CLI does.
+An async client may be added but must not replace the synchronous client.
+
+### Workflow methods
+
+These method names are part of the contract:
+
+- `submit_folder(dir, …)` and `submit_files({slot: path}, …)`: select files,
+  create a draft, upload, finalize, wait for checks and submit.
+- `wait_for_checks(observation_id, …)`: poll as specified in § 8.
+- `replace_file(observation_id, slot, path)`: initialize an upload, upload the
+  file and finalize it.
+- `add_attachment(observation_id, path)`: upload one attachment (§ 11a).
+  Use the transport's `delete_attachment(observation_id, attachment_id)` to
+  remove one.
+- `download_files("observation" | "event", id, dest, …)`: list files and
+  download them to `dest`. An optional `slot` filter accepts any slot returned
+  by the API, including event files such as `damit`, `ground_track` and
+  `attachment`.
+- `next_actions_commands(observation)`: return CLI commands for the API's
+  `next_actions` (§ 13).
 - `skipped_checks(observation)`, `owc_unresolved(observation)`,
-  `owc_commands(observation)` and `check_warnings(observation)` — § 8a, in the
-  library for the same reason.
+  `owc_commands(observation)` and `check_warnings(observation)`: expose the
+  warnings described in § 8a.
 
-`submit_folder` / `submit_files` return one result object carrying the last
-observation it read, `submitted`, the uploaded `{slot: filename}`, the uploaded
-attachment filenames, the files the mapping ignored, the **skipped checks** and
-**OWC commands** of § 8a (taken from the draft as the checks left it — a
-submitted observation no longer carries the draft's run), and an **`outcome`** — the vocabulary a script branches on:
+Command and warning helpers belong in the library so integrations can show the
+same guidance as the CLI.
+
+### Downloads
+
+Download from each presigned URL without the API key. Check every destination
+before writing any file:
+
+- An existing file raises `file_exists` unless `overwrite` is enabled
+  (`--force` in the CLI).
+- A directory with the destination filename raises `not_writable`, even with
+  `overwrite` enabled.
+- A rejected storage request raises `download_failed`; a network failure
+  raises `transport_error`. Neither is retried. Running the command again
+  obtains fresh URLs.
+
+Write each download to a temporary file in `dest`, then rename it to the final
+filename after completion. A failed download must leave no partial file and
+must preserve any file it would have replaced. Completed downloads remain if
+another download fails; rerunning then requires `overwrite` (`--force`).
+
+An overwrite requires a writable destination directory, preserves the old
+file's mode on POSIX and replaces a symlink rather than writing through it.
+
+An empty file list is successful: do not create `dest`, exit `0`, return
+`{"files": []}` in JSON mode and report the empty result on stderr in plain
+mode. For callers without reviewer access, the API returns no event files
+until the event is `COMPLETE`.
+
+### Submission results
+
+`submit_folder` and `submit_files` return the last observation read, a
+`submitted` boolean, uploaded `{slot: filename}` pairs, attachment filenames,
+ignored files, skipped checks, OWC commands and an `outcome`:
 
 | `outcome` | Meaning |
-|---|---|
-| `submitted` | the observation is submitted (by this client, or by the server's `auto_submit_when_clean`) |
-| `ready` | readiness is `ready`, but `submit=False` left it a draft |
-| `needs_attention` | open findings, something missing, or the run errored |
-| `draft` | `wait=False`: uploaded and finalized, not waited on |
+| --------- | ------- |
+| `submitted` | Submitted by this client or by the server's `auto_submit_when_clean`. |
+| `ready` | Ready, but `submit=False` left it as a draft. |
+| `needs_attention` | Open findings, missing requirements or a failed check run. |
+| `draft` | Uploaded and finalized with `wait=False`; the client did not wait for checks. |
 
-Flags: `wait=False` stops after finalize, `submit=False` stops at `ready`.
-**A draft that is not `ready` is never submitted**, and a failed run is never
-cleaned up: the draft stays, because it is recoverable in the web app (and
-`delete_draft` is one call away if the caller disagrees). A finalize that fails
-leaves the same draft behind, as does an upload that fails twice, a request that
-fails during the wait, or a failed submit. So every error raised after the draft
-was created has `observation_id` added to its `details` before `submit_files`
-re-raises it; that adds no retry and no request.
+Capture skipped checks and OWC commands before submission. A submitted
+observation no longer includes the draft's check run.
 
-Progress is reported through an optional `on_progress` callback taking one
-short string (`Uploading lightcurve (2/3)...`, `Waiting for checks...`), which
-the CLI prints to stderr. Those strings are **ASCII**, like everything else a
-client prints in plain output (§ 13).
+`wait=False` returns after finalization. `submit=False` returns after checks
+without submitting. Never submit a draft that is not `ready`.
+
+Do not delete a draft after an upload, finalization, polling or submission
+failure. It remains available in the web app, or the caller can delete it with
+`delete_draft`. For errors raised after draft creation, `submit_files` adds
+`observation_id` to `details` if absent, then re-raises the error. This requires
+no additional request or retry.
+
+An optional `on_progress` callback receives short ASCII strings such as
+`Uploading lightcurve (2/3)...` and `Waiting for checks...`. The CLI sends
+these to stderr (§ 13).
 
 ## 2. Naming
 
-A transport method's name is its `operation_id` minus the `public_` prefix:
-`public_create_draft` → `create_draft`, `public_list_observation_files` →
-`list_observation_files`. Adapt the case to the language's convention
-(`createDraft` in JavaScript) and nothing else — never re-word, never re-group.
+Transport methods use the `operation_id` without its `public_` prefix:
+`public_create_draft` becomes `create_draft`. Change casing to suit the language
+(for example, `createDraft` in JavaScript), but do not rename or regroup methods.
 
-Model names are the OpenAPI schema names, and the field names are the wire
-names, unchanged. Sixteen operations and twenty-five `Public*` schemas today.
+Use OpenAPI schema names for models. Keep field names as they appear in JSON.
 
 ## 3. Configuration
 
-Precedence, highest first: **flag > environment > config file > default**.
+Settings use this precedence: **explicit argument > environment > config file
+> default**. CLI flags supply explicit arguments, except for the API key, which
+must never be accepted as a CLI flag.
 
 | Environment variable | Meaning |
-|---|---|
-| `IOTA_HUB_API_KEY` | The key. The CI and agent path: no login step. |
-| `IOTA_HUB_BASE_URL` | The API base (§ 4). |
-| `IOTA_HUB_PROFILE` | Which stored profile to use. |
+| -------------------- | ------- |
+| `IOTA_HUB_API_KEY` | API key, without a login step. |
+| `IOTA_HUB_BASE_URL` | API base address (§ 4). |
+| `IOTA_HUB_PROFILE` | Stored profile to select. |
 
-The config file lives in the platform config directory, as `platformdirs`
-reports it:
+Use the platform configuration directory reported by `platformdirs`:
 
 | Platform | Path |
-|---|---|
+| -------- | ---- |
 | Linux | `~/.config/iota-hub/config.toml` |
 | macOS | `~/Library/Application Support/iota-hub/config.toml` |
 | Windows | `%LOCALAPPDATA%\iota-hub\config.toml` |
 
-It is TOML, and it stores the key **and** the base URL together per profile, so
-a dev key is never sent to prod or the reverse:
+Store each profile's key and base URL together in TOML:
 
 ```toml
 default_profile = "default"
@@ -144,421 +154,427 @@ base_url = "https://<id>.execute-api.us-west-2.amazonaws.com/dev/api"
 api_key  = "iotahub_<key_id>_<secret>"
 ```
 
-- On POSIX the file is `0600`. On Windows the user profile directory's ACL is
-  the protection, and the docs say so rather than promising permissions.
-- **Written atomically.** A write goes to a temp file (`0600` from creation) in
-  the same directory, then replaces the config file in one step, so a failed
-  write leaves the old file whole and never an empty one. A symlinked config
-  file stays a symlink: the file it points at is what gets replaced.
-- **What may be written.** Strings written to the file escape `\` and `"`, so a
-  base URL carrying either round-trips. A control character (U+0000–U+001F,
-  U+007F) cannot go in a TOML string at all — not in the profile name, the base
-  URL or the key — and a profile name is also a table header
-  (`[profiles."dev"]`), so it carries neither a quote nor a backslash. Either is
-  `invalid_config`, raised **before** the file is touched: the file a client
-  writes always parses.
-- A key is **never** accepted as a command-line argument — it would land in
-  shell history and in `ps`. Prompt with hidden input, or read stdin.
-- No OS keyring in v1.
-- Whenever the resolved base URL is not the default, the CLI prints
-  `Target: <base URL>` on **stderr** before acting, so a test run is never
-  mistaken for a prod submission. `submit --dry-run` prints it even for the
-  default target (§ 13). Under `--json` it is held until the run ends (§ 13).
+### Reading and writing settings
 
-**Precedence in detail.** The key comes from the flag, else the environment,
-else the profile; the base URL from the flag, else the environment, else the
-profile, else the default. *Decision:* a `--base-url` passed alongside a
-profile is allowed and wins — an explicit instruction beats a stored one — and
-the resolved settings say which of `flag` / `env` / `profile` the key came
-from, so a client can show it. The environment does not get the same
-latitude: when the key comes from a profile and `IOTA_HUB_BASE_URL` names a
-different base URL than the one stored with that key, the client raises
-`invalid_config` instead of sending the key there — a leftover dev variable
-must never carry a prod key to dev. Setting `IOTA_HUB_API_KEY` as well, or
-passing `--base-url`, settles it. A profile that was **asked for** and does not
-exist is `unknown_profile`; a config file that is not valid TOML is
-`invalid_config`, and so is one that cannot be read. A stored `default_profile`
-that no longer exists is simply ignored, so deleting a profile never wedges the
-CLI.
+- Write the file with mode `0600` on POSIX. On Windows, rely on the user profile
+  directory's ACL and document that limitation. There is no OS keyring support
+  in v1.
+- Write to a temporary file in the same directory, with mode `0600` from
+  creation, then replace the config file. A failed write must preserve the old
+  file. If the config path is a symlink, replace its target and keep the symlink.
+- Escape backslashes and double quotes in stored strings. Reject control
+  characters U+0000–U+001F and U+007F in profile names, base URLs and keys.
+  Also reject quotes and backslashes in profile names. Raise `invalid_config`
+  before touching the file.
+- Unreadable or invalid TOML raises `invalid_config`. An explicitly selected
+  profile that does not exist raises `unknown_profile`. Ignore a stored
+  `default_profile` that no longer exists.
+- Read keys from a hidden prompt, stdin, the environment or saved settings.
+  Never accept a key as a CLI argument or print its secret.
 
-**Logging out never re-aims bare commands.** *Decision:* removing the profile
-named by `default_profile` clears `default_profile`; a client must not pick a
-replacement from what is left, because the next bare command could then reach
-another deployment, possibly production. Bare commands then follow the order
-below: a profile named `default` if there is one, otherwise the ordinary
-`missing_api_key`. If profiles remain, `auth logout` says on stderr that no
-default is set, lists them, and says what a bare command now does (held under
-`--json` like any note, § 13; the document does not change). Removing the last
-profile, or any other profile, has nothing to report.
+The library's `resolve(api_key=...)` accepts an explicit key. Resolved settings
+report the key source as `flag`, `env` or `profile`; `flag` here includes a
+library argument and does not imply a CLI key option.
 
-**One way to select a profile.** *Decision:* every command, `auth login` and
-`auth logout` included, selects `--profile`, else `IOTA_HUB_PROFILE`, else
-`default_profile` (if that profile exists), else `default`. A profile named
-`default` is therefore used when no `default_profile` is set.
+An explicit `--base-url` overrides a profile's URL. If the key comes from a
+profile and `IOTA_HUB_BASE_URL` differs from its saved URL, raise
+`invalid_config`. The caller can unset that variable, also supply
+`IOTA_HUB_API_KEY`, or explicitly pass `--base-url`.
 
-**`auth login` resolves its target the same way, minus the profile's key.**
-*Decision:* the profile it is about to write may not exist yet, so naming it
-cannot be `unknown_profile`. The base URL stored with the key is the flag, else
-`IOTA_HUB_BASE_URL`, else what that profile already had (a re-login keeps its
-target), else the default — the § 3 order with the one profile in question
-standing in for "the profile". The key itself
-is read from a hidden prompt on a TTY and otherwise from one line of stdin, and is verified with
-`list_observations(limit=1)` **before** anything is written, so a typo never
-lands in the config file. Nothing but `key_prefix` is ever printed back. The
-first login, on an empty config, writes `default` and makes it `default_profile`;
-so does a login while a bare command would select no existing profile.
+For a non-default base URL, print `Target: <base URL>` on stderr before acting.
+`submit --dry-run` prints it even for the default URL. In JSON mode, buffer the
+line until the command returns a result (§ 13).
 
-**Replacing a stored key is never silent.** *Decision:* when the selected
-profile already holds a key, a TTY is asked first, naming the profile, the stored
-key's prefix and base URL, and the base URL the new key is for; `--yes` skips the
-question. Without a TTY there is nothing to ask and `confirmation_required` does
-not apply: the piped key is the instruction. Either way a replacement says
-`Replaced profile '<name>', which held key <prefix> for <base URL>.` on stderr,
-and the `--json` document says `replaced: true`. `auth login` and `auth logout`
-both print the profile they acted on.
+### Profile selection and login
 
-**`auth status` shows profile, base URL and key prefix — and nothing else.**
-*Decision:* the public API has no `whoami` operation (there is none in
-`spec/openapi.json`), so scopes and expiry are not knowable from a key, and a
-client must not invent them. The key prefix is `iotahub_<key_id>_...`: the
-identifying half, never the secret. To say more than "here is what is
-configured", `auth status` makes one cheap read — `list_observations(limit=1)`
-— and reports `valid`, or the auth `code` the API answered with.
+All commands, including `auth login` and `auth logout`, select a profile in
+this order:
+
+1. `--profile`.
+2. `IOTA_HUB_PROFILE`.
+3. The saved `default_profile`, if it exists.
+4. A profile named `default`.
+
+`auth login` may create the selected profile, so a new name does not raise
+`unknown_profile`. Select its base URL from `--base-url`, then
+`IOTA_HUB_BASE_URL`, then that profile's saved URL, then the default URL.
+
+Read the key with a hidden prompt on a terminal, or one line from stdin
+otherwise. Verify it with `list_observations(limit=1)` before saving. Print only
+its `key_prefix`. The first saved profile becomes `default_profile`; a login
+also sets the default if an unqualified command would select no existing
+profile.
+
+When replacing a stored key on a terminal, ask for confirmation. Show the
+profile name, old key prefix, old URL and new URL. `--yes` skips confirmation.
+With piped input, replace the key without a prompt or `confirmation_required`
+error. Every replacement prints this notice on stderr:
+
+```text
+Replaced profile '<name>', which held key <prefix> for <base URL>.
+```
+
+The JSON result includes `replaced: true`. Both login and logout report the
+profile they changed.
+
+### Logout
+
+Removing the profile named by `default_profile` clears that setting. Do not
+select another saved profile automatically. Subsequent commands without a
+profile selection use a profile named `default`, or raise `missing_api_key`.
+
+If profiles remain after removing the default, report on stderr that no default
+is set, list the remaining profiles and explain which profile an unqualified
+command will use. Buffer this notice in JSON mode (§ 13). Removing the last
+profile or a non-default profile needs no such notice.
+
+### Authentication status
+
+`auth status` reports the profile, base URL, key prefix and result of
+`list_observations(limit=1)`: `valid` or the API's auth error code. The key
+prefix is `iotahub_<key_id>_...`, without the secret.
+
+The API has no `whoami` operation. Do not infer or report a key's scopes or
+expiry from its value.
 
 ## 4. Base URL
 
-`base_url` is the **API base**; the client appends `/public/v1` (design D16).
-A trailing slash on the configured value is tolerated and stripped.
+`base_url` is the API address without `/public/v1`. Strip a trailing slash,
+then append `/public/v1` when constructing requests.
 
-| Target | `base_url` | A request goes to |
-|---|---|---|
+| Target | `base_url` | Example request |
+| ------ | ---------- | --------------- |
 | Production (default) | `https://api.iota-hub.com` | `https://api.iota-hub.com/public/v1/events` |
 | Development | `https://<id>.execute-api.us-west-2.amazonaws.com/dev/api` | `…/dev/api/public/v1/events` |
 | Local | `http://localhost:8000` | `http://localhost:8000/public/v1/events` |
 
-No non-production URL is baked into a published client.
-
-**The key never travels in cleartext.** *Decision:* a base URL must be
-`https`, except `http` to `localhost`, `127.0.0.1` or `::1`. Anything else is
-`invalid_config`, raised when the client is constructed, before any request.
+Do not include a development deployment URL in a published client's defaults.
+Require HTTPS, except for HTTP to `localhost`, `127.0.0.1` or `::1`.
+Raise `invalid_config` for other URLs when constructing the client, before
+sending a request.
 
 ## 5. Authentication and User-Agent
 
-Every request carries:
+Every API request includes:
 
-- `X-API-Key: iotahub_<key_id>_<secret>` — never `Authorization`, which this
-  surface ignores.
+- `X-API-Key: iotahub_<key_id>_<secret>`. The API does not use `Authorization`.
 - `Accept: application/json`.
-- `User-Agent: iota-hub-<lang>/<version>` — `iota-hub-python/1.2.3`,
-  `iota-hub-js/1.2.3`. The library sends it whether or not the CLI is driving.
-  A caller embedding the library in their own tool may override it entirely.
+- `User-Agent: iota-hub-<lang>/<version>`, such as `iota-hub-python/1.2.3`
+  or `iota-hub-js/1.2.3`. Send it from both library and CLI calls. Applications
+  using the library may override it.
 
-The key goes to the IOTA Hub API and **nowhere else**. In particular an S3
-upload (§ 7) must not carry it.
+Send the key only to the IOTA Hub API, never to storage upload or download URLs.
 
 ## 6. Retries
 
-Applies to every API call, and only to these cases:
+Apply retries to these API failures:
 
-| Condition | Retried? |
-|---|---|
-| Transport failure (DNS, connect, read, TLS) | yes |
-| `429` | yes |
-| `5xx` | yes |
-| Any other `4xx` | **no** — the request was rejected; retrying only burns rate-limit budget |
+| Condition | Retry? |
+| --------- | ------ |
+| Network failure: DNS, connection, read or TLS | Yes |
+| `429` | Yes |
+| `5xx` | Yes |
+| Other `4xx` | No |
 
-- **Attempts**: 1 + `max_retries`, default `max_retries = 4`.
-- **Backoff**: `0.5 × 2^attempt` seconds — 0.5, 1, 2, 4, 8, 16 — capped at 20 s.
-  *Decision:* no jitter. A personal CLI is not a fleet, and deterministic sleeps
-  keep the tests honest.
-- **`Retry-After` wins** when the response carries one, in either form (seconds
-  or an HTTP-date), and is used verbatim rather than being blended with the
-  backoff. *Decision:* it is not capped — the server is the authority on how
-  long it wants to be left alone.
-- The **same `Idempotency-Key`** is sent on every attempt of one logical call
-  (§ 9). A retry with a fresh key is a second write.
-- After the last attempt the mapped exception is raised, carrying `retry_after`
-  so the caller can decide.
-- *Decision:* S3 uploads (§ 7) are **not** retried at this layer. A presigned
-  target can expire, so the workflow layer re-initializes the upload instead:
-  **once**, through `init_file_upload`, and then it posts the fresh target.
-  A second failure raises and leaves the draft alone.
-  That recovery finishes with the **per-slot** `finalize_file_upload`, not with
-  the collapsed finalize: the draft's `pending_uploads` still names the target
-  that expired, and only the per-slot finalize (or a slot delete) clears it —
-  without that call the collapsed finalize keeps answering `409
-  upload_missing` for a file that is sitting in S3 under a different key.
+- Make at most `1 + max_retries` attempts. The default `max_retries` is `4`.
+- Wait `0.5 × 2^attempt` seconds between attempts, capped at 20 seconds, with
+  no jitter. The sequence starts at 0.5, 1, 2, 4, 8 and 16 seconds.
+- A valid `Retry-After` header replaces this delay. Accept seconds or an HTTP
+  date and do not cap the resulting wait.
+- Reuse the same `Idempotency-Key` for every attempt of a logical call (§ 9).
+  A new key would allow another write.
+- After the final attempt, raise the mapped exception with `retry_after` for
+  the caller to inspect.
+- Make the sleep function injectable so tests can check delays without waiting.
 
-The sleep function is injectable, so tests never wait.
+Do not add an outer retry loop around client calls.
+
+### Upload recovery
+
+The transport does not retry S3 uploads because a presigned target may have
+expired. The submission workflow requests a new target through
+`init_file_upload` and retries the upload once. A second failure raises an
+error and leaves the draft available.
+
+After recovery, call `finalize_file_upload` for that file before finalizing
+the draft. The per-file finalize clears the expired target from
+`pending_uploads`; draft finalization alone would return `409 upload_missing`.
+Deleting the file slot also clears its pending upload. Attachment recovery uses
+the equivalent attachment endpoints and removes the old declaration (§ 11a).
 
 ## 7. The S3 upload contract
 
-Files never travel through the API. `create_draft` and `init_file_upload`
-return a `PublicUploadTarget`:
+Files upload directly to storage. `create_draft` and `init_file_upload` return
+a `PublicUploadTarget` with these fields:
 
-```
+```text
 {slot, filename, upload_url, fields, file_key}
 ```
 
 1. POST `multipart/form-data` to `upload_url`.
-2. Send **every entry of `fields`, exactly as returned, in the order returned,
-   and nothing else**. Do not add, drop, rename or re-sign a field; the policy
-   was signed over exactly these pairs.
-3. The **file part comes last** and is named `file`.
-4. Do **not** send `X-API-Key`, and do not send `Authorization`.
-5. S3 answers `204`. Some bucket configurations answer `200` or `201`; treat any
-   `2xx` as success and anything else as a failed upload.
-6. Then call the matching finalize.
+2. Send every entry of `fields` in the returned order, without changing, adding
+   or removing fields. These values are part of the signed upload policy.
+3. Put the file part last, with the name `file`.
+4. Do not send `X-API-Key` or `Authorization`.
+5. Treat any `2xx` response as success. S3 normally returns `204`, but some
+   configurations return `200` or `201`. Other statuses mean the upload failed.
+6. Call the matching finalize operation.
 
-**Declare `sha256` when you can** — the base64 of the file's raw SHA-256 digest,
-which is what S3's `x-amz-checksum-sha256` wants and what
-`openssl dgst -binary -sha256 <file> | base64` prints. The presigned policy then
-pins that digest, `fields` carries the checksum, and S3 rejects bytes that do
-not match. Omit it and integrity is not verified at the edge. Anything that is
-not a base64-encoded 32-byte digest is `422 validation_error`.
+Declare `sha256` when available: the raw SHA-256 digest encoded as base64.
+It must decode to 32 bytes, or the API returns `422 validation_error`.
+For example, this shell command computes that value:
+
+```bash
+openssl dgst -binary -sha256 <file> | base64
+```
+
+The signed policy includes the checksum and S3 rejects a file whose bytes do
+not match. Without `sha256`, S3 does not perform this checksum verification.
+The built-in upload workflows declare it for every file.
 
 ## 8. Polling (`wait_for_checks`)
 
-Poll `GET /observations/{id}` — the one self-describing resource.
+Poll `GET /observations/{id}` with these intervals:
 
 | Setting | Value |
-|---|---|
-| First interval | 2 s |
+| ------- | ----- |
+| First interval | 2 seconds |
 | Growth | × 1.5 |
-| Cap | 10 s |
+| Maximum interval | 10 seconds |
 | Default timeout | 10 minutes |
 
-A run is **terminal when `checks.status` is neither `"running"` nor
-`"pending"`** — today that means `"complete"` or `"error"`. *Decision:* the test
-is on the two non-terminal values, not on the two terminal ones, so a status the
-API adds later ends the wait instead of hanging forever.
+Stop polling when any of these conditions holds:
 
-Two more ways the wait ends, so it cannot hang on a draft that will never
-produce a run:
+- `checks.status` is neither `running` nor `pending`. This includes `complete`,
+  `error` and any new terminal status the API adds.
+- There is no `checks` object and `next_actions` does not include `poll`.
+  A draft missing required files may need uploads before checks can run.
+- `submission_status` is `submitted`. The server's `auto_submit_when_clean`
+  may submit the observation during polling; return the `submitted` outcome.
 
-- **no `checks` and no `poll` verb** — a draft still missing a required file
-  answers with its `upload:` verbs only (§ 5 of the API spec: only the first
-  applicable group is returned), and there is nothing to wait for. A missing
-  `checks` object *with* `poll` in `next_actions` is not terminal.
-- **`submission_status == "submitted"`** — `auto_submit_when_clean` means the
-  validation worker may submit the draft while the client is polling. That is
-  an outcome, not a surprise: the wait ends and the result is `submitted`.
+A missing `checks` object with `poll` in `next_actions` means keep waiting.
 
-*Decision:* the timeout bounds the time spent **waiting between polls**, not
-wall-clock time including the requests — those are bounded by the transport's
-own timeout. That keeps the wait deterministic under an injected sleep, so a
-test asserts `[2.0, 3.0, 4.5, …]` and never sleeps. The final wait is trimmed
-to what is left of the budget, and one last poll follows it.
+The timeout measures time spent waiting between polls. Request time is
+additional and subject to the transport timeout. Shorten the final delay to
+fit the remaining wait budget, then poll once more.
 
-A timeout raises `timeout`, carrying `observation_id`, `timeout` and the last
-`checks_status` in `details`; it never submits and never deletes. `next_actions`
-is what to do next: act on the verbs, ignore any verb you do not recognize.
+On timeout, raise `timeout` with `observation_id`, `timeout` and the last
+`checks_status` in `details`. Do not submit or delete the draft.
 
-## 8a. Skipped checks and the OWC link: warn, never block
+Use recognized `next_actions` verbs to decide what to do next. Ignore unknown
+verbs when choosing actions; they must not break the client. CLI display of
+unknown verbs is described in § 13.
 
-A check that could not run is listed in `checks.skipped[]` (`check_number`,
-`code`, `name`, `status`, `reason`). A skipped check **never** blocks submit —
-readiness ignores it — so a `ready` draft can still have some, and a client that
-only reads `findings` would never learn the check did not happen. *Decision:*
-once a wait ends, the workflow reports every skipped check through
-`on_progress` as a `WARNING` block (`check_warnings`), and `submit` goes ahead
-exactly as it would have. The block goes wherever progress goes — stderr, for
-the CLI, in every mode (under `--json`, once the run has succeeded) — and the
-same facts are data in `--json` (§ 13).
+## 8a. Skipped checks and OWC links
 
-The usual skipped check is observer check 11, which needs an Occult Watcher
-Cloud link. The server matches the OWC event itself after the report lands
-(`owc.resolution`); when it could not choose (`ambiguous`, `mismatch`,
-`not_found`, `error`) and the draft has no choice yet, the link is
-**unresolved** (`owc_unresolved`: a draft, a resolution present, and `owc.choice`
-not one of `matched`, `picked`, `pasted`, `proceed_unlinked`). The warning then
-lists the candidates and the literal commands that settle it
-(`owc_commands`): one `iota-hub drafts owc <id> --pick <owc_event_id>` per
-candidate, then `--link <owc-url-or-id>` and `--none`. Settling it is
-optional; the exit code does not change (§ 12).
+`checks.skipped[]` lists checks that did not run, with `check_number`, `code`,
+`name`, `status` and `reason`. Skipped checks do not affect readiness or block
+submission.
 
-The commands map onto `PATCH /observations/{id}` (`update_draft` in the
-transport): `--pick` is `owc_link_choice: "picked"`, `--link` is `"pasted"`,
-`--none` is `"proceed_unlinked"`. `drafts confirm-asteroid` sets
-`confirm_unnumbered_asteroid_id: true` and `drafts comment` sets `comments`.
-Each reads the observation first for its `version` and sends only the field it
-sets; a `409 stale_version` is reported, not retried — the draft changed, so
-re-read it and decide again.
+After polling ends, report every skipped check through `on_progress` as a
+`WARNING` block generated by `check_warnings`. The CLI prints it on stderr in
+all modes, buffering it in JSON mode until a result is returned (§ 13).
+Include the same information in the JSON result.
+
+Observer check 11 needs an Occult Watcher Cloud (OWC) link. The server attempts
+to match an event after reading the report and returns `owc.resolution`.
+The result may be `ambiguous`, `mismatch`, `not_found` or `error`.
+
+`owc_unresolved` is true when the observation is a draft, a resolution is
+present and `owc.choice` is not `matched`, `picked`, `pasted` or
+`proceed_unlinked`. In that case, show the candidates and `owc_commands`:
+
+- One `iota-hub drafts owc <id> --pick <owc_event_id>` per candidate.
+- `iota-hub drafts owc <id> --link <owc-url-or-id>`.
+- `iota-hub drafts owc <id> --none`.
+
+Resolving the link is optional and does not change the exit code.
+
+These commands call `update_draft` (`PATCH /observations/{id}`):
+
+| Command | Field set |
+| ------- | --------- |
+| `drafts owc --pick` | `owc_link_choice: "picked"` |
+| `drafts owc --link` | `owc_link_choice: "pasted"` |
+| `drafts owc --none` | `owc_link_choice: "proceed_unlinked"` |
+| `drafts confirm-asteroid` | `confirm_unnumbered_asteroid_id: true` |
+| `drafts comment` | `comments` |
+
+Read the observation first, then send its `version` with the fields needed for
+the chosen action. Report `409 stale_version` without retrying; the caller must
+read the changed draft before deciding how to proceed.
 
 ## 9. Idempotency
 
-`Idempotency-Key` is accepted on **create draft**, **finalize draft**,
-**finalize file upload** and **submit**. A replay returns the first call's
-response and does no second write; records expire after 24 hours. An in-flight
-call with the same key answers `409 concurrent_operation` — wait for it and read
-the result, never retry with a fresh key.
+An `Idempotency-Key` prevents duplicate writes when a request is retried.
+Create draft, finalize draft, finalize file upload, finalize attachment upload
+and submit accept this header. Reusing a key returns the first call's response.
+Records expire after 24 hours.
 
-- **One key per logical call**, generated as a uuid4 by the caller of that
-  logical call, reused across every transport retry of it.
-- A new logical call gets a new key. Re-submitting after fixing a finding is a
-  new logical call.
-- So one `submit_folder` sends **three** distinct keys — create, finalize,
-  submit — plus one per `finalize_file_upload` it had to make (§ 6). The
-  per-slot `upload/init` takes no key: it presigns, it does not write.
-- **Submit is safe to repeat without a key, too.** Submitting an observation
-  that is already submitted answers `200` with its current state (API spec
-  § 4.2), so a lost submit response is recovered by submitting again — the
-  answer is the `submitted` outcome, never an error. `version` on submit is
-  optional: a client sends the one it last read when it has one (the workflow
-  always does, from its final poll) and otherwise omits it — the body is then
-  `{}` and the server submits the current version.
-- A lost **create** response is the one a key cannot always save — a client
-  that sent none, or a process that died. That is what the check lookup is
-  for (§ 11b): find the draft by what it observed instead of creating a
-  second one.
+An in-progress call with the same key returns `409 concurrent_operation`.
+Wait for it to finish and read the result. Do not retry with a new key.
+
+- Generate a UUID4 for each logical call and reuse it across transport retries.
+- Use a new key for a new logical call, such as submitting after a correction.
+- A normal `submit_folder` call uses separate keys for create, finalize and
+  submit. Upload recovery adds a key for each per-file or attachment finalize.
+- Per-file upload initialization does not take a key; it generates an upload
+  target.
+
+Submitting an already submitted observation is also safe without a key: the
+API returns `200` and its current state. A lost submit response can therefore
+be recovered by submitting that observation again.
+
+The submit `version` is optional. Send the last version read when available;
+the workflow uses its final poll's version. Otherwise omit it and send `{}`
+to submit the current version.
+
+If a create response is lost and its key is unavailable, use the observation
+lookup (§ 11b) before creating another draft. A new process or new `submit`
+invocation does not reuse a previous run's keys.
 
 ## 10. Error model
 
-Every `4xx`/`5xx` on `/public/v1` is problem details:
+API errors use this JSON structure:
 
-```jsonc
-{"code": "open_findings", "message": "…", "hint": "…", "details": {"open_findings": 1}}
+```json
+{"code": "open_findings", "message": "...", "hint": "...", "details": {"open_findings": 1}}
 ```
 
-One exception type carries all of it:
+The base exception exposes these attributes:
 
-| Attribute | |
-|---|---|
-| `code` | the stable contract — **branch on this, never on `message`** |
-| `message` | human-readable, free to change |
-| `hint` | what to do next, when the API knows |
-| `details` | code-specific structured context, `{}` when absent |
-| `status` | the HTTP status, or null when no response arrived |
-| `retry_after` | seconds, from the `Retry-After` header, when present |
+| Attribute | Meaning |
+| --------- | ------- |
+| `code` | Stable error identifier. Use it for program logic, not `message`. |
+| `message` | Human-readable explanation; wording may change. |
+| `hint` | Suggested next step, when available. |
+| `details` | Fields specific to the error, or `{}`. |
+| `status` | HTTP status, or null if no response arrived. |
+| `retry_after` | Delay in seconds from `Retry-After`, when present. |
 
-Rendered as one line: `<code>: <message> (hint: <hint>)`.
+Its string form is `<code>: <message> (hint: <hint>)` when a hint is available.
 
-Subclasses group codes by **category**, so a caller can catch broadly without
-enumerating codes. The categories, and the dispatch order:
+Exception subclasses group errors by category. Match them in this order:
 
 | Category | Matches |
-|---|---|
-| rate-limit | status `429`, or `code == "rate_limited"` |
-| auth | `missing_api_key`, `malformed_api_key`, `unknown_api_key`, `invalid_api_key`, `expired_api_key`, `inactive_user`, `insufficient_scope`, `forbidden` — *decision:* also any `401`/`403`, so an auth code added later still lands here |
-| not-found | `not_found`, or status `404` |
-| conflict | any `409` (`open_findings`, `checks_stale`, `already_processed`, `already_submitted`, …) |
-| request | status `400` or `422` (`validation_error`, `missing_required`, `file_too_large`, `not_dismissable`, `identity_changed`) |
-| transport | no response at all; carries the underlying error |
-| base | anything else, including `5xx` `internal_error` |
+| -------- | ------- |
+| Rate limit | Status `429` or code `rate_limited`. |
+| Authentication | `missing_api_key`, `malformed_api_key`, `unknown_api_key`, `invalid_api_key`, `expired_api_key`, `inactive_user`, `insufficient_scope`, `forbidden`, or any `401`/`403`. |
+| Not found | Code `not_found` or status `404`. |
+| Conflict | Any `409`, including `open_findings`, `checks_stale`, `already_processed` and `already_submitted`. |
+| Request | Status `400` or `422`, including `validation_error`, `missing_required`, `file_too_large`, `not_dismissable` and `identity_changed`. |
+| Transport | No response; preserve the underlying error. |
+| Base | Other errors, including `5xx` `internal_error`. |
 
-**`details` is passed through untouched.** The API puts the observation's
-state on its state refusals — `already_submitted`, `already_processed`,
-`identity_changed`, `checks_stale`, `open_findings` carry `details.status`
-(the derived `draft` / `submitted` / `amended` / `locked`),
-`details.observation_id` and `details.amendment_count`, and
-`identity_changed` adds `details.changed: [{field, stored, parsed}]` — and a
-client exposes it as given, in the exception and in the CLI's `--json` error,
-so a caller can say *which* field the replacement report disagreed on without
-another read. The one addition is a client's: the `observation_id` on any error
-`submit_files` raises after creating the draft (§ 1), when `details` did not
-already carry it.
+Preserve API `details` in both exceptions and CLI JSON errors. State errors
+such as `already_submitted`, `already_processed`, `identity_changed`,
+`checks_stale` and `open_findings` include `status`, `observation_id` and
+`amendment_count`. `identity_changed` also includes
+`changed: [{field, stored, parsed}]`. This lets callers identify the problem
+without another request.
 
-**When the body is not problem details** — a gateway-level `429`, an HTML `5xx`,
-a truncated response — the client synthesizes one rather than raising a parse
-error. *Decision:* `rate_limited` for `429`, `internal_error` for `5xx`,
-`http_error` otherwise, with `details` empty.
+The only client addition is `observation_id` on errors raised by `submit_files`
+after draft creation, if the API did not already provide it (§ 1).
 
-**The codes a client invents.** Everything else comes from the API. They are
-part of this contract too — a port raises the same code for the same situation,
-and the CLI maps each one to an exit code (§ 12):
+If a `4xx` or `5xx` body is not in the expected error format, return a client
+error with empty `details`: `rate_limited` for `429`, `internal_error` for
+`5xx` and `http_error` otherwise. Do not expose a JSON parsing exception.
+
+### Client error codes
+
+Use the same code for the same condition in every language. CLI exit codes are
+specified in § 12.
 
 | `code` | Raised when |
-|---|---|
-| `upload_failed` | S3 refused a presigned POST; `status` and `details.slot` say which |
-| `download_failed` | S3 refused a presigned GET — an expired link answers `403`; also a server-supplied filename that names no file (`""`, `.`, `..` once the directories are stripped), or two files whose names collide (compared case-insensitively), refused before anything is written |
-| `file_exists` | a download would overwrite an existing file and `overwrite` was not asked for |
-| `timeout` | `wait_for_checks` gave up (§ 8) |
-| `ambiguous_files` | two candidates for one slot (§ 11); `details.slot`, `details.candidates` |
-| `missing_files` | the folder has no report or cannot be listed, or an explicit path is not there or cannot be read (a directory, no permission), checked before any request for `submit_files`, `replace_file` and `add_attachment`; `details.missing` names the slots (`attachment` for a bad `--attach`) |
-| `invalid_extension` | an explicit path has the wrong extension for its slot |
-| `not_a_directory` | the folder to submit is not a directory, or a download destination cannot be one because a file is in the way |
-| `not_writable` | a path this client must write cannot be written: a download destination or a file in it (no permission, or a directory has that name), or the config file or its directory; `details.path` |
-| `blocked_attachment` | an attachment has a type the API refuses (§ 11a); `details.files`, `details.blocked_extensions` |
-| `attachment_too_large` | an attachment is over the 50 MB cap (§ 11a); `details.files`, `details.max_size_bytes` |
-| `too_many_attachments` | more than 25 attachments (§ 11a); `details.files`, `details.count`, `details.max_allowed` |
-| `missing_api_key` | nothing configured a key (§ 3) — the auth category |
-| `unknown_profile` | a profile was named and the config file has no such profile |
-| `invalid_config` | the config file is not valid TOML or cannot be read, or a profile name, base URL or key carries something that cannot be stored in it (§ 3); a base URL that is not `https` (§ 4); `IOTA_HUB_BASE_URL` disagreeing with a profile's stored key (§ 3) |
-| `confirmation_required` | a destructive command would have had to prompt, and stdin is not a TTY (§ 13); the `hint` names `--yes` |
-| `aborted` | under `--json`, a person declined or cancelled a prompt (§ 13). Plain output prints `Aborted!` instead; the exit code is the same |
-| `invalid_response` | a `2xx` whose body is not JSON or does not match the operation's schema; `status` is what the API answered, `details.call` is the method and path, and `details.fields` lists the fields in question (up to 10), never their values. Not retried |
-| `usage_error` | the invocation itself was rejected by the argument parser (§ 12) |
+| ------ | ----------- |
+| `upload_failed` | S3 rejects a presigned POST. Includes `status` and `details.slot`. |
+| `download_failed` | S3 rejects a presigned GET, such as an expired link returning `403`. Also used before writing if a filename is empty, `.` or `..` after removing directories, or filenames collide when compared case-insensitively. |
+| `file_exists` | A download would replace an existing file without `overwrite`. |
+| `timeout` | The check wait exceeds its timeout (§ 8). |
+| `ambiguous_files` | Multiple files match one slot. Includes `details.slot` and `details.candidates`. |
+| `missing_files` | A folder has no report or cannot be listed, or an explicit path is missing, unreadable or a directory. Check paths before requests in `submit_files`, `replace_file` and `add_attachment`. `details.missing` lists slots, using `attachment` for an invalid `--attach` path. |
+| `invalid_extension` | An explicit file has the wrong extension for its slot. |
+| `not_a_directory` | The submission folder is not a directory, or a file blocks the download destination directory. |
+| `not_writable` | The client cannot write a download or config path because of permissions or a conflicting directory. Includes `details.path`. |
+| `blocked_attachment` | An attachment has a blocked extension (§ 11a). Includes `details.files` and `details.blocked_extensions`. |
+| `attachment_too_large` | An attachment exceeds 50 MB. Includes `details.files` and `details.max_size_bytes`. |
+| `too_many_attachments` | More than 25 attachments were selected. Includes `details.files`, `details.count` and `details.max_allowed`. |
+| `missing_api_key` | No key is configured. Uses the authentication category. |
+| `unknown_profile` | The explicitly selected profile does not exist. |
+| `invalid_config` | Unreadable or invalid TOML, unsupported characters in saved settings, a URL that fails § 4's HTTPS rule, or an environment URL that conflicts with a profile's key (§ 3). |
+| `confirmation_required` | A destructive command needs confirmation but stdin is not a terminal. The hint names `--yes`. |
+| `aborted` | A prompt was declined or cancelled in JSON mode. Plain mode prints `Aborted!`; both use exit `1`. |
+| `invalid_response` | A `2xx` response is not JSON or does not match the operation's schema. Includes `status`, the method and path in `details.call`, and up to 10 field names in `details.fields`, without their values. Do not retry. |
+| `usage_error` | The argument parser rejects the invocation. |
 
-`already_submitted` is no longer one of them: `drafts submit` on a submitted
-observation is a success (§ 12). The code still comes from the API, on
-`DELETE /observations/{id}` — a submitted observation is never deleted.
+Submitting an already submitted observation succeeds. `already_submitted` can
+still come from the API when attempting to delete a submitted observation.
 
-Every one of them carries a `hint` naming the way out — the flag to pass, the
-command to run — because these are the errors a person or an agent hits first.
+Client errors must include a useful `hint`, such as the flag or command needed
+to resolve the problem.
 
 ## 11. Folder → slot mapping
 
-Copied from design § 8.3. `DIR` defaults to the current directory. The observer
-naming convention (`YYYYMMDD_<number>_<name>_<lastname>_POS|NEG[-X]`,
-`/data-submission` § 2) already carries enough signal; **no LLM classification.**
+`DIR` defaults to the current directory. Select files using these filename and
+extension rules, without inspecting their contents:
 
 | Slot | Rule | Flag |
-|---|---|---|
-| `report` | exactly one `.xlsx` / `.xls` / `.json` | `--report` |
-| `lightcurve` | at most one `.csv` | `--lightcurve` |
-| `log` | at most one `.txt` whose name contains `log` (case-insensitive) | `--log` |
-| `vizier` | at most one `.dat` | `--vizier` |
-| `aperture_record` | at most one `.lc` / `.pymovie` | `--aperture-record` |
+| ---- | ---- | ---- |
+| `report` | Exactly one `.xlsx`, `.xls` or `.json` | `--report` |
+| `lightcurve` | At most one `.csv` | `--lightcurve` |
+| `log` | At most one `.txt` with `log` in its name, case-insensitive | `--log` |
+| `vizier` | At most one `.dat` | `--vizier` |
+| `aperture_record` | At most one `.lc` or `.pymovie` | `--aperture-record` |
 
-Only `report` is required at this stage. `lightcurve` and `log` depend on the
-result: POS and UNSURE need them, NEG does not. A client cannot know the result
-until the server has read the report, so it does not check them; the server
-reports them in `readiness.missing_required`. `vizier` and `aperture_record` are
-optional, and never reported as missing.
+Only the report is required before upload. POS and UNSURE observations also
+need a light curve and log; NEG observations do not. The server determines the
+result from the report and lists missing files in `readiness.missing_required`.
+`vizier` and `aperture_record` are optional.
 
-- **The report has two formats**, and the slot takes exactly one of them: the
-  NA spreadsheet (`.xlsx`/`.xls`, still the primary report) or a Tangra JSON
-  report (`.json`, Hristo Pavlov's `reportData` + `optionalData` format). A
-  folder holding a spreadsheet *and* a `.json` is `ambiguous_files` — so is a
-  stray `.json` of any other kind; name the report with `--report`. The
-  server parses either one; the client never opens it.
-- **The aperture record** is the per-frame data behind the light curve: a
-  Tangra `.lc` or a PyMovie `.pymovie`. It has its own optional slot (the API
-  spec § 4, `file-handling.md` in the API repository), so it is **not** an
-  attachment and is not under the attachment limits of § 11a — its own ceiling
-  is the server's (500 MB). Two of them is `ambiguous_files`. The server checks
-  a `.pymovie`'s signature; the client checks only the extension.
-- *Decision:* the slot's flag is the slot name with `_` spelled `-`
-  (`--aperture-record`), and every mapping error names it that way.
+### Reports and aperture records
 
-- The listing is **non-recursive**, and skips subdirectories and dotfiles.
-  Extensions match case-insensitively (`.CSV` is a light curve).
-- **Never guess.** Two candidates for one slot, or no report, is
-  an error that names the file(s) and the explicit flag to resolve it
-  (`--lightcurve PATH`): `ambiguous_files` (with `details.slot` and
-  `details.candidates`) or `missing_files` (with `details.missing`).
-- Explicit flags override the rules for that slot, and are checked for the
-  slot's **extension** only (`invalid_extension` otherwise). *Decision:* the
-  "contains `log`" part is the client's own disambiguator between two `.txt`
-  files in a folder, not a server rule — the public API takes any `.txt`
-  declared in the `log` slot — so `--log notes.txt` is accepted. That is how a
-  non-PyOTE log gets in (a Tangra fit log, an AOTA export): the folder rule
-  only auto-maps a name containing `log`, and `--log PATH` takes any `.txt`.
-- Anything else — `_notes.txt`, `.png`, a second CSV's companions — is an
-  **attachment** (§ 11a), in filename order (by codepoint,
-  so the same on every platform). `--no-attachments`
-  (library: `attachments=False`) leaves them out; they are then reported as
-  `ignored` ("not uploaded"). `--attach PATH` (repeatable; library: `attach=`)
-  adds a file from anywhere, with or without `--no-attachments`; a path already
-  mapped or already attached is not added twice.
-- One observation per directory in v1. A folder with several stations
-  (`_POS-1`, `_POS-2`) is the two-reports error, and a documented follow-up.
+A report is an NA spreadsheet (`.xlsx`/`.xls`, the primary format) or a Tangra
+JSON report (`.json`, using `reportData` and `optionalData`). A spreadsheet and
+any JSON file in the same folder count as two report candidates, even if the
+JSON is unrelated. Require `--report` to select one. The server parses the
+report; the client does not.
+
+An aperture record contains the per-frame data behind the light curve: a
+Tangra `.lc` or PyMovie `.pymovie` file. It has a separate, optional slot with
+a server-enforced 500 MB limit. Attachment limits do not apply. The server
+checks the `.pymovie` signature; the client checks its extension.
+
+### Selection rules
+
+- Read only the selected directory. Skip subdirectories and dotfiles.
+- Match extensions case-insensitively.
+- Multiple candidates for a slot raise `ambiguous_files`, with `details.slot`
+  and `details.candidates`. A missing report raises `missing_files`, with
+  `details.missing`. Name the appropriate override flag in the error.
+- Spell flags with hyphens in place of underscores, including
+  `--aperture-record`.
+- Explicit paths override automatic selection for that slot. Validate the
+  extension, raising `invalid_extension` if it is wrong. `--log` accepts any
+  `.txt` filename, including Tangra fit logs and AOTA exports; the filename
+  only needs `log` for automatic selection.
+- Upload remaining files as attachments, sorted by filename codepoint for
+  consistent ordering across platforms.
+- `--no-attachments` (library: `attachments=False`) excludes those extra files
+  and reports them as `ignored`, displayed as "not uploaded".
+- Repeated `--attach PATH` (library: `attach=`) adds files from any location,
+  even with `--no-attachments`. Do not add a path twice if it is already mapped
+  to a slot or included as an attachment.
+- Support one observation per directory. Folders containing several stations
+  (`_POS-1`, `_POS-2`) are not supported; multiple reports cause a selection
+  error. Use a separate folder for each station.
+
+The [observer naming convention](https://iota-hub.com/data-submission) describes
+how to name observation folders and files.
 
 ## 11a. Attachments
 
-The API's attachment rules (`specs/public-api.md` § 4.3) are mirrored as
-constants and **checked client-side before any request**, so a folder the API
-would refuse fails whole, with nothing created:
+Check attachment limits before sending any request. If a limit fails, create
+no draft and report all affected files.
 
 | Rule | Value | Code (usage, exit `2`) | `details` |
 |---|---|---|---|
@@ -566,226 +582,221 @@ would refuse fails whole, with nothing created:
 | Per-file size | 50 MB (`52428800` bytes) | `attachment_too_large` | `files`, `max_size_bytes` |
 | Per-observation count | 25 | `too_many_attachments` | `files`, `count`, `max_allowed` |
 
-Each error names **every** offending file and suggests `--no-attachments`. The
-server enforces the same three and has the last word; if the constants drift,
-its `422` is what the caller sees (exit `1`).
+Each error suggests `--no-attachments`. The server also enforces these limits.
+If its rules differ from the client's constants, report the server's `422`
+response (exit `1`).
 
-- Declared as `{slot: "attachment", filename, size, sha256}` after the fixed
-  slots. The create response carries one target per declared file, in declared
-  order; attachment targets are paired with the attachment paths **by
-  position**, and each carries its `attachment_id`.
-- An attachment target that fails to upload is re-initialized once through
-  `attachments/upload/init`, uploaded, committed with
-  `attachments/upload/finalize`, and the old declaration is removed with
-  `DELETE …/attachments/{old attachment_id}` — otherwise the collapsed finalize
-  would keep answering `409 upload_missing` for it (§ 6).
-- Fix loop: `drafts files add ID attachment PATH` adds one (blocklist and size
-  checked first; the count is the server's, since it depends on what the draft
-  holds), `drafts files rm ID attachment ATTACHMENT_ID` removes one. The ids are
-  on the observation's `attachments[]` and in `drafts show`.
+Declare attachments as `{slot: "attachment", filename, size, sha256}` after the
+fixed file slots. The create response returns one upload target per file in
+the same order. Match attachment targets to paths by position; each target
+includes its `attachment_id`.
+
+If an attachment upload fails, request a new target once through
+`attachments/upload/init`, upload it and call `attachments/upload/finalize`.
+Delete the old declaration through `DELETE …/attachments/{old attachment_id}`.
+Otherwise draft finalization would continue returning `409 upload_missing`.
+
+`drafts files add ID attachment PATH` adds an attachment. Check its extension
+and size locally; the server checks the total count because it knows the
+observation's existing attachments. `drafts files rm ID attachment ATTACHMENT_ID`
+removes one. IDs appear in `attachments[]` and `drafts show`.
 
 ## 11b. Check and amend
 
-**Check** — `check_observation(asteroid_name, star_id, observed_date, *,
-asteroid_id, star_catalog, station)` in the transport, `POST
-/observations/check` (scope `read`, the read limiter tier); `iota-hub
-observations check --asteroid-name … --star-id … --date YYYY-MM-DD
-[--asteroid-id …] [--star-catalog …] [--station …]` on the CLI. It answers
-"do I already have this observation?" from what it observed:
+### Find an existing observation
+
+The transport method is
+`check_observation(asteroid_name, star_id, observed_date, *, asteroid_id,
+star_catalog, station)`. It calls `POST /observations/check`, which uses the
+`read` scope and read rate limit. The CLI equivalent is:
+
+```text
+iota-hub observations check --asteroid-name <name> --star-id <star> --date YYYY-MM-DD [--asteroid-id <number>] [--star-catalog <catalog>] [--station <station>]
+```
 
 | `found` | Meaning |
-|---|---|
-| `observation` | the caller's **own** draft or submission with this identity (the newest), with its `status`, `amendment_count` and `web_url`; `event` is its attached event, if any |
-| `event` | none of the caller's, but the event (asteroid + star + date) exists: its id and status only |
-| `none` | neither |
+| ------- | ------- |
+| `observation` | The caller's newest matching draft or submission, with `status`, `amendment_count` and `web_url`. `event` contains its linked event, if any. |
+| `event` | No observation belongs to the caller, but the event matches the asteroid, star and date. Returns only the event ID and status. |
+| `none` | No matching observation or event was found. |
 
-Never another observer's observation. Without `asteroid_id` there is no event
-lookup (events are keyed by number). `station` absent, null and `""` are the
-same station. *Decision:* the command exits `0` whatever it finds — it
-reports, it does not act (§ 12) — and a found draft prints `iota-hub drafts
-show <id>` as its next command. `submit` does **not** call it on its own: a
-retried `submit` with an `Idempotency-Key` is already safe, and the client
-does not read the report to learn its identity. A caller that may be re-running
-after a lost create (a crashed script) runs `observations check` first.
+Never return another observer's observation. Without `asteroid_id`, skip event
+lookup because events are keyed by asteroid number. An absent, null or empty
+`station` refers to the same station.
 
-**Amend** — there is no amend call. On a **submitted** observation, the owner
-replacing a file in a fixed slot (`replace_file`, `drafts files add ID SLOT
-PATH`) *is* the amendment (API spec § 4.5). The observation then reads
-`status: "amended"` with `amendment_count` and `amended_at`; no check run
-starts. Three refusals a client surfaces as they come:
+A successful lookup exits `0` for all three results. If it finds a draft, print
+`iota-hub drafts show <id>` as the next command.
 
-| Refusal | When | Category | Exit |
-|---|---|---|---|
-| `422 identity_changed` | the replacement report describes a different observation; `details.changed` lists the fields, nothing was committed | request | `2` |
-| `409 already_processed` | the event is `IN_REVIEW` or later: the owner can no longer change files | conflict | `1` |
-| `403 forbidden` | clearing a fixed slot (`drafts files rm`) on a submitted observation — the owner never can | auth | `3` |
+`submit` does not perform this lookup: it does not parse the report's identity,
+and its internal retries use idempotency keys. After a crash or lost create
+response, the caller should check before starting another `submit` command.
 
-*Decision:* `identity_changed` is **usage**, `2`. Nothing is wrong with the
-observation or the server: the file the caller named is the wrong one for it —
-the same kind of mistake as `invalid_extension` — and the fix is a different
-invocation (the corrected report), never a retry or a wait. `already_processed`
-is a plain error, `1`: no invocation fixes it, a coordinator does. The derived
-`status` (`draft` / `submitted` / `amended` / `locked`) is an open set like
-every status here; `locked` describes the *owner's* ability, so a
-coordinator's key may still change a `locked` observation.
+### Amend a submitted observation
 
-**`web_url`** is on every observation: the draft editor for a draft, the
-observation page otherwise. The CLI prints it (`Web:`) whenever `submit`
-leaves a draft (`needs_attention`, `ready` or `draft`), so a person can review
-or finish it in the browser, and
-`submit --json` carries it at the top level.
+There is no separate amend operation. Replacing a fixed-slot file as the owner
+with `replace_file` or `drafts files add ID SLOT PATH` marks a submitted
+observation as `amended`, with `amendment_count` and `amended_at`. It does not
+start a check run.
+
+| Error | Reason | Category | Exit |
+| ----- | ------ | -------- | ---- |
+| `422 identity_changed` | The replacement report describes a different observation. `details.changed` lists the fields; the original is unchanged. | Request | `2` |
+| `409 already_processed` | The event is `IN_REVIEW` or later, so the owner can no longer change files. | Conflict | `1` |
+| `403 forbidden` | The owner tried to clear a fixed slot in a submitted observation with `drafts files rm`. | Authentication | `3` |
+
+`identity_changed` requires a corrected report, not a retry or wait.
+`already_processed` requires a coordinator's help. Treat the derived `status`
+as an open set: currently `draft`, `submitted`, `amended` and `locked`.
+`locked` describes the owner's access; a coordinator may still change files.
+
+Every observation includes `web_url`: the draft editor for drafts and the
+observation page otherwise. Print `Web:` when `submit` returns `needs_attention`,
+`ready` or `draft`, and include `web_url` at the top level of `submit --json`.
 
 ## 12. CLI exit codes
 
-Scripts and agents branch on these.
-
 | Code | Meaning | Typical cause |
-|---|---|---|
-| `0` | success | |
-| `1` | error | any other failure, including `5xx` and transport failures |
-| `2` | usage | bad flags, missing argument, ambiguous slot mapping, a replacement report for another observation (`identity_changed`) |
-| `3` | auth | the auth category of § 10 |
-| `4` | open findings / not ready | `open_findings`, `missing_required`, `checks_stale`, `event_files_conflict`, or a wait that timed out short of `ready` |
-| `5` | rate limited | the rate-limit category, after retries are exhausted |
+| ---- | ------- | ------------- |
+| `0` | Success | Includes `ready` and `draft` outcomes requested by the caller. |
+| `1` | Other error | Server errors, network failures or unclassified errors. |
+| `2` | Usage | Invalid arguments or files, ambiguous file selection, or `identity_changed`. |
+| `3` | Authentication | Authentication category from § 10. |
+| `4` | Not ready | `open_findings`, `missing_required`, `checks_stale`, `event_files_conflict` or a check timeout. |
+| `5` | Rate limited | Rate-limit category after retries are exhausted. |
 
-The client-invented codes of § 10 map on: the mapping errors
-(`ambiguous_files`, `missing_files`, `invalid_extension`, `not_a_directory`,
-and the attachment rules `blocked_attachment`, `attachment_too_large`,
-`too_many_attachments`) and `unknown_profile`, `confirmation_required` and
-`not_writable` are **usage**, `2`;
-`missing_api_key` is **auth**, `3`; of the API's own codes, `identity_changed`
-is **usage**, `2` (§ 11b), and `already_processed` and `already_submitted` are
-plain conflicts, `1`;
-`timeout`, and an `outcome` of `needs_attention`, are **not ready**, `4`;
-`upload_failed`, `download_failed`, `file_exists`, `invalid_config`, `aborted`
-and `invalid_response` are plain errors, `1`. An `outcome` of `ready` or `draft` is a success the caller
-asked for, so `0`.
+Use these mappings for specific codes:
 
-One function decides all of it, and one handler wraps every command — a code
-that *names* the situation is checked before the exception's category, so a
-`422 missing_required` is `4` while `missing_api_key` stays `3`.
+| Exit | Codes or outcomes |
+| ---- | ----------------- |
+| `1` | `upload_failed`, `download_failed`, `file_exists`, `invalid_config`, `aborted`, `invalid_response`, `already_processed`, `already_submitted` |
+| `2` | `usage_error`, `ambiguous_files`, `missing_files`, `invalid_extension`, `not_a_directory`, `not_writable`, `blocked_attachment`, `attachment_too_large`, `too_many_attachments`, `unknown_profile`, `confirmation_required`, `identity_changed` |
+| `3` | `missing_api_key` |
+| `4` | `timeout`, outcome `needs_attention` |
 
-**A bad invocation is the argument parser's, and it is `2`.** *Decision:* under
-`--json` it is reported like every other failure — the problem-details object of
-§ 13 with `code` `usage_error`, the parser's own message, and the hint `Run the
-command with --help.` — so an agent never has to switch parsers between a
-rejected command and a rejected request. Without `--json` the parser prints its
-usual usage line.
+Use one mapping function and a shared error handler for all commands. Check
+specific codes before exception categories: for example, `422 missing_required`
+is exit `4`, while `missing_api_key` remains exit `3`.
 
-**Only the commands that act fail on "not ready".** *Decision:* `submit` and
-`drafts submit` exit `4` when the draft is not ready, because they were asked
-to submit it and did not. The commands that only *report* — `drafts show`,
-`drafts check`, `observations show`, `auth status` — exit `0` and print what
-they found, exactly as `auth status` reports an invalid key without failing.
-A caller that wants the verdict reads `readiness.state`, or runs the command
-that acts.
+In JSON mode, argument parser errors return `usage_error`, the parser's message,
+the hint `Run the command with --help.` and exit `2`. Without JSON mode, use the
+parser's normal usage output.
 
-**`drafts submit` decides the refusal locally.** It reads the observation
-first (to echo the `version` it saw, § 9), so when that read says the draft is
-not ready it raises the same `code` the API's own refusal carries —
-`missing_required`, `event_files_conflict`, `open_findings`, else
-`checks_stale`, in that order — rather than spending a write that is certain to
-be rejected. One contract either way. *Decision:* an observation the read says
-is already submitted is **success**, exit `0`: the command prints it as read —
-exactly the `200` the API's own submit would answer (§ 9) — and makes no
-write. It is checked first, because a submitted observation has no readiness
-to reason about and would otherwise be reported as `checks_stale`.
+### Commands that report status
 
-**`check` joins the run that is already under way.** *Decision:* `409
-check_run_in_progress` is not a failure of the command that asked for a check
-run — the run it wanted exists — so the client falls through to the wait
-instead of exiting `1`, which is what the API's own hint says to do. With
-`--no-wait` it says on stderr that a run is already under way and exits `0`.
+`submit` and `drafts submit` exit `4` when the draft is not ready.
+Reporting commands such as `drafts show`, `drafts check`, `observations show`
+and `auth status` return `0` when they successfully report a result, even if it
+shows an unready draft or an invalid key. Callers must inspect `readiness.state`
+or the reported authentication check. Request failures still use the error
+mapping above.
+
+### Submit an existing draft
+
+`drafts submit` first reads the observation and its `version`.
+
+- If it is already submitted, return it with exit `0` without sending a write.
+  Check this before readiness, which submitted observations do not have.
+- If it is not ready, raise the applicable code in this order:
+  `missing_required`, `event_files_conflict`, `open_findings`, then
+  `checks_stale`. This matches the API's refusal without sending a request
+  that would fail.
+- Otherwise submit with the version just read.
+
+### Check an existing draft
+
+For `drafts check`, `409 check_run_in_progress` means a run already exists.
+Wait for that run instead of failing. With `--no-wait`, report the existing run
+on stderr and exit `0`.
 
 ## 13. Output
 
-- Human output by default on a TTY; `--json` on **every** command.
-- Data on **stdout**, progress and logs on **stderr**. A prompt is not data
-  either: the hidden key prompt and every confirmation are written to
-  **stderr**, so `--json` and a redirected stdout stay clean.
-- `--json`, and the options that pick a target (`--profile`, `--base-url`), are
-  accepted **before the subcommand and after it** — `iota-hub submit --json` is
-  the natural form and the one the docs show. *Decision:* a value given after
-  the subcommand wins over the same option given before it, being the more
-  specific of the two.
-- With `--json`: exactly **one JSON document on stdout and nothing else**. Errors
-  are JSON too, on **stderr**, in the API's problem-details shape plus the
-  transport facts of § 10 and `exit_code`:
-  `{"code": "...", "message": "...", "hint": "...", "details": {}, "status": 409, "retry_after": null, "exit_code": 4}`.
-  `status` is the HTTP status, or `null` when no response arrived; `retry_after`
-  is the `Retry-After` wait in seconds, or `null` when the response carried
-  none. Both are always present, so a reader never has to test for the key.
-  *Decision:* the error document is **all** a failed run prints on stderr, so
-  `json.loads(stderr)` always works. Whether a run fails is not known until it
-  ends, so under `--json` the `Target:` line, progress and warning lines are held
-  back: printed on stderr when the run succeeds (exit `4` on `needs_attention`
-  included, since stdout carries the document), dropped when it fails. The cost is
-  no live progress under `--json`. The one thing that can precede the document is
-  a prompt the terminal already showed (a prompt is written to stderr, above):
-  a person who answers one with `n` is at a terminal, not parsing it. That
-  refusal is `aborted`, not `confirmation_required`: a prompt *was* possible, and
-  `aborted` keeps the exit code `1` it has without `--json`.
-- **Plain and styled.** The plain text is the contract: what a pipe, a file,
-  an agent or a test sees, and what every rule in this section describes.
-  *Decision (2026-10-31):* on a terminal the same facts may be **styled** --
-  color, bold/dim, blank lines between sections, prose wrapped to the terminal
-  (at most 100 columns), and findings that share a check, code and fix grouped
-  under one fix with their fingerprints joined. A stream is styled only when it
-  is a TTY, `NO_COLOR` is unset and the run is not `--json`; styling never
-  adds, drops or reorders facts a reader needs, so nothing may branch on it.
-  Only prose wraps. Table rows, file rows, field values, commands and progress
-  lines go out as one unbroken line each and the terminal wraps them, so a
-  widened window reflows them and an id, URL or command stays copyable.
-- Output must survive a non-UTF-8 Windows console. Plain output is ASCII apart
-  from what the server's own strings carry. Styled output may use a few glyphs
-  (`✓`, `✗`, `›`) only when the stream's encoding is UTF-8, and prints ASCII
-  stand-ins (`ok`, `x`, `>`) otherwise -- so a legacy console keeps the color
-  and loses nothing it cannot print.
-- A progress line identical to the one before it is printed once (each poll
-  says "Waiting for checks...").
-- Never prompt when stdin is not a TTY; destructive commands take `--yes`, and
-  refuse with `confirmation_required` without it. `auth login` replacing a key is
-  the one exception (§ 3): its stdin is the key.
-- Human output prints the literal next command for each `next_actions` verb, so
-  neither a person nor an agent has to translate. The mapping is the library's
-  (`next_actions_commands`, § 1), not the CLI's:
+### Streams and JSON
 
-  | Verb | Printed as |
-  |---|---|
-  | `upload:<slot>` | `iota-hub drafts files add <id> <slot> <path>` |
-  | `run_checks` | `iota-hub drafts check <id>` |
-  | `poll` | `iota-hub drafts show <id>` |
-  | `submit` | `iota-hub drafts submit <id>` |
-  | `dismiss_or_fix` | one `iota-hub drafts dismiss <id> <fingerprint> --note "…"` per **open** finding, then the `files add` alternative — fixing the file is the other way out |
-  | `confirm_asteroid_id` | `iota-hub drafts confirm-asteroid <id>` (`PATCH` with `confirm_unnumbered_asteroid_id`, § 8a) |
-  | `resolve_event_files_conflict` | a sentence saying to finish it in the web app: *decision*, because the public API has no verb for it (API spec § 5) |
-  | anything else | `<verb>: see iota-hub guide` — a verb a client does not know is never silently dropped |
-- Errors print the API's `code` and `hint`, as
-  `error: <code>: <message>` then `hint: <hint>`, both on stderr, plus
-  `details: <one line of JSON>` when `details` is not empty (a hint may point
-  at it, so plain output must not hide it) and `retry after <n> s` when the
-  response carried a `Retry-After`.
-- Dates are printed as the API gives them. No local-time conversion: an
-  observation's `observed_at_utc` is UTC and stays readable as UTC.
-- Tables are simple aligned columns — no box drawing and no emoji, styled or
-  not, so a non-UTF-8 console and a `grep`/`awk` pipeline both survive them.
+- Use human-readable output by default. Every command accepts `--json`.
+- Put results on stdout and progress, logs and prompts on stderr. This includes
+  the hidden key prompt and confirmations.
+- Accept `--json`, `--profile` and `--base-url` before or after the subcommand.
+  If an option appears in both places, the value after the subcommand wins.
+- In JSON mode, return one JSON document on stdout. On error, leave stdout
+  empty and write the error object to stderr:
 
-**The `--json` document, per command.** *Decision:* the design fixed only
-`submit --json`; the rest follow one rule — a command that answers with **one
-resource** prints that resource's model as the API returned it, and a command
-that answers with **a page** prints `{"items": [...], "next_cursor": ...}`. The
-shapes are part of semver (a major bump to change one):
+  ```json
+  {"code": "...", "message": "...", "hint": "...", "details": {}, "status": 409, "retry_after": null, "exit_code": 4}
+  ```
+
+Always include `status` and `retry_after`. `status` is null if no response
+arrived; `retry_after` is the header's delay in seconds, or null if absent.
+
+Buffer target, progress, warning and other notice lines in JSON mode. Print
+them on stderr when returning a result, including a `needs_attention` result
+with exit `4`. Discard them on error so stderr contains only the error JSON.
+This means JSON mode does not provide live progress.
+
+A terminal prompt may precede the error document because it has already been
+shown. A declined or cancelled prompt raises `aborted` with exit `1`, matching
+plain mode. It is not `confirmation_required`, which means prompting was
+unavailable.
+
+### Plain and styled output
+
+Plain output defines which facts are displayed and their order. Style a stream
+only if it is a terminal, `NO_COLOR` is unset and JSON mode is off. Styling may
+add color, bold or dim text, and section spacing, but must not change the facts
+or their order.
+
+Wrap prose to the terminal width, capped at 100 columns. Do not insert line
+breaks into table rows, file rows, field values, commands or progress lines;
+let the terminal wrap them. Findings with the same check, code and fix may be
+grouped under one fix, with their fingerprints listed together.
+
+Plain labels use ASCII; server-provided strings may contain other characters.
+Styled output may use `✓`, `✗` and `›` only on UTF-8 streams. Use `ok`, `x`
+and `>` otherwise. Tables use aligned columns without box drawing or emoji.
+
+Suppress consecutive duplicate progress lines. Never prompt without a terminal
+on stdin. Destructive commands require `--yes` in that case, or raise
+`confirmation_required`. Piped input to `auth login` is the exception because
+stdin supplies the replacement key (§ 3).
+
+### Suggested commands and errors
+
+Use the library's `next_actions_commands` to display commands for API actions:
+
+| Verb | Printed as |
+| ---- | ---------- |
+| `upload:<slot>` | `iota-hub drafts files add <id> <slot> <path>` |
+| `run_checks` | `iota-hub drafts check <id>` |
+| `poll` | `iota-hub drafts show <id>` |
+| `submit` | `iota-hub drafts submit <id>` |
+| `dismiss_or_fix` | One `iota-hub drafts dismiss <id> <fingerprint> --note "..."` per open finding, followed by the `files add` command as an alternative. |
+| `confirm_asteroid_id` | `iota-hub drafts confirm-asteroid <id>` (§ 8a). |
+| `resolve_event_files_conflict` | Instructions to finish in the web app; the public API has no operation for resolving this conflict. |
+| Unknown verb | `<verb>: see iota-hub guide`. Display it without attempting an action. |
+
+Display errors on stderr as `error: <code>: <message>`, followed by
+`hint: <hint>` when available. Include `details: <one line of JSON>` when
+nonempty, and `retry after <n> s` when the response includes `Retry-After`.
+
+Print dates as returned by the API, without converting to local time.
+`observed_at_utc` stays in UTC.
+
+### JSON results by command
+
+A command returning one resource prints its model. A command returning one
+page prints `{"items": [...], "next_cursor": ...}`, with the exceptions listed
+below. These structures are part of the versioning contract: changing them
+requires a major version bump.
 
 | Command | Document |
 |---|---|
-| `submit` | `{observation_id, outcome, submitted, uploads: {slot: filename}, attachments: [filename], ignored: [filename], next_commands: [...], skipped_checks: [{check_number, code, name, status, reason}], owc_commands: [...], web_url, observation: {...}}` — the attachment ids are on `observation.attachments[]`; `skipped_checks` and `owc_commands` are § 8a's, from the draft as the checks left it |
-| `submit --dry-run` | `{target, directory, uploads: [{slot, filename, path, size}], attachments: [{filename, path, size}], ignored: [filename]}` — and no request is sent, so it needs no key; the attachment rules are checked, so a folder `submit` would refuse fails here too |
-| `drafts show`, `drafts check`, `drafts files add`, `drafts files rm`, `drafts owc`, `drafts confirm-asteroid`, `drafts comment`, `drafts submit`, `observations show` | the `PublicObservation` |
-| `drafts dismiss` | the `PublicChecks` the dismissal returned |
-| `observations check` | the `PublicCheckResponse`: `{found, observation: {observation_id, status, amendment_count, web_url} \| null, event: {event_id, status} \| null}` |
-| `events show` | the `PublicEvent` |
-| `drafts list` | `{items: [...]}` — it follows the cursor itself (the open-draft cap is 100), so there is no `next_cursor` to report |
-| `observations list`, `events list` | `{items: [...], next_cursor}`; with `--all` the cursor is followed and `next_cursor` is `null` |
+| `submit` | `{observation_id, outcome, submitted, uploads: {slot: filename}, attachments: [filename], ignored: [filename], next_commands: [...], skipped_checks: [{check_number, code, name, status, reason}], owc_commands: [...], web_url, observation: {...}}`. Attachment IDs are in `observation.attachments[]`. Capture `skipped_checks` and `owc_commands` before submission (§ 8a). |
+| `submit --dry-run` | `{target, directory, uploads: [{slot, filename, path, size}], attachments: [{filename, path, size}], ignored: [filename]}`. No requests or key required. Attachment validation still applies. |
+| `drafts show`, `drafts check`, `drafts files add`, `drafts files rm`, `drafts owc`, `drafts confirm-asteroid`, `drafts comment`, `drafts submit`, `observations show` | `PublicObservation` |
+| `drafts dismiss` | `PublicChecks` returned by the dismissal |
+| `observations check` | `PublicCheckResponse`: `{found, observation: {observation_id, status, amendment_count, web_url} \| null, event: {event_id, status} \| null}` |
+| `events show` | `PublicEvent` |
+| `drafts list` | `{items: [...]}`. Follows all pages; no `next_cursor` is returned. The open-draft limit is 100. |
+| `observations list`, `events list` | `{items: [...], next_cursor}`. With `--all`, follows all pages and returns `next_cursor: null`. |
 | `auth login` | `{profile, base_url, key_prefix, config_file, replaced}` |
 | `auth status` | `{profile, base_url, key_prefix, key_source, config_file, check}` |
 | `auth logout` | `{profile, deleted, config_file}` |
@@ -793,57 +804,63 @@ shapes are part of semver (a major bump to change one):
 | `files download` | `{files: [path]}` |
 | `guide` | `{guide: "<the markdown>"}` |
 
-A key never appears in any of them — the most any document carries is
-`key_prefix` (§ 3).
+Never include a secret key. Authentication output may include `key_prefix`.
 
-**`--dry-run` reads like the real run.** *Decision (2026-10-31, supersedes
-"prints its target on stdout"):* its human output is the `submit` layout with
-nothing sent -- the same `Target:` line on stderr, the same fields
-(`Directory`, `Outcome: dry run, nothing sent`) and the same `Files` section
-(`<slot>  <filename>  (<size>)`, the size in B/KB/MB as the web app shows it) that `submit` and the observation view
-print, so a dry run and a real run can be compared line by line. Unlike other
-commands it announces the target **even when it is the production default**,
-since saying where a real run would go is its job. The `--json` document still
-carries `target`.
+### Dry runs
 
-**One way to say what was observed.** *Decision (2026-10-31):* every human
-view that names an observation's or an event's identity prints the same
-fields the same way: `Observer`, `Asteroid` as `(<number>) <name>` (the web
-app's form), `Star` as `<catalog> <id>` (missing parts dropped, `-` when
-nothing is known), then
-`Observed` for an observation or `Date` for an event (an event's date window
-is not an observation time). That covers `submit`, `drafts show|check|submit`,
-`observations show` and `events show`, and the ASTEROID and STAR columns of
-`observations list` and `events list`. `observations check` reads as an
-answer: `Found: yes, one of yours`, `no, but the event exists` or `no`, with
-the event as `Event` and `Event status` rather than one combined line. Human
-wording only; the `--json` `found` values are unchanged.
+Use the same fields and file layout as a real submission:
+
+- `Target: <base URL>` on stderr, even for production.
+- `Directory` and `Outcome: dry run, nothing sent`.
+- A `Files` section with `<slot>  <filename>  (<size>)`, using B/KB/MB as in
+  the web app.
+
+The JSON result includes `target`. Send no requests and require no key, but
+apply the same attachment checks as a real submission.
+
+### Observation and event identities
+
+Use the same identity fields throughout human output:
+
+- `Observer`.
+- `Asteroid`: `(<number>) <name>`.
+- `Star`: `<catalog> <id>`, omitting missing parts or using `-` if both are absent.
+- `Observed` for an observation's time; `Date` for an event's date window.
+
+Apply this to `submit`, `drafts show|check|submit`, `observations show` and
+`events show`, and to the ASTEROID and STAR columns in observation and event
+lists.
+
+For `observations check`, print `Found: yes, one of yours`, `Found: no, but the
+event exists` or `Found: no`. Show `Event` and `Event status` separately.
+The JSON `found` values remain unchanged.
 
 ## 14. The shared fixture folder
 
-`tests/fixtures/observation/` holds one synthetic, submittable observation,
-named to the observer convention:
+`tests/fixtures/observation/` contains a synthetic observation with these files:
 
-```
+```text
 20180305_9721_Doty_Observer_POS.xlsx            report
 20180305_9721_Doty_Observer_POS.csv             lightcurve
 20180305_9721_Doty_Observer_POS_pyote_log.txt   log
 ```
 
-It exercises the required half of the mapping table (three of five slots, the
-`log` rule, no `.dat`, no aperture record), and it is what the dev smoke test submits and then deletes. Every
-client repo ships the same folder, so a port's tests compare against the same
-bytes.
+It tests selection of the three files required for a positive observation,
+including the `log` filename rule, without a VizieR or aperture record file.
+Development smoke tests submit and delete it. Ship the same fixture in every
+client repository so tests use the same input.
 
-`tests/fixtures/clean-observation/` (`20260926_33777_1999RM158_Observer_POS.{xlsx,csv}`
-+ `_pyote_log.txt`) is the *clean* counterpart: a PyMovie light curve, the PyOTE log
-solved from it, and a report copied from the log, all mutually consistent for the real
-event (33777) 1999 RM158 / UCAC4 326-152286 on 2026-09-26 (it auto-matches OWC event
-`2094-33777-995661-234407-U152286`), so `iota-hub submit … --draft` against dev comes back
-`ready` with no open findings and no skipped checks. The station prediction for check 11
-comes from the light curve's Astrid `#OCCULTATION-PREDICTED-CENTER-TIME` key, so the report
-still carries no coordinates.
+`tests/fixtures/clean-observation/` contains the corresponding valid submission
+fixture: `20260926_33777_1999RM158_Observer_POS.{xlsx,csv}` and
+`_pyote_log.txt`. Its PyMovie light curve, PyOTE log and report describe the
+real event (33777) 1999 RM158 / UCAC4 326-152286 on 2026-09-26. The expected OWC
+match is `2094-33777-995661-234407-U152286`. Against development, the expected
+`submit --draft` result is `ready`, with no open findings or skipped checks.
 
-**This is a public repository.** The identity in these fixtures is deliberately
-fictional — "Test Observer", `cli-smoke@example.com`, no coordinates, no real
-station. Any fixture added here is checked the same way before it is committed.
+Check 11 uses the station prediction from the light curve's Astrid
+`#OCCULTATION-PREDICTED-CENTER-TIME` key. The report contains no coordinates.
+
+Fixtures in this public repository must use fictional observer identities.
+These fixtures use "Test Observer", `cli-smoke@example.com`, no coordinates
+and no real station. Check new fixtures for personal information before
+committing them.

@@ -2,117 +2,120 @@
 
 Guidance for working in this repository.
 
-## What this is
+## Project
 
-`iota-hub` on PyPI: a Python client library (`from iota_hub import Client`) and CLI
-(`iota-hub`) for the IOTA Hub public API v1. The audience, in priority order: the CLI is
-the first-choice interface (for observers and for their agents), the library second (for
-observers scripting something bespoke), the raw HTTP API last (everyone else, or anyone
-the first two don't fit). Optimize for that order — a feature that only the library can do
-is a smell.
+`iota-hub` provides a Python library (`from iota_hub import Client`) and CLI
+(`iota-hub`) for the IOTA Hub public API v1. Prioritize the CLI for observers
+and their agents, followed by the library for custom scripts. Direct HTTP
+access is available for integrations that need it. When adding a library
+feature, consider how CLI users will access it.
 
-This repo does not own the API. It is a client of the IOTA Hub API, whose source lives in a
-separate private repository, and is built and versioned independently.
+The API lives in a separate private repository. This client is built and
+versioned independently.
 
-## The contract
+## Behavior specifications
 
-Two documents govern behavior here and must stay current with any change:
+Keep these documents current when behavior changes:
 
-- **`spec/openapi.json`** — vendored from the deployed public API. It is the schema; the
-  transport layer (below) is generated from it in shape, if not in code. `scripts/
-  check_openapi_drift.py` compares it against the live document in CI and fails on drift;
-  re-vendor with `--update` and review what changed before committing.
-- **`docs/client-conventions.md`** — the language-neutral spec for everything the API
-  itself doesn't define: config precedence, env var names, retry/polling policy, exit
-  codes, the user-agent format. **Read it before changing CLI or client behavior, and
-  update it in the same change.** It's what makes a future language client (`iota-hub-
-  <lang>`) a port instead of a second design.
+- **`spec/openapi.json`** defines the API's operations and schemas. It is copied
+  from the deployed API. `scripts/check_openapi_drift.py` compares it with the
+  live document in CI and fails if they differ. Use `--update` to refresh the
+  local copy, then review the changes before committing.
+- **`docs/client-conventions.md`** defines client behavior: configuration,
+  environment variables, retries, polling, exit codes and User-Agent format.
+  Read it before changing CLI or library behavior and update it in the same
+  change. Clients in other languages must follow the same rules.
 
-If this repo and the API's own spec disagree, the API's spec wins — file an issue in the
-API repository (see below) rather than guessing.
+If this repository disagrees with the API specification, follow the API
+specification and file an issue in the API repository. See Issues below.
 
-## Two layers — keep them separate
+## Architecture
 
-1. **Transport** (`src/iota_hub/client.py` or similar): one method per public
-   `operation_id`. Hand-written pydantic models with `extra="ignore"` so additive API
-   changes never break an installed CLI. No workflow logic here.
-2. **Workflow** (hand-written, not generated): `submit_folder`/`submit_files`,
-   `wait_for_checks`, `download_files`, retry/idempotency handling, folder-to-slot file
-   mapping, and problem-details-to-exception mapping. This is the part every language
-   client has to reimplement, which is exactly why `docs/client-conventions.md` exists —
-   write the behavior down there, not just in code.
+Keep these layers separate:
 
-Don't let workflow logic leak into the transport layer or vice versa.
+1. **Transport**: one method per public `operation_id`, with hand-written
+   Pydantic models using `extra="ignore"` to tolerate new API fields. Do not
+   put workflow logic here.
+2. **Workflow**: submission, polling, downloads, retry and idempotency policies,
+   file selection and error handling. These methods are hand-written. Document
+   their behavior in `docs/client-conventions.md` so other clients can implement
+   it consistently.
 
 ## Layout
 
-```
-src/iota_hub/     library + CLI
-tests/            pytest (unit/contract; smoke tests excluded by default)
-tests/smoke/      live tests against dev — needs IOTA_HUB_API_KEY, IOTA_HUB_BASE_URL
-spec/openapi.json vendored public API document
-docs/             client-conventions.md and friends
+```text
+src/iota_hub/      Library and CLI
+tests/            Unit and contract tests; smoke tests excluded by default
+tests/smoke/      Live development API tests; require a key and base URL
+spec/openapi.json API document copied from the deployed API
+docs/            Library guide and client conventions
 ```
 
 ## Commands
 
 ```bash
-uv sync                          # install deps
-uv run pytest -q                 # unit/contract tests (smoke excluded via -m "not smoke")
-uv run ruff check .               # lint
-uv run ruff format .              # format
-uv build                          # sdist + wheel
+uv sync
+uv run pytest -q
+uv run ruff check .
+uv run ruff format .
+uv build
 
-# Smoke test (needs a live dev account key; not run by default, and never on fork PRs)
-IOTA_HUB_API_KEY=... IOTA_HUB_BASE_URL=... uv run pytest -m smoke tests/smoke -q
-
-# Re-vendor the OpenAPI document after a public API change
+# Refresh the API document after a public API change.
 uv run python scripts/check_openapi_drift.py --update
 ```
 
-## Rules
+To run smoke tests, set `IOTA_HUB_API_KEY` and `IOTA_HUB_BASE_URL` for a live
+development account, then run:
 
-- **Additive-only.** The API only grows fields; models must ignore unknown ones
-  (`extra="ignore"`). Don't add strict validation that would break on a future field.
-- **Branch on `code`, never on `message`.** Error messages are for humans; `code` is the
-  stable contract. Same for CLI exit codes — don't parse output to figure out what
-  happened, use the documented codes.
-- **A key is never a CLI argument.** It leaks into shell history and `ps`. Accept it via
-  `IOTA_HUB_API_KEY`, stdin, or the stored profile — never a flag.
-- **Never log or echo a key**, including in `--json` output or error details.
-- **Windows is a first-class target**, not an afterthought — tests run on
-  `windows-latest`. No POSIX-only path assumptions, no shell-specific syntax in anything
-  users run, no decorative Unicode in default output (a non-UTF-8 Windows console has to
-  survive it).
+```bash
+uv run pytest -m smoke tests/smoke -q
+```
 
-## Release process
+Smoke tests are excluded by default and must not run on fork pull requests.
 
-Tag `vX.Y.Z` matching the version in `pyproject.toml` and push it; `release.yml` builds
-and publishes to PyPI via Trusted Publishing (no stored token). The tag/version check
-fails loudly on a mismatch rather than publishing the wrong thing.
-The publish job runs in the `pypi` GitHub environment, which only `v*` tags may deploy
-to and which waits for the maintainer's approval. Actions are pinned to commit SHAs (the
-tag in the trailing comment); bump a pin by resolving the new tag's SHA, never back to a
-bare tag or branch.
+## Compatibility and credentials
 
-The PyPI project is registered ahead of the production release of the public API, so
-the name is held; until that release the default base URL (`https://api.iota-hub.com`)
-does not serve `/public/v1` yet.
+- API models must ignore unknown fields (`extra="ignore"`). New API fields
+  must not break an installed client.
+- Use error `code` and CLI exit codes to determine what happened. Do not parse
+  message text.
+- Never accept an API key as a CLI argument. Use `IOTA_HUB_API_KEY`, stdin or
+  a stored profile to keep keys out of shell history and process listings.
+- Never log or print a secret key, including in JSON output and error details.
+- Support Windows, macOS and Linux. Tests run on `windows-latest`. Avoid
+  POSIX-only path assumptions and shell-specific user commands. Default output
+  must work on non-UTF-8 Windows consoles without decorative Unicode.
 
-Semver, `0.x` until the public API is in production. A **major** bump is: removing a command or flag, or changing the
-shape of a `--json` output. Anything additive (new command, new optional flag, new field
-in a `--json` shape) is not.
+## Releases
 
-## Coding philosophy
+Create and push a `vX.Y.Z` tag matching `pyproject.toml`. `release.yml` checks
+that they match, builds the package and publishes to PyPI through Trusted
+Publishing, without a stored token.
 
-Same as the main repo: YAGNI, KISS, don't abstract on first duplication (wait for the Rule
-of Three). This is a thin client — resist the pull to build a framework. When in doubt,
-write the straightforward thing.
+The publish job uses the `pypi` GitHub environment. Only `v*` tags may deploy
+there, and deployment requires maintainer approval. Pin Actions to commit SHAs,
+with the tag in a trailing comment. To update an Action, resolve the new tag's
+SHA; do not replace a SHA with a tag or branch.
+
+The PyPI project is registered, but the public API's production release is
+pending. Until then, the default base URL (`https://api.iota-hub.com`) does not
+serve `/public/v1`.
+
+Use semantic versioning and remain at `0.x` until the API reaches production.
+Removing a command or flag, or changing a `--json` output structure, requires a
+major version bump. New commands, optional flags and JSON fields are additive
+changes.
+
+## Code changes
+
+Prefer straightforward implementations. Add only what the current task needs.
+Wait for three uses before extracting a shared abstraction.
 
 ## Issues
 
-File GitHub issues for anything out-of-scope you notice while working — don't fix it
-inline and don't just mention it in a summary. Issues that touch the IOTA Hub API itself
-(not just this client) go in the private API repository, labeled `drafts-and-api` — never
-name or link that repository from this public one. Issues about
-this repo's own code go here.
+File GitHub issues for problems outside the current task. Do not fix them as
+part of an unrelated change or leave them only in the final summary.
+
+Client issues belong in this repository. API issues belong in the private API
+repository with the `drafts-and-api` label. Never name or link that private
+repository from this public one.
