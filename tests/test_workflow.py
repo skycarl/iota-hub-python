@@ -849,7 +849,25 @@ def test_a_network_failure_on_a_download_is_transport_error(client, mock_api, tm
     assert "report.xlsx" in excinfo.value.message
     # A presigned URL is a credential: it stays out of the message.
     assert "sig=" not in str(excinfo.value)
+    assert excinfo.value.details == {"slot": "report", "filename": "report.xlsx"}
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_transport_failure_midway_names_the_file_being_fetched(
+    client, mock_api, tmp_path
+):
+    script_file_list(mock_api)
+    mock_api.add("GET", REPORT_URL, httpx.Response(200, content=b"whole"))
+    mock_api.add("GET", CURVE_URL, httpx.Response(200, stream=_DiesMidway()))
+
+    with pytest.raises(TransportError) as excinfo:
+        client.download_files("observation", OBS_ID, tmp_path)
+
+    error = excinfo.value
+    assert error.details == {"slot": "lightcurve", "filename": "curve.csv"}
+    assert "--force" in error.hint
+    assert error.status is None
+    assert isinstance(error.cause, httpx.ReadError)
 
 
 def test_a_download_that_dies_midway_leaves_no_partial_file(client, mock_api, tmp_path):

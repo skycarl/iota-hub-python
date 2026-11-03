@@ -124,10 +124,17 @@ Other commands include `drafts list`, `observations list|show`,
 | `3` | Missing key or an authorization error. |
 | `4` | Findings, missing requirements or a check timeout. |
 | `5` | Rate limit still exceeded after automatic retries. |
+| `130` | Interrupted with Ctrl-C outside a prompt. |
 
 With `--json`, errors go to stderr as an object with `code`, `message`, `hint`,
 `details`, `status`, `retry_after` and `exit_code`. Check `code`, not message
-text. Invalid arguments return `usage_error` with exit code `2`.
+text. Invalid arguments return `usage_error` with exit code `2`. A network
+failure during a download returns `transport_error` with the file's
+`details.slot` and `details.filename`.
+
+Exit code `130` has no JSON error: stdout is empty and stderr holds only any
+buffered messages. Check for it before parsing stderr. An interrupted `submit`
+may leave a draft without naming it; run `drafts list` before submitting again.
 
 ## Observer decisions and file handling
 

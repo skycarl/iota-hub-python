@@ -1027,6 +1027,68 @@ def test_files_download_writes_every_link(
     assert "X-API-Key" not in fetch.headers
 
 
+def _script_one_download(mock_api: MockAPI, *responses) -> None:
+    mock_api.json(
+        "GET",
+        f"{GET}/files",
+        {
+            "observation_id": OBS_ID,
+            "expires_in": 900,
+            "files": [
+                {
+                    "slot": "lightcurve",
+                    "filename": LIGHTCURVE.name,
+                    "size_bytes": 10,
+                    "url": "https://s3.example.test/get/lc.csv",
+                    "expires_in": 900,
+                }
+            ],
+        },
+    )
+    mock_api.add("GET", "/get/lc.csv", *responses)
+
+
+def test_a_transport_failure_during_a_download_is_a_json_error_naming_the_slot(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    _script_one_download(mock_api, httpx.ConnectError("no route"))
+
+    result = run(
+        runner,
+        "--json",
+        "files",
+        "download",
+        "observation",
+        OBS_ID,
+        "-o",
+        str(tmp_path),
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    error = json.loads(result.stderr)
+    assert error["code"] == "transport_error"
+    assert error["details"] == {"slot": "lightcurve", "filename": LIGHTCURVE.name}
+    assert "--force" in error["hint"]
+    assert error["status"] is None
+    assert error["exit_code"] == 1
+
+
+def test_a_transport_failure_during_a_download_shows_the_slot_in_plain_mode(
+    runner: CliRunner, mock_api: MockAPI, tmp_path: Path
+) -> None:
+    _script_one_download(mock_api, httpx.ConnectError("no route"))
+
+    result = run(
+        runner, "files", "download", "observation", OBS_ID, "-o", str(tmp_path)
+    )
+
+    assert result.exit_code == 1
+    assert "error: transport_error:" in result.stderr
+    assert "hint: " in result.stderr
+    assert '"slot": "lightcurve"' in result.stderr
+
+
 def test_files_download_refuses_to_overwrite(
     runner: CliRunner, mock_api: MockAPI, tmp_path: Path
 ) -> None:
@@ -2885,6 +2947,30 @@ def test_a_declined_login_under_json_prints_only_the_error_document(
 
     assert result.exit_code == 1
     assert json.loads(result.stderr)["code"] == "aborted"
+
+
+@pytest.mark.parametrize("flags", [["--json"], []], ids=["json", "plain"])
+def test_an_interrupt_exits_130_with_no_error_document(
+    flags: list[str], monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Client, "list_observations", interrupted)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["iota-hub", *flags, "observations", "list", "--base-url", OTHER_URL],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_module.main()
+
+    assert excinfo.value.code == 130
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    # The held Target: note is printed, not dropped, and nothing else is.
+    assert captured.err == f"Target: {OTHER_URL}\n"
 
 
 def test_declining_a_prompt_without_json_still_says_aborted(

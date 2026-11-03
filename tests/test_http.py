@@ -352,6 +352,23 @@ def test_an_unreachable_bucket_raises_transport_error(mock_api, sleeps):
         transport(mock_api, sleeps).upload_to_s3(_target(), b"x")
 
 
+def test_transport_error_takes_a_hint_and_details():
+    cause = httpx.ReadError("reset")
+
+    error = TransportError("m", hint="h", details={"slot": "log"}, cause=cause)
+
+    assert (error.code, error.message) == ("transport_error", "m")
+    assert (error.hint, error.details) == ("h", {"slot": "log"})
+    assert error.cause is cause
+    assert str(error) == "transport_error: m (hint: h)"
+
+
+def test_transport_error_still_needs_only_a_message():
+    error = TransportError("m")
+
+    assert (error.hint, error.details, error.cause) == (None, {}, None)
+
+
 # -- digests ----------------------------------------------------------------
 
 

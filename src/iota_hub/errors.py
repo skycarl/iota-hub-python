@@ -105,8 +105,15 @@ class RequestError(IotaHubError):
 class TransportError(IotaHubError):
     """The request never produced a response (DNS, connect, read, TLS)."""
 
-    def __init__(self, message: str, *, cause: Exception | None = None) -> None:
-        super().__init__("transport_error", message)
+    def __init__(
+        self,
+        message: str,
+        *,
+        hint: str | None = None,
+        details: dict[str, Any] | None = None,
+        cause: Exception | None = None,
+    ) -> None:
+        super().__init__("transport_error", message, hint=hint, details=details)
         self.cause = cause
 
 

@@ -530,7 +530,13 @@ class WorkflowMixin:
             # The message names the file, not the URL: a presigned URL is a
             # credential for as long as it lasts.
             raise TransportError(
-                f"download of {out.name} failed: {exc}", cause=exc
+                f"download of {out.name} failed: {exc}",
+                hint=(
+                    "Check the connection, then download again (--force replaces "
+                    "files already finished)."
+                ),
+                details={"slot": slot, "filename": out.name},
+                cause=exc,
             ) from exc
         except OSError as exc:
             raise _not_writable(out, exc) from exc

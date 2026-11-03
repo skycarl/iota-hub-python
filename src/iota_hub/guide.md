@@ -202,6 +202,12 @@ error code in scripts, since message wording can change.
 | `3` | Authentication or permission error |
 | `4` | `submit` or `drafts submit` found the draft needs attention or not ready, or a wait timed out |
 | `5` | Rate limit reached |
+| `130` | Interrupted with Ctrl-C outside a prompt |
+
+An interrupted run has no result to report, so it writes no JSON error. Check
+for exit code `130` before parsing stderr as JSON. An interrupted `submit` may
+leave a draft without naming it; run `iota-hub drafts list` before submitting
+again.
 
 A successful `observations check` lookup exits with `0` even when nothing
 matches. Read its JSON `found` field to distinguish the results:

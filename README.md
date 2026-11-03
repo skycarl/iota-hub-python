@@ -212,7 +212,8 @@ Errors go to stderr, with stdout left empty:
 
 Check `code`, not the message text. Invalid arguments return `usage_error`
 with exit code `2`. Errors after draft creation include `details.observation_id`
-so you can recover the draft.
+so you can recover the draft. A network failure during a download returns
+`transport_error` with the file's `details.slot` and `details.filename`.
 
 In JSON mode, progress and target messages are buffered. They are printed to
 stderr when a result is returned and discarded on error, leaving only the JSON
@@ -227,6 +228,12 @@ do not prompt. Destructive commands require `--yes` without a terminal.
 | `3` | Missing key or an authorization error. |
 | `4` | Findings to address, missing requirements or a check timeout. |
 | `5` | Rate limit still exceeded after automatic retries. |
+| `130` | Interrupted with Ctrl-C outside a prompt. |
+
+An interrupted run has no result to report, so it writes no JSON error: stdout
+is empty and stderr holds only any buffered messages. Check for exit code `130`
+before parsing stderr as JSON. An interrupted `submit` may leave a draft without
+naming it; run `drafts list` before submitting again.
 
 `submit --json` includes `next_commands` for available actions, `skipped_checks`
 with their reasons and `owc_commands` for an unresolved OWC link. Skipped checks

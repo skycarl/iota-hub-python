@@ -67,8 +67,9 @@ before writing any file:
 - A directory with the destination filename raises `not_writable`, even with
   `overwrite` enabled.
 - A rejected storage request raises `download_failed`; a network failure
-  raises `transport_error`. Neither is retried. Running the command again
-  obtains fresh URLs.
+  raises `transport_error`. Both include `details.slot` and
+  `details.filename`. Neither is retried. Running the command again obtains
+  fresh URLs.
 
 Write each download to a temporary file in `dest`, then rename it to the final
 filename after completion. A failed download must leave no partial file and
@@ -489,6 +490,7 @@ specified in § 12.
 | ------ | ----------- |
 | `upload_failed` | S3 rejects a presigned POST. Includes `status` and `details.slot`. |
 | `download_failed` | S3 rejects a presigned GET, such as an expired link returning `403`. Also used before writing if a filename is empty, `.` or `..` after removing directories, or filenames collide when compared case-insensitively. |
+| `transport_error` | A request or download fails at the network level. `status` is null. A failed download includes `details.slot` and `details.filename`. |
 | `file_exists` | A download would replace an existing file without `overwrite`. |
 | `timeout` | The check wait exceeds its timeout (§ 8). |
 | `ambiguous_files` | Multiple files match one slot. Includes `details.slot` and `details.candidates`. |
@@ -663,6 +665,7 @@ observation page otherwise. Print `Web:` when `submit` returns `needs_attention`
 | `3` | Authentication | Authentication category from § 10. |
 | `4` | Not ready | `open_findings`, `missing_required`, `checks_stale`, `event_files_conflict` or a check timeout. |
 | `5` | Rate limited | Rate-limit category after retries are exhausted. |
+| `130` | Interrupted | Ctrl-C outside a prompt. There is no error document (§ 13). |
 
 Use these mappings for specific codes:
 
@@ -736,6 +739,14 @@ A terminal prompt may precede the error document because it has already been
 shown. A declined or cancelled prompt raises `aborted` with exit `1`, matching
 plain mode. It is not `confirmation_required`, which means prompting was
 unavailable.
+
+An interrupt (Ctrl-C) outside a prompt is the one failure with no error
+document. Exit `130`, the standard interrupt code, because an interrupted run
+has no result to report. Leave stdout empty, write no error object and print
+the buffered lines on stderr instead of discarding them, so stderr is empty or
+plain text. Scripts must check for exit `130` before parsing stderr as JSON.
+Plain mode also exits `130`, without `Aborted!`. An interrupted `submit` may
+leave a draft, and nothing reports its `observation_id`.
 
 ### Plain and styled output
 
