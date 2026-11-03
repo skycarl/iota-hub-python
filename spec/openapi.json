@@ -2106,7 +2106,7 @@
             }
           },
           {
-            "description": "Only events with date_window_utc >= this ISO 8601 datetime",
+            "description": "Only events with date_window_utc at or after this ISO 8601 datetime or date. No offset means UTC; a date means the start of that UTC day.",
             "in": "query",
             "name": "date_from",
             "required": false,
@@ -2119,12 +2119,12 @@
                   "type": "null"
                 }
               ],
-              "description": "Only events with date_window_utc >= this ISO 8601 datetime",
+              "description": "Only events with date_window_utc at or after this ISO 8601 datetime or date. No offset means UTC; a date means the start of that UTC day.",
               "title": "Date From"
             }
           },
           {
-            "description": "Only events with date_window_utc <= this ISO 8601 datetime",
+            "description": "Only events with date_window_utc at or before this ISO 8601 datetime or date. No offset means UTC; a date includes all of that UTC day.",
             "in": "query",
             "name": "date_to",
             "required": false,
@@ -2137,7 +2137,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Only events with date_window_utc <= this ISO 8601 datetime",
+              "description": "Only events with date_window_utc at or before this ISO 8601 datetime or date. No offset means UTC; a date includes all of that UTC day.",
               "title": "Date To"
             }
           },
@@ -2597,6 +2597,11 @@
               "anyOf": [
                 {
                   "items": {
+                    "enum": [
+                      "POS",
+                      "NEG",
+                      "UNSURE"
+                    ],
                     "type": "string"
                   },
                   "type": "array"
@@ -2622,7 +2627,7 @@
             }
           },
           {
-            "description": "Only observations observed at/after this ISO 8601 datetime (filters observed_at_utc, not the submission time).",
+            "description": "Only observations observed at or after this ISO 8601 datetime or date (filters observed_at_utc, not the submission time). No offset means UTC; a date means the start of that UTC day.",
             "in": "query",
             "name": "date_from",
             "required": false,
@@ -2635,12 +2640,12 @@
                   "type": "null"
                 }
               ],
-              "description": "Only observations observed at/after this ISO 8601 datetime (filters observed_at_utc, not the submission time).",
+              "description": "Only observations observed at or after this ISO 8601 datetime or date (filters observed_at_utc, not the submission time). No offset means UTC; a date means the start of that UTC day.",
               "title": "Date From"
             }
           },
           {
-            "description": "Only observations observed at/before this ISO 8601 datetime",
+            "description": "Only observations observed at or before this ISO 8601 datetime or date. No offset means UTC; a date includes all of that UTC day.",
             "in": "query",
             "name": "date_to",
             "required": false,
@@ -2653,7 +2658,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Only observations observed at/before this ISO 8601 datetime",
+              "description": "Only observations observed at or before this ISO 8601 datetime or date. No offset means UTC; a date includes all of that UTC day.",
               "title": "Date To"
             }
           },
@@ -4381,7 +4386,7 @@
                     "filename": "lightcurve.pymovie",
                     "slot": "aperture_record"
                   },
-                  "hint": "The request body did not match the documented schema; see 'details'.",
+                  "hint": "A body field or query parameter is invalid. 'message' says what is wrong, and 'details', when present, has the specifics.",
                   "message": "The .pymovie file is not a PyMovie aperture record: it does not start with the PYMOVIE file signature."
                 },
                 "schema": {
