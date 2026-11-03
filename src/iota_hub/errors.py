@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 
-#: Authentication and authorization reason codes (specs/public-api.md § 8).
+#: Authentication and authorization reason codes.
 AUTH_CODES = frozenset(
     {
         "missing_api_key",

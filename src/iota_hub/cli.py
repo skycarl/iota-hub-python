@@ -1364,7 +1364,7 @@ def _not_ready(observation: PublicObservation) -> IotaHubError:
     """The refusal the API would give, decided from the readiness just read.
 
     Saves a write that is certain to be rejected, and reports the same ``code``
-    the API's own refusal carries (specs/public-api.md section 8), so a script
+    the API's own refusal carries, so a script
     sees one contract whichever path it took.
     """
     readiness = observation.readiness

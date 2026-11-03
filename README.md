@@ -284,8 +284,10 @@ Use the same client to look up observations, replace files or download them:
 ```python
 # These examples assume an open client and an existing observation_id.
 existing = client.check_observation(
-    asteroid_id=9721, asteroid_name="Doty",
-    star_id="1234-56789", observed_date="2018-03-05",
+    asteroid_id=9721,
+    asteroid_name="Doty",
+    star_id="1234-56789",
+    observed_date="2018-03-05",
 )
 client.replace_file(observation_id, "lightcurve", "fixed.csv")
 for observation in client.iter_observations(submission_status="draft"):

@@ -140,7 +140,7 @@ class Transport:
         The API key is deliberately **not** sent: the presigned form is the
         credential, and S3 has no business seeing the key. Every entry of
         ``fields`` goes into the form exactly as returned, in order, and the
-        file part comes last (specs/public-api.md § 4).
+        file part comes last.
         """
         if isinstance(path_or_bytes, bytes):
             content: Any = path_or_bytes

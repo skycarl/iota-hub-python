@@ -2,13 +2,13 @@
 
 One observation lives in one directory, named to the observer convention
 (``YYYYMMDD_<number>_<name>_<lastname>_POS|NEG[-X]``). The rules below are
-``features/public-api/design.md`` § 8.3 and ``docs/client-conventions.md`` § 11,
+``docs/client-conventions.md`` § 11,
 and nothing else: no content sniffing, no classification. When a rule does not
 pick exactly one file, that is an error naming the candidates and the flag that
 settles it — a wrong guess costs an observer a bad submission.
 
 Every file the five slots do not take becomes an **attachment**, under the
-server's attachment rules (``specs/public-api.md`` § 4.3), checked here before
+server's attachment rules, checked here before
 anything is created so a folder the API would refuse fails before any call.
 """
 

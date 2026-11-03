@@ -1,7 +1,7 @@
 """Pydantic models mirroring the ``Public*`` schemas of ``spec/openapi.json``.
 
 Field names and required-ness match the schemas exactly. Two rules make these
-models survive the API's additive-only evolution (specs/public-api.md § 3):
+models survive the API's additive-only evolution:
 
 * ``extra="ignore"`` — a field added to the API never breaks an installed
   client.
