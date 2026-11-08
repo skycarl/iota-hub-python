@@ -142,8 +142,9 @@ submission. If the Hub could not select an Occult Watcher Cloud (OWC) event,
 `result.owc_commands` lists CLI commands for linking one.
 
 `result.uploads` contains the selected filenames by file type.
-`result.attachments` lists attachment filenames, and `result.ignored` lists
-files excluded by `attachments=False`.
+`result.attachments` lists attachment filenames, `result.ignored` lists
+files excluded by `attachments=False`, and `result.symlinks` lists symbolic
+links found in the folder, which are never uploaded.
 
 ## Fix and resubmit
 
