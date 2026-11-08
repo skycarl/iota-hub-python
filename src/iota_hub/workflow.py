@@ -75,6 +75,8 @@ class SubmitResult:
     uploads: dict[str, str] = field(default_factory=dict)
     attachments: list[str] = field(default_factory=list)
     ignored: list[Path] = field(default_factory=list)
+    #: Symbolic links found in the folder and skipped (``submit_folder`` only).
+    symlinks: list[Path] = field(default_factory=list)
     #: Taken from the draft as the checks left it, before any submit: the
     #: submitted observation no longer carries a draft's check run.
     skipped_checks: list[PublicSkippedCheck] = field(default_factory=list)
@@ -226,7 +228,9 @@ class WorkflowMixin:
 
         Every file the slots did not take is uploaded as an attachment;
         ``attachments=False`` leaves them out, and they come back on
-        :attr:`SubmitResult.ignored`. ``attach`` adds files from elsewhere.
+        :attr:`SubmitResult.ignored`. Symbolic links are never uploaded and
+        come back on :attr:`SubmitResult.symlinks`. ``attach`` adds files from
+        elsewhere.
         """
         mapping: FolderMapping = map_folder(
             directory,
@@ -244,6 +248,7 @@ class WorkflowMixin:
             **kwargs,  # type: ignore[arg-type]
         )
         result.ignored = mapping.ignored
+        result.symlinks = mapping.symlinks
         return result
 
     # -- polling -----------------------------------------------------------

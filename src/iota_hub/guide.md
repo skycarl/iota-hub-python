@@ -79,8 +79,9 @@ a folder containing files for multiple stations.
 Other files in the folder are uploaded as attachments. You can include up to
 25 attachments, each up to 50 MB. Executables and scripts are not allowed.
 Use `--no-attachments` to exclude these extra files, or `--attach PATH` to add
-an attachment explicitly. Files whose names start with a dot and files in
-subfolders are excluded from automatic selection.
+an attachment explicitly. Files whose names start with a dot, files in
+subfolders and symbolic links are excluded from automatic selection; skipped
+links are listed as not uploaded.
 
 ## Read the result
 

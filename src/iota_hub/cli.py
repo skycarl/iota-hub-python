@@ -927,7 +927,8 @@ def submit(
 
     A Tangra .lc or PyMovie .pymovie goes in the optional aperture_record slot.
     Files the five slots do not take (plots, notes) are uploaded as
-    attachments; hidden files and subfolders never are. The attachment limits
+    attachments; hidden files, subfolders and symbolic links never are. The
+    attachment limits
     (25 files, 50 MB each, no executables or scripts) are checked before
     anything is created.
 
@@ -983,6 +984,7 @@ def _dry_run(directory: Path, overrides: dict[str, Any]) -> None:
         for path in mapping.attachments
     ]
     ignored = [path.name for path in mapping.ignored]
+    symlinks = [path.name for path in mapping.symlinks]
     if _OPTIONS.json:
         _emit(
             {
@@ -991,6 +993,7 @@ def _dry_run(directory: Path, overrides: dict[str, Any]) -> None:
                 "uploads": uploads,
                 "attachments": attachments,
                 "ignored": ignored,
+                "symlinks": symlinks,
             }
         )
         return
@@ -1001,12 +1004,20 @@ def _dry_run(directory: Path, overrides: dict[str, Any]) -> None:
     files = [(slot, path) for slot, path in mapping.slots.items()]
     files += [("attachment", path) for path in mapping.attachments]
     _render_files([(slot, path.name, path.stat().st_size) for slot, path in files])
+    _render_not_uploaded(ignored, symlinks)
+
+
+def _render_not_uploaded(ignored: list[str], symlinks: list[str]) -> None:
+    """What the folder held that was not sent, and the reason for each group."""
     if ignored:
         _out(f"Not uploaded (--no-attachments): {', '.join(ignored)}")
+    if symlinks:
+        _out(f"Not uploaded (symbolic links are skipped): {', '.join(symlinks)}")
 
 
 def _emit_submit(result: SubmitResult) -> None:
     ignored = [path.name for path in result.ignored]
+    symlinks = [path.name for path in result.symlinks]
     observation = result.observation
     if _OPTIONS.json:
         _emit(
@@ -1017,6 +1028,7 @@ def _emit_submit(result: SubmitResult) -> None:
                 "uploads": result.uploads,
                 "attachments": result.attachments,
                 "ignored": ignored,
+                "symlinks": symlinks,
                 "next_commands": next_actions_commands(observation),
                 "skipped_checks": [
                     check.model_dump(mode="json") for check in result.skipped_checks
@@ -1048,8 +1060,7 @@ def _emit_submit(result: SubmitResult) -> None:
         [(slot, name, sizes.get(slot)) for slot, name in result.uploads.items()]
         + [("attachment", name, None) for name in result.attachments]
     )
-    if ignored:
-        _out(f"Not uploaded (--no-attachments): {', '.join(ignored)}")
+    _render_not_uploaded(ignored, symlinks)
     if result.outcome == "needs_attention":
         _render_readiness(observation, unless=result.outcome)
         if observation.checks is not None:

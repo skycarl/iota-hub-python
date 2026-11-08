@@ -88,7 +88,7 @@ until the event is `COMPLETE`.
 
 `submit_folder` and `submit_files` return the last observation read, a
 `submitted` boolean, uploaded `{slot: filename}` pairs, attachment filenames,
-ignored files, skipped checks, OWC commands and an `outcome`:
+ignored files, skipped symlinks, skipped checks, OWC commands and an `outcome`:
 
 | `outcome` | Meaning |
 | --------- | ------- |
@@ -574,6 +574,13 @@ checks the `.pymovie` signature; the client checks its extension.
   consistent ordering across platforms.
 - `--no-attachments` (library: `attachments=False`) excludes those extra files
   and reports them as `ignored`, displayed as "not uploaded".
+- Never map or upload a symbolic link found in the folder, whatever it points
+  at. Test for the link before testing for a file: a file test follows the
+  link, and a link would otherwise upload its target's bytes under the link's
+  name, past the attachment blocklist. Report skipped links as `symlinks`,
+  displayed as "not uploaded (symbolic links are skipped)", so the caller sees
+  why a file is missing. Explicit paths (`--report`, `--attach`, ...) are the
+  caller's own choice and are not subject to this rule.
 - Repeated `--attach PATH` (library: `attach=`) adds files from any location,
   even with `--no-attachments`. Do not add a path twice if it is already mapped
   to a slot or included as an attachment.
@@ -811,8 +818,8 @@ requires a major version bump.
 
 | Command | Document |
 |---|---|
-| `submit` | `{observation_id, outcome, submitted, uploads: {slot: filename}, attachments: [filename], ignored: [filename], next_commands: [...], skipped_checks: [{check_number, code, name, status, reason}], owc_commands: [...], web_url, observation: {...}}`. Attachment IDs are in `observation.attachments[]`. Capture `skipped_checks` and `owc_commands` before submission (§ 8a). |
-| `submit --dry-run` | `{target, directory, uploads: [{slot, filename, path, size}], attachments: [{filename, path, size}], ignored: [filename]}`. No requests or key required. Attachment validation still applies. |
+| `submit` | `{observation_id, outcome, submitted, uploads: {slot: filename}, attachments: [filename], ignored: [filename], symlinks: [filename], next_commands: [...], skipped_checks: [{check_number, code, name, status, reason}], owc_commands: [...], web_url, observation: {...}}`. Attachment IDs are in `observation.attachments[]`. Capture `skipped_checks` and `owc_commands` before submission (§ 8a). |
+| `submit --dry-run` | `{target, directory, uploads: [{slot, filename, path, size}], attachments: [{filename, path, size}], ignored: [filename], symlinks: [filename]}`. No requests or key required. Attachment validation still applies. |
 | `drafts show`, `drafts check`, `drafts files add`, `drafts files rm`, `drafts owc`, `drafts confirm-asteroid`, `drafts comment`, `drafts submit`, `observations show` | `PublicObservation` |
 | `drafts dismiss` | `PublicChecks` returned by the dismissal |
 | `observations check` | `PublicCheckResponse`: `{found, observation: {observation_id, status, amendment_count, web_url} \| null, event: {event_id, status} \| null}` |

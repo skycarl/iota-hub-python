@@ -277,6 +277,32 @@ def test_dry_run_json_shape(runner: CliRunner, tmp_path: Path) -> None:
         }
     ]
     assert payload["ignored"] == []
+    assert payload["symlinks"] == []
+
+
+def test_dry_run_reports_the_symlinks_it_skipped(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    for source in (REPORT, LIGHTCURVE, LOG):
+        (folder / source.name).write_bytes(source.read_bytes())
+    secret = tmp_path / "id_ed25519"
+    secret.write_text("PRIVATE KEY\n")
+    try:
+        (folder / "notes.txt").symlink_to(secret)
+    except (OSError, NotImplementedError) as exc:  # pragma: no cover - Windows
+        pytest.skip(f"cannot create a symlink here: {exc}")
+
+    result = run(runner, "submit", str(folder), "--dry-run")
+    assert result.exit_code == 0, result.output
+    assert "attachment  notes.txt" not in result.stdout
+    assert "Not uploaded (symbolic links are skipped): notes.txt" in result.stdout
+
+    result = run(runner, "--json", "submit", str(folder), "--dry-run")
+    payload = json.loads(result.stdout)
+    assert payload["symlinks"] == ["notes.txt"]
+    assert [item["filename"] for item in payload["attachments"]] == []
 
 
 def test_dry_run_lists_attachments_and_no_attachments_ignores_them(
@@ -387,6 +413,7 @@ def test_submit_json_is_one_document(runner: CliRunner, mock_api: MockAPI) -> No
         "uploads",
         "attachments",
         "ignored",
+        "symlinks",
         "next_commands",
         "skipped_checks",
         "owc_commands",

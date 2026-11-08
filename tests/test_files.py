@@ -65,6 +65,50 @@ def test_everything_else_becomes_an_attachment(tmp_path):
     assert mapping.ignored == []
 
 
+def symlink_or_skip(link, target):
+    """Plant a symlink, or skip where the platform will not let a test do so."""
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError) as exc:  # pragma: no cover - Windows
+        pytest.skip(f"cannot create a symlink here: {exc}")
+
+
+def test_a_symlink_is_never_mapped_or_attached_and_is_reported(tmp_path):
+    """``is_file()`` follows a link; a planted one must not upload its target."""
+    folder = copy_observation(tmp_path / "obs")
+    secret = tmp_path / "id_ed25519"
+    secret.write_text("PRIVATE KEY\n")
+    symlink_or_skip(folder / "notes.txt", secret)
+    # A link named for a slot must not fill it either, and a link past the
+    # blocklist (``.txt`` to a ``.sh``) must not get through.
+    symlink_or_skip(folder / "extra.csv", folder / "extra_target.csv")
+    symlink_or_skip(folder / "readme.txt", tmp_path / "run.sh")  # dangling
+
+    mapping = map_folder(folder)
+
+    assert set(mapping.slots) == {"report", "lightcurve", "log"}
+    assert mapping.attachments == []
+    assert mapping.ignored == []
+    assert [path.name for path in mapping.symlinks] == [
+        "extra.csv",
+        "notes.txt",
+        "readme.txt",
+    ]
+
+
+def test_a_symlinked_report_is_a_missing_report(tmp_path):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    real = tmp_path / "elsewhere.xlsx"
+    real.write_bytes(b"xlsx")
+    symlink_or_skip(folder / "report.xlsx", real)
+
+    with pytest.raises(MappingError) as excinfo:
+        map_folder(folder)
+
+    assert excinfo.value.code == "missing_files"
+
+
 def test_no_attachments_leaves_them_out_and_reports_them(tmp_path):
     folder = copy_observation(tmp_path / "obs")
     (folder / "_notes.txt").write_text("for the reviewer\n")

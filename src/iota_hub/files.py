@@ -82,13 +82,18 @@ class MappingError(IotaHubError):
 
 @dataclass
 class FolderMapping:
-    """What a directory maps to: the slots filled, the attachments, and what
-    was left alone (only with ``attachments=False``)."""
+    """What a directory maps to: the slots filled, the attachments, what was
+    left alone (only with ``attachments=False``) and the symlinks skipped."""
 
     directory: Path
     slots: dict[str, Path] = field(default_factory=dict)
     attachments: list[Path] = field(default_factory=list)
     ignored: list[Path] = field(default_factory=list)
+    #: Symbolic links in the folder. Never mapped, never uploaded: a link
+    #: uploads its *target's* bytes under the link's name, which is how a
+    #: planted ``notes.txt -> ~/.ssh/id_ed25519`` would leave the machine and
+    #: how a blocked extension would get past the blocklist.
+    symlinks: list[Path] = field(default_factory=list)
 
     def missing_required(self) -> list[str]:
         """Required slots this mapping does not fill, in slot order."""
@@ -116,8 +121,10 @@ def map_folder(
     | ``vizier`` | at most one ``.dat`` |
     | ``aperture_record`` | at most one ``.lc``/``.pymovie`` |
 
-    The listing is non-recursive and skips dotfiles and subdirectories;
-    extensions are matched case-insensitively. An explicit path replaces the
+    The listing is non-recursive and skips dotfiles, subdirectories and
+    symbolic links (reported on ``symlinks``, so a caller can say why a file
+    was not uploaded); extensions are matched case-insensitively. An explicit
+    path replaces the
     rule for its slot and is checked only for its extension — the ``log`` name
     rule exists to tell two ``.txt`` files apart, and a caller who names the
     file has already done that.
@@ -128,7 +135,7 @@ def map_folder(
     checked for all of them at once (:func:`check_attachments`).
     """
     base = Path(directory)
-    entries = _list_folder(base)
+    entries, symlinks = _list_folder(base)
     overrides = _overrides(
         report=report,
         lightcurve=lightcurve,
@@ -159,6 +166,7 @@ def map_folder(
         slots=slots,
         attachments=leftovers if attachments else [],
         ignored=[] if attachments else leftovers,
+        symlinks=symlinks,
     )
     missing = mapping.missing_required()
     if missing:
@@ -266,11 +274,13 @@ def _blocked_extension(filename: str) -> str | None:
 # -- rules ------------------------------------------------------------------
 
 
-def _list_folder(base: Path) -> list[Path]:
-    """The folder's own visible files, or an error if it cannot be listed.
+def _list_folder(base: Path) -> tuple[list[Path], list[Path]]:
+    """The folder's own visible regular files, and apart from them its symlinks.
 
-    Sorted by name, codepoint order: ``Path`` ordering is case-insensitive on
-    Windows, and the attachments are declared in this order everywhere.
+    Both sorted by name, codepoint order: ``Path`` ordering is case-insensitive
+    on Windows, and the attachments are declared in this order everywhere.
+    ``is_file()`` follows a symlink, so the link test comes first: a link is
+    reported, whatever it points at (a file, a directory, nothing).
     """
     try:
         if not base.is_dir():
@@ -280,14 +290,15 @@ def _list_folder(base: Path) -> list[Path]:
                 hint="Pass the folder holding one observation's files.",
                 details={"path": str(base)},
             )
-        return sorted(
-            (
-                entry
-                for entry in base.iterdir()
-                if entry.is_file() and not entry.name.startswith(".")
-            ),
+        visible = sorted(
+            (entry for entry in base.iterdir() if not entry.name.startswith(".")),
             key=lambda entry: entry.name,
         )
+        symlinks = [entry for entry in visible if entry.is_symlink()]
+        files = [
+            entry for entry in visible if not entry.is_symlink() and entry.is_file()
+        ]
+        return files, symlinks
     except OSError as exc:
         raise MappingError(
             "missing_files",

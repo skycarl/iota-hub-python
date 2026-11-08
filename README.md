@@ -80,7 +80,8 @@ A missing report stops the command before upload. The Hub reads the report to
 determine the observation result. If a POS or UNSURE observation is missing a
 light curve or log, it remains a draft and lists the missing files.
 
-The CLI skips subfolders and dotfiles. Extensions and the `log` filename match
+The CLI skips subfolders, dotfiles and symbolic links, and says which links it
+skipped. Extensions and the `log` filename match
 are case-insensitive. Keep each observation in its own folder, following the
 [submission naming convention](https://iota-hub.com/data-submission). Folders
 containing multiple stations (`_POS-1`, `_POS-2`) are not supported.
