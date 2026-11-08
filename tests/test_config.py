@@ -51,10 +51,57 @@ def test_the_flag_wins_over_the_environment_and_the_profile(config_path):
 
 
 def test_the_environment_wins_over_the_profile(config_path):
-    settings = resolve(env={"IOTA_HUB_API_KEY": ENV_KEY}, config_path=config_path)
+    settings = resolve(
+        env={"IOTA_HUB_API_KEY": ENV_KEY, "IOTA_HUB_BASE_URL": DEV_URL},
+        config_path=config_path,
+    )
 
     assert settings.api_key == ENV_KEY
     assert settings.source_of_key == "env"
+
+
+def test_an_environment_key_is_not_sent_to_a_stored_non_production_url(config_path):
+    """The mirror of the stored-key guard: the profile's URL is for its own key."""
+    with pytest.raises(IotaHubError) as excinfo:
+        resolve(env={"IOTA_HUB_API_KEY": ENV_KEY}, config_path=config_path)
+
+    assert excinfo.value.code == "invalid_config"
+    assert excinfo.value.details == {"field": "base_url", "profile": "dev"}
+    assert ENV_KEY not in str(excinfo.value)
+    assert PROFILE_KEY not in str(excinfo.value)
+
+
+def test_an_environment_key_goes_to_a_stored_production_url(tmp_path):
+    """Production is where an unaccompanied key goes anyway: not a redirect."""
+    path = tmp_path / "config.toml"
+    save_profile(
+        "default", api_key=PROFILE_KEY, base_url=DEFAULT_BASE_URL, config_path=path
+    )
+
+    settings = resolve(env={"IOTA_HUB_API_KEY": ENV_KEY}, config_path=path)
+
+    assert settings.api_key == ENV_KEY
+    assert settings.base_url == DEFAULT_BASE_URL
+
+
+def test_an_explicit_base_url_pairs_with_an_environment_key(config_path):
+    settings = resolve(
+        base_url="http://localhost:8000",
+        env={"IOTA_HUB_API_KEY": ENV_KEY},
+        config_path=config_path,
+    )
+
+    assert settings.api_key == ENV_KEY
+    assert settings.base_url == "http://localhost:8000"
+
+
+def test_settings_never_repr_the_key(config_path):
+    settings = resolve(env={}, config_path=config_path)
+
+    assert PROFILE_KEY not in repr(settings)
+    assert PROFILE_KEY not in str(settings)
+    assert DEV_URL in repr(settings)
+    assert settings.api_key == PROFILE_KEY
 
 
 def test_the_profile_supplies_the_key_and_the_base_url_together(config_path):

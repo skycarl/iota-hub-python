@@ -182,6 +182,17 @@ profile and `IOTA_HUB_BASE_URL` differs from its saved URL, raise
 `invalid_config`. The caller can unset that variable, also supply
 `IOTA_HUB_API_KEY`, or explicitly pass `--base-url`.
 
+The rule is symmetric. If the key comes from `IOTA_HUB_API_KEY` with neither
+`IOTA_HUB_BASE_URL` nor `--base-url`, and the selected profile stores a base
+URL other than the production default, raise `invalid_config` rather than
+sending the environment's key to the URL stored for the profile's key. The
+caller can set `IOTA_HUB_BASE_URL` as well, pass `--base-url`, or unset
+`IOTA_HUB_API_KEY` to use the profile's key. A stored production URL is where
+an unaccompanied key goes anyway and raises nothing.
+
+Resolved settings must not include the key in their string or debug
+representation.
+
 For a non-default base URL, print `Target: <base URL>` on stderr before acting.
 `submit --dry-run` prints it even for the default URL. In JSON mode, buffer the
 line until the command returns a result (§ 13).

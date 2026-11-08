@@ -1203,9 +1203,12 @@ def test_the_target_options_work_after_the_subcommand(
     monkeypatch: pytest.MonkeyPatch,
     args: list[str],
 ) -> None:
-    # The environment would beat the profile, so the profile has to stand alone.
+    # The environment would beat the profile (and an environment key may not
+    # borrow a profile's URL), so the profile has to stand alone.
     monkeypatch.delenv("IOTA_HUB_BASE_URL")
+    monkeypatch.delenv("IOTA_HUB_API_KEY")
     config_file.write_text(
+        'default_profile = "other"\n\n'
         f'[profiles.other]\nbase_url = "{OTHER_URL}"\napi_key = "{API_KEY}"\n',
         encoding="utf-8",
     )

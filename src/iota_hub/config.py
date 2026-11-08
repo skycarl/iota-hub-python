@@ -13,7 +13,7 @@ import errno
 import os
 import secrets
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from platformdirs import user_config_dir
@@ -40,7 +40,9 @@ CONFIG_FILENAME = "config.toml"
 class Settings:
     """A resolved target: which key, which deployment, and where they came from."""
 
-    api_key: str
+    # ``repr=False``: a Settings in a log line, a traceback local or a debugger
+    # must never spell the secret. :func:`key_prefix` is what to show instead.
+    api_key: str = field(repr=False)
     base_url: str
     profile_name: str | None
     source_of_key: str
@@ -92,6 +94,10 @@ def resolve(
     ``IOTA_HUB_BASE_URL`` is not explicit enough to do the same: when it
     disagrees with the base URL stored beside the profile's key, that is
     ``invalid_config`` rather than the key going somewhere it was not stored for.
+    The mirror image holds too: a key from ``IOTA_HUB_API_KEY`` with no base URL
+    of its own is not sent to a profile's stored, non-production URL -- that URL
+    was stored for the profile's key, not for whatever key the environment
+    happens to carry.
     """
     config = load_config(config_path)
     profiles = config.get("profiles") or {}
@@ -143,6 +149,29 @@ def resolve(
             hint=(
                 f"Unset {ENV_BASE_URL}, set {ENV_API_KEY} as well, or pass "
                 "--base-url to choose the target explicitly."
+            ),
+            details={"field": "base_url", "profile": name},
+        )
+    if (
+        not base_url
+        and source == "env"
+        and not env_target
+        and stored_target
+        and stored_target != DEFAULT_BASE_URL
+    ):
+        # The same guard the other way round: the environment's key has no
+        # target of its own, and the only URL in reach belongs to the profile's
+        # key -- a prod key in the environment would otherwise go to a stored
+        # dev deployment. A stored production URL is where an unaccompanied
+        # key goes anyway, so that one is not a redirect.
+        raise IotaHubError(
+            "invalid_config",
+            f"{ENV_API_KEY} is set without {ENV_BASE_URL}, and the only base URL "
+            f"available is {stored_target}, which profile {name!r} stores for "
+            "its own key.",
+            hint=(
+                f"Set {ENV_BASE_URL} as well, pass --base-url to choose the "
+                f"target explicitly, or unset {ENV_API_KEY} to use the profile's key."
             ),
             details={"field": "base_url", "profile": name},
         )
