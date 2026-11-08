@@ -782,6 +782,17 @@ Plain labels use ASCII; server-provided strings may contain other characters.
 Styled output may use `✓`, `✗` and `›` only on UTF-8 streams. Use `ok`, `x`
 and `>` otherwise. Tables use aligned columns without box drawing or emoji.
 
+Server-provided strings are other users' data and reach the terminal as text,
+never as control sequences. Sanitize everything written to a terminal, plain
+or styled, at the point it is written, with one sanitizer: remove escape
+sequences whole (CSI, OSC and the other ECMA-48 string commands, in their
+7-bit and 8-bit forms, with their parameters and terminators), then every
+remaining control character (C0 except newline and tab, DEL, C1), Unicode
+format characters (bidirectional overrides, zero-width characters, the BOM),
+lone surrogates and the line and paragraph separators. Leave printable text in
+any script as written. A `--json` document escapes control characters as JSON
+requires and is otherwise unchanged.
+
 Suppress consecutive duplicate progress lines. Never prompt without a terminal
 on stdin. Destructive commands require `--yes` in that case, or raise
 `confirmation_required`. Piped input to `auth login` is the exception because

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -956,6 +957,89 @@ def test_observations_show(runner: CliRunner, mock_api: MockAPI) -> None:
     result = run(runner, "observations", "show", OBS_ID)
     assert result.exit_code == 0
     assert OBS_ID in result.stdout
+
+
+# Server strings are other users' data: a report's observer name, an
+# asteroid's name, a finding's message. Whatever they carry reaches the
+# terminal as text, never as a control sequence (conventions section 13).
+
+#: Clears the line, retitles the window, writes the clipboard, 8-bit CSI, NEL.
+HOSTILE_NAME = (
+    "Evil\x1b[2K\x1b]0;pwned\x1b\\\x1b]52;c;cHduZWQ=\x1b\\ Observer\x9b2K\x85"
+)
+
+
+def _hostile_observation() -> dict:
+    return observation(
+        metadata={
+            "observer_name": HOSTILE_NAME,
+            "asteroid_name": "Doty\x1b[1;1H",
+            # A BEL-terminated title change. Rich strips the BEL itself before
+            # the sanitizer runs, so on the styled path the sequence arrives
+            # unterminated and its body stays as text; the plain path removes
+            # it whole. Neither lets the ESC through.
+            "star_catalog": "TYC\x1b]0;bel\x07",
+            "star_id": "1",
+        },
+        readiness=ready(state="needs_attention", open_findings=1),
+        checks=checks(
+            open_findings=1,
+            findings=[
+                finding(
+                    message="Gap\x1b[2K at 05:12.",
+                    how_to_fix="Re-export\x1b]0;pwned\x1b\\ the curve.",
+                )
+            ],
+            skipped=[{**SKIPPED_11, "reason": "No match\x1b[2K: pick one."}],
+        ),
+        next_actions=["dismiss_or_fix"],
+    )
+
+
+def _assert_no_control_sequences(text: str) -> None:
+    for marker in ("\x1b", "\x9b", "\x85", "\x07", "pwned", "[2K", "[1;1H"):
+        assert marker not in text, repr(marker)
+
+
+def test_plain_output_never_carries_a_server_control_sequence(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json("GET", GET, _hostile_observation())
+
+    result = run(runner, "drafts", "show", OBS_ID)
+
+    assert result.exit_code == 0, result.output
+    _assert_no_control_sequences(result.stdout)
+    _assert_no_control_sequences(result.stderr)
+    assert "Observer:     Evil Observer" in result.stdout
+    assert "Asteroid:     Doty" in result.stdout
+    assert "Star:         TYC 1" in result.stdout
+    assert "bel" not in result.stdout
+    assert "Gap at 05:12." in result.stdout
+    assert "Re-export the curve." in result.stdout
+    assert "No match: pick one." in result.stdout
+
+
+def test_a_server_error_message_never_carries_a_control_sequence(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "GET",
+        GET,
+        {
+            "code": "not_found",
+            "message": "No such\x1b[2K observation.",
+            "hint": "Check\x1b]0;pwned\x07 the id.",
+        },
+        status=404,
+    )
+
+    result = run(runner, "drafts", "show", OBS_ID)
+
+    assert result.exit_code == 1
+    _assert_no_control_sequences(result.stderr)
+    assert "error: not_found: No such observation." in result.stderr
+    assert "hint: Check the id." in result.stderr
 
 
 def event(event_id: str, **overrides):
@@ -2133,6 +2217,31 @@ def test_a_repeated_progress_line_prints_once(
     for message in ["Waiting for checks...", "Waiting for checks...", "Done"]:
         cli_module._progress(message)
     assert capsys.readouterr().err == "Waiting for checks...\nDone\n"
+
+
+def test_styled_output_never_carries_a_server_control_sequence(
+    runner: CliRunner, mock_api: MockAPI, terminal
+) -> None:
+    """The rich path: fields, grouped findings, the pairs grid and warnings."""
+    streams = terminal()
+    mock_api.json("GET", GET, _hostile_observation())
+
+    result = run(runner, "drafts", "show", OBS_ID)
+
+    assert result.exit_code == 0, result.output
+    out = streams[False].getvalue()
+    assert "\x1b[" in out  # styled: rich's own SGR sequences are there...
+    # ...and nothing else that starts with ESC: once rich's "ESC [ ... m" are
+    # taken out, no escape, C1 control or BEL of the server's is left.
+    stripped = re.sub(r"\x1b\[[0-9;]*m", "", out)
+    for marker in ("\x1b", "\x9b", "\x85", "\x07", "[2K", "[1;1H"):
+        assert marker not in stripped, repr(marker)
+    assert "Evil Observer" in out
+    assert "Gap at 05:12." in out
+    assert "Re-export the curve." in out
+    # The skipped-checks lines are plain even on a terminal: the other exit.
+    _assert_no_control_sequences(result.stdout)
+    assert "No match: pick one." in result.stdout
 
 
 def test_styled_urls_are_never_broken(runner: CliRunner, mock_api, terminal) -> None:

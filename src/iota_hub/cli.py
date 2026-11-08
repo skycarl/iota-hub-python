@@ -275,13 +275,20 @@ def _fail(error: IotaHubError) -> NoReturn:
 
 
 def _out(line: str = "") -> None:
-    """One line of data, on stdout."""
-    typer.echo(line)
+    """One line of data, on stdout.
+
+    The plain stream's one exit, with :func:`_term.show` the styled one: both
+    :func:`_term.clean` what they write, so a server string -- another user's
+    observer name, a finding's message -- cannot carry an escape sequence to
+    the terminal. A ``--json`` document is already pure ASCII with its
+    controls escaped, so it passes unchanged.
+    """
+    typer.echo(_term.clean(line))
 
 
 def _err(line: str) -> None:
-    """One line of progress, diagnostics or targeting, on stderr."""
-    typer.echo(line, err=True)
+    """One line of progress, diagnostics or targeting, on stderr (cleaned)."""
+    typer.echo(_term.clean(line), err=True)
 
 
 #: Under ``--json``, the stderr lines of a run still in progress. A failed run's
