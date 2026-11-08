@@ -36,7 +36,7 @@ REPORT = OBSERVATION_DIR / "20180305_9721_Doty_Observer_POS.xlsx"
 LIGHTCURVE = OBSERVATION_DIR / "20180305_9721_Doty_Observer_POS.csv"
 LOG = OBSERVATION_DIR / "20180305_9721_Doty_Observer_POS_pyote_log.txt"
 
-OBS_ID = "obs_1"
+OBS_ID = "6f1d2c3b-4a5e-4f60-9a7b-8c9d0e1f2a3b"
 OBSERVATIONS = "/public/v1/observations"
 DRAFTS = f"{OBSERVATIONS}/drafts"
 GET = f"{OBSERVATIONS}/{OBS_ID}"
@@ -131,7 +131,7 @@ def finding(**overrides):
         "message": "The light curve has a 4 s gap at 05:12:00.",
         "how_to_fix": "Re-export the light curve from PyOTE without trimming.",
         "doc_url": "https://iota-hub.com/developers/checks#lightcurve_time_gap",
-        "fingerprint": "9f2a1c",
+        "fingerprint": "9f2a1c4d8e7b6a50",
     }
     body.update(overrides)
     return body
@@ -470,11 +470,11 @@ def test_submit_needs_attention_exits_4(runner: CliRunner, mock_api: MockAPI) ->
     assert "4 s gap at 05:12:00" in result.stdout
     assert "how to fix: Re-export" in result.stdout
     assert "doc: https://iota-hub.com/developers/checks" in result.stdout
-    assert "fingerprint: 9f2a1c" in result.stdout
+    assert "fingerprint: 9f2a1c4d8e7b6a50" in result.stdout
     assert "Missing:" in result.stdout
     assert "log" in result.stdout
     assert "Next:" in result.stdout
-    assert f"iota-hub drafts dismiss {OBS_ID} 9f2a1c" in result.stdout
+    assert f"iota-hub drafts dismiss {OBS_ID} 9f2a1c4d8e7b6a50" in result.stdout
     # The busiest human page there is, and still plain ASCII with no escapes.
     text = result.stdout + result.stderr
     text.encode("ascii")
@@ -771,7 +771,7 @@ def test_drafts_dismiss_sends_the_note(runner: CliRunner, mock_api: MockAPI) -> 
     )
     mock_api.json(
         "POST",
-        f"{GET}/validation/findings/9f2a1c/dismiss",
+        f"{GET}/validation/findings/9f2a1c4d8e7b6a50/dismiss",
         {
             "run_id": "r1",
             "status": "complete",
@@ -781,7 +781,13 @@ def test_drafts_dismiss_sends_the_note(runner: CliRunner, mock_api: MockAPI) -> 
         },
     )
     result = run(
-        runner, "drafts", "dismiss", OBS_ID, "9f2a1c", "--note", "Known clock offset"
+        runner,
+        "drafts",
+        "dismiss",
+        OBS_ID,
+        "9f2a1c4d8e7b6a50",
+        "--note",
+        "Known clock offset",
     )
     assert result.exit_code == 0
     assert json.loads(mock_api.last_request.content) == {"note": "Known clock offset"}
@@ -789,7 +795,7 @@ def test_drafts_dismiss_sends_the_note(runner: CliRunner, mock_api: MockAPI) -> 
 
 
 def test_drafts_dismiss_without_a_note_is_a_usage_error(runner: CliRunner) -> None:
-    result = run(runner, "drafts", "dismiss", OBS_ID, "9f2a1c")
+    result = run(runner, "drafts", "dismiss", OBS_ID, "9f2a1c4d8e7b6a50")
     assert result.exit_code == 2
     assert "--note" in result.stderr
 
@@ -797,10 +803,10 @@ def test_drafts_dismiss_without_a_note_is_a_usage_error(runner: CliRunner) -> No
 def test_drafts_dismiss_undo(runner: CliRunner, mock_api: MockAPI) -> None:
     mock_api.json(
         "DELETE",
-        f"{GET}/validation/findings/9f2a1c/dismiss",
+        f"{GET}/validation/findings/9f2a1c4d8e7b6a50/dismiss",
         {"run_id": "r1", "status": "complete", "open_findings": 1},
     )
-    result = run(runner, "drafts", "dismiss", OBS_ID, "9f2a1c", "--undo")
+    result = run(runner, "drafts", "dismiss", OBS_ID, "9f2a1c4d8e7b6a50", "--undo")
     assert result.exit_code == 0
     assert mock_api.last_request.method == "DELETE"
 
@@ -1914,7 +1920,9 @@ def test_show_renders_the_derived_status_amendments_and_web_url(
     assert result.exit_code == 0
     assert "Status:       amended" in result.stdout
     assert "Amended:      2 time(s), last 2026-02-01T00:00:00Z" in result.stdout
-    assert "Web:          https://hub.example.test/observations/obs_1" in result.stdout
+    assert (
+        f"Web:          https://hub.example.test/observations/{OBS_ID}" in result.stdout
+    )
 
 
 def test_an_amend_with_another_identity_exits_2_with_the_changes(
@@ -2036,7 +2044,10 @@ def _needs_attention() -> dict:
             open_findings=2,
             findings=[
                 finding(message="Report D is 5 s from the log."),
-                finding(message="Report R is 6 s from the log.", fingerprint="7b3e"),
+                finding(
+                    message="Report R is 6 s from the log.",
+                    fingerprint="7b3e5f1a2c4d6e80",
+                ),
             ],
         ),
         next_actions=["dismiss_or_fix"],
@@ -2055,9 +2066,9 @@ def test_styled_findings_say_a_shared_fix_once(
     assert "\x1b[" in out  # styled
     assert "lightcurve_time_gap (2)" in out
     assert out.count("Re-export the light curve") == 1
-    assert "9f2a1c, 7b3e" in out
+    assert "9f2a1c4d8e7b6a50, 7b3e5f1a2c4d6e80" in out
     assert "Report D is 5 s" in out and "Report R is 6 s" in out
-    assert f"iota-hub drafts dismiss {OBS_ID} 7b3e" in out
+    assert f"iota-hub drafts dismiss {OBS_ID} 7b3e5f1a2c4d6e80" in out
     # Readiness is not repeated when it says what the outcome already said.
     assert "Readiness" not in out
     # Progress went to the stderr terminal, not stdout.

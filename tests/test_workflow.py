@@ -20,6 +20,7 @@ from iota_hub import (
     sha256_base64,
 )
 from iota_hub.models import PublicObservation
+from iota_hub.workflow import check_warnings, owc_commands
 
 OBSERVATION_DIR = FIXTURES / "observation"
 REPORT = OBSERVATION_DIR / "20180305_9721_Doty_Observer_POS.xlsx"
@@ -27,7 +28,7 @@ LIGHTCURVE = OBSERVATION_DIR / "20180305_9721_Doty_Observer_POS.csv"
 LOG = OBSERVATION_DIR / "20180305_9721_Doty_Observer_POS_pyote_log.txt"
 FILES = {"report": REPORT, "lightcurve": LIGHTCURVE, "log": LOG}
 
-OBS_ID = "obs_1"
+OBS_ID = "6f1d2c3b-4a5e-4f60-9a7b-8c9d0e1f2a3b"
 DRAFTS = "/public/v1/observations/drafts"
 FINALIZE = f"/public/v1/observations/{OBS_ID}/finalize"
 GET = f"/public/v1/observations/{OBS_ID}"
@@ -208,7 +209,7 @@ def test_findings_are_never_submitted(client, mock_api):
                         "name": "Star mismatch",
                         "severity": "error",
                         "message": "The star id does not match the event.",
-                        "fingerprint": "fp_1",
+                        "fingerprint": "a1a1a1a1a1a1a1a1",
                     }
                 ],
             },
@@ -222,7 +223,7 @@ def test_findings_are_never_submitted(client, mock_api):
     assert result.outcome == "needs_attention"
     assert result.submitted is False
     assert requests_to(mock_api, SUBMIT) == []
-    assert result.observation.checks.findings[0].fingerprint == "fp_1"
+    assert result.observation.checks.findings[0].fingerprint == "a1a1a1a1a1a1a1a1"
 
 
 def test_missing_required_is_needs_attention_too(client, mock_api):
@@ -1010,7 +1011,7 @@ def test_dismiss_or_fix_lists_one_command_per_open_finding():
                 "name": "A",
                 "severity": "error",
                 "message": "m",
-                "fingerprint": "fp_1",
+                "fingerprint": "a1a1a1a1a1a1a1a1",
             },
             {
                 "check_number": 2,
@@ -1018,7 +1019,7 @@ def test_dismiss_or_fix_lists_one_command_per_open_finding():
                 "name": "B",
                 "severity": "warning",
                 "message": "m",
-                "fingerprint": "fp_2",
+                "fingerprint": "b2b2b2b2b2b2b2b2",
             },
             {
                 "check_number": 3,
@@ -1026,7 +1027,7 @@ def test_dismiss_or_fix_lists_one_command_per_open_finding():
                 "name": "C",
                 "severity": "warning",
                 "message": "m",
-                "fingerprint": "fp_3",
+                "fingerprint": "c3c3c3c3c3c3c3c3",
                 "dismissal": {
                     "dismissed_by": "user_1",
                     "dismissed_at": "2026-01-01T00:00:00Z",
@@ -1039,10 +1040,12 @@ def test_dismiss_or_fix_lists_one_command_per_open_finding():
     commands = next_actions_commands(with_actions("dismiss_or_fix", checks=checks))
 
     assert commands[0] == (
-        f'iota-hub drafts dismiss {OBS_ID} fp_1 --note "why this is expected"'
+        f"iota-hub drafts dismiss {OBS_ID} a1a1a1a1a1a1a1a1 "
+        '--note "why this is expected"'
     )
     assert commands[1] == (
-        f'iota-hub drafts dismiss {OBS_ID} fp_2 --note "why this is expected"'
+        f"iota-hub drafts dismiss {OBS_ID} b2b2b2b2b2b2b2b2 "
+        '--note "why this is expected"'
     )
     # The dismissed finding is not offered again, and fixing is the other way.
     assert len(commands) == 3
@@ -1059,6 +1062,116 @@ def test_web_only_verbs_say_so_and_unknown_verbs_point_at_the_guide():
     assert next_actions_commands(with_actions("teleport")) == [
         "teleport: see iota-hub guide"
     ]
+
+
+# The commands are run by people and agents, so a value spliced into one is
+# only ever a value of the shape the server issues. A crafted one -- from a
+# compromised server, or a third-party OWC feed -- becomes a placeholder.
+
+HOSTILE = "x; rm -rf ~ #"
+
+
+def test_an_observation_id_that_is_not_a_uuid_is_never_put_on_a_command_line():
+    draft = PublicObservation.model_validate(
+        observation(observation_id=HOSTILE, next_actions=["poll", "submit"])
+    )
+
+    commands = next_actions_commands(draft)
+
+    assert commands == [
+        "iota-hub drafts show <observation-id>",
+        "iota-hub drafts submit <observation-id>",
+    ]
+
+
+def test_a_fingerprint_that_is_not_one_is_never_put_on_a_command_line():
+    checks = {
+        "run_id": "r1",
+        "status": "complete",
+        "open_findings": 1,
+        "findings": [
+            {
+                "check_number": 1,
+                "code": "a",
+                "name": "A",
+                "severity": "error",
+                "message": "m",
+                "fingerprint": HOSTILE,
+            }
+        ],
+    }
+
+    commands = next_actions_commands(with_actions("dismiss_or_fix", checks=checks))
+
+    assert commands[0] == (
+        f'iota-hub drafts dismiss {OBS_ID} <fingerprint> --note "why this is expected"'
+    )
+    assert not any(HOSTILE in command for command in commands)
+
+
+def test_an_owc_event_id_that_is_not_one_is_never_put_on_a_command_line():
+    draft = PublicObservation.model_validate(
+        observation(
+            owc={
+                "choice": None,
+                "owc_event_id": None,
+                "owc_event_url": None,
+                "resolution": {
+                    "status": "ambiguous",
+                    "candidates": [
+                        {
+                            "owc_event_id": HOSTILE,
+                            "owc_event_url": "https://owc.example.test",
+                        },
+                        {
+                            "owc_event_id": "1964-121_1-242136-646569-U088777",
+                            "owc_event_url": "https://owc.example.test",
+                        },
+                        {
+                            "owc_event_id": "1848-49808-171055-648956-T02013-1",
+                            "owc_event_url": "https://owc.example.test",
+                        },
+                        # A UUID is not an OWC id: the second group is not numeric.
+                        {
+                            "owc_event_id": OBS_ID,
+                            "owc_event_url": "https://owc.example.test",
+                        },
+                    ],
+                },
+            }
+        )
+    )
+
+    commands = owc_commands(draft)
+
+    assert commands[:4] == [
+        f"iota-hub drafts owc {OBS_ID} --pick <owc-event-id>",
+        f"iota-hub drafts owc {OBS_ID} --pick 1964-121_1-242136-646569-U088777",
+        f"iota-hub drafts owc {OBS_ID} --pick 1848-49808-171055-648956-T02013-1",
+        f"iota-hub drafts owc {OBS_ID} --pick <owc-event-id>",
+    ]
+    assert not any(HOSTILE in command for command in commands)
+    # The candidate *listing* still shows the value as text (display is
+    # sanitized at the CLI boundary); no command line in the block carries it.
+    commands_in_block = [
+        line for line in check_warnings(draft) if line.lstrip().startswith("iota-hub ")
+    ]
+    assert len(commands_in_block) == 6
+    assert not any(HOSTILE in line for line in commands_in_block)
+
+
+@pytest.mark.parametrize(
+    ("verb", "expected"),
+    [
+        (HOSTILE, "(unrecognized next action): see iota-hub guide"),
+        ("teleport:$(id)", "(unrecognized next action): see iota-hub guide"),
+        ("upload:../etc", f"iota-hub drafts files add {OBS_ID} <slot> <path>"),
+        ("upload:attachment", f"iota-hub drafts files add {OBS_ID} attachment <path>"),
+        ("new_verb:qualified", "new_verb:qualified: see iota-hub guide"),
+    ],
+)
+def test_a_verb_is_only_echoed_when_it_is_shaped_like_one(verb, expected):
+    assert next_actions_commands(with_actions(verb)) == [expected]
 
 
 def test_the_commands_are_plain_ascii():

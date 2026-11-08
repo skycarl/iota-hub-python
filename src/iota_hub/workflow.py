@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
+import shlex
 import shutil
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -555,6 +557,33 @@ class WorkflowMixin:
 # --------------------------------------------------------------------------
 # next_actions → commands
 # --------------------------------------------------------------------------
+#
+# The commands are printed for a person -- or an agent following SKILL.md -- to
+# run, so every value spliced into one is server data that ends up on a command
+# line. A value goes in only when it has the shape the server issues (the
+# patterns below are the server's own); anything else becomes a placeholder,
+# like the ``<path>`` the commands already carry. ``shlex.quote`` is the belt
+# to that brace: for a value of the right shape it is a no-op, so the commands
+# read the same on cmd.exe, which does not understand single quotes.
+
+#: An observation id is a UUID.
+_OBSERVATION_ID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
+)
+#: A finding's fingerprint is the first 16 hex digits of a SHA-256.
+_FINGERPRINT = re.compile(r"[0-9a-f]{16}")
+#: An OWC event id: four numeric groups (the asteroid one may carry a
+#: ``_<n>`` satellite suffix), then one or more alphanumeric groups.
+_OWC_EVENT_ID = re.compile(r"\d+-\d+(?:_\d+)?-\d+-\d+-[0-9A-Za-z]+(?:-[0-9A-Za-z]+)*")
+#: A ``next_actions`` verb, known or not: a snake_case word, maybe ``:``-qualified.
+_VERB = re.compile(r"[a-z0-9_]+(?::[a-z0-9_]+)?")
+
+
+def _argument(value: str | None, pattern: re.Pattern[str], placeholder: str) -> str:
+    """``value`` as one command-line word, or ``placeholder`` if it is not one."""
+    if value is None or not pattern.fullmatch(value):
+        return placeholder
+    return shlex.quote(value)
 
 
 def next_actions_commands(observation: PublicObservation) -> list[str]:
@@ -565,7 +594,9 @@ def next_actions_commands(observation: PublicObservation) -> list[str]:
     it becomes a pointer at ``iota-hub guide`` (the verbs are additive, and a
     client must not pretend a verb it does not know is not there).
     """
-    observation_id = observation.observation_id
+    observation_id = _argument(
+        observation.observation_id, _OBSERVATION_ID, "<observation-id>"
+    )
     commands: list[str] = []
     for verb in observation.next_actions:
         for command in _commands_for(verb, observation_id, observation):
@@ -579,6 +610,8 @@ def _commands_for(
 ) -> list[str]:
     if verb.startswith("upload:"):
         slot = verb.split(":", 1)[1]
+        if slot not in (*SLOTS, ATTACHMENT_SLOT):
+            slot = "<slot>"
         return [f"iota-hub drafts files add {observation_id} {slot} <path>"]
     if verb == "run_checks":
         return [f"iota-hub drafts check {observation_id}"]
@@ -588,7 +621,8 @@ def _commands_for(
         return [f"iota-hub drafts submit {observation_id}"]
     if verb == "dismiss_or_fix":
         commands = [
-            f"iota-hub drafts dismiss {observation_id} {finding.fingerprint} "
+            f"iota-hub drafts dismiss {observation_id} "
+            f"{_argument(finding.fingerprint, _FINGERPRINT, '<fingerprint>')} "
             f'--note "why this is expected"'
             for finding in _open_findings(observation)
         ]
@@ -604,7 +638,9 @@ def _commands_for(
             "Resolve the staged event-files conflict in the web app: the "
             "public API has no verb for it."
         ]
-    return [f"{verb}: see iota-hub guide"]
+    return [
+        f"{_argument(verb, _VERB, '(unrecognized next action)')}: see iota-hub guide"
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -647,10 +683,13 @@ def owc_commands(observation: PublicObservation) -> list[str]:
     """The literal commands that settle an unresolved OWC link, or ``[]``."""
     if not owc_unresolved(observation):
         return []
-    observation_id = observation.observation_id
+    observation_id = _argument(
+        observation.observation_id, _OBSERVATION_ID, "<observation-id>"
+    )
     resolution = observation.owc.resolution  # type: ignore[union-attr]
     commands = [
-        f"iota-hub drafts owc {observation_id} --pick {candidate.owc_event_id}"
+        f"iota-hub drafts owc {observation_id} --pick "
+        f"{_argument(candidate.owc_event_id, _OWC_EVENT_ID, '<owc-event-id>')}"
         for candidate in resolution.candidates  # type: ignore[union-attr]
     ]
     commands.append(f"iota-hub drafts owc {observation_id} --link <owc-url-or-id>")

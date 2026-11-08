@@ -802,6 +802,19 @@ Use the library's `next_actions_commands` to display commands for API actions:
 | `resolve_event_files_conflict` | Instructions to finish in the web app; the public API has no operation for resolving this conflict. |
 | Unknown verb | `<verb>: see iota-hub guide`. Display it without attempting an action. |
 
+These commands are meant to be run, by a person or by an agent, so every
+server value spliced into one is validated first and goes in only when it has
+the shape the server issues: an observation id is a UUID, a fingerprint is 16
+hex digits, an OWC event id is four numeric groups then alphanumeric groups
+(`1917-2448-97311-649282-U033649`), a slot in `upload:<slot>` is a known slot
+name, and an unknown verb is a snake_case word, optionally `:`-qualified. A
+value of any other shape is replaced by a placeholder, like the `<path>` the
+commands already carry: `<observation-id>`, `<fingerprint>`,
+`<owc-event-id>`, `<slot>` or `(unrecognized next action)`. Shell-quote every
+interpolated value with the platform's rules; for a value of the right shape
+this changes nothing, so the commands read the same on every shell. The same
+rules apply to `owc_commands` (§ 8a).
+
 Display errors on stderr as `error: <code>: <message>`, followed by
 `hint: <hint>` when available. Include `details: <one line of JSON>` when
 nonempty, and `retry after <n> s` when the response includes `Retry-After`.
