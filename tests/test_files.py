@@ -212,9 +212,50 @@ def test_an_explicit_path_wins_over_the_rule(tmp_path):
     mapping = map_folder(folder, lightcurve=chosen)
 
     assert mapping.slots["lightcurve"] == chosen
-    assert [path.name for path in mapping.attachments] == [
+    # The folder's other light curve is displaced, not uploaded alongside.
+    assert mapping.attachments == []
+    assert [path.name for path in mapping.ignored] == [
         "20180305_9721_Doty_Observer_POS.csv"
     ]
+
+
+def test_a_displaced_candidate_can_still_be_attached_on_purpose(tmp_path):
+    folder = copy_observation(tmp_path / "obs")
+    chosen = folder / "second_run.csv"
+    chosen.write_text("t,v\n")
+    other = folder / "20180305_9721_Doty_Observer_POS.csv"
+
+    mapping = map_folder(folder, lightcurve=chosen, attach=[other])
+
+    assert mapping.slots["lightcurve"] == chosen
+    assert mapping.attachments == [other]
+    assert mapping.ignored == []
+
+
+def test_an_override_displaces_only_its_own_slots_candidates(tmp_path):
+    folder = copy_observation(tmp_path / "obs")
+    (folder / "plot.png").write_bytes(b"png")
+    outside = tmp_path / "elsewhere.csv"
+    outside.write_text("t,v\n")
+
+    mapping = map_folder(folder, lightcurve=outside)
+
+    assert [path.name for path in mapping.attachments] == ["plot.png"]
+    assert [path.name for path in mapping.ignored] == [
+        "20180305_9721_Doty_Observer_POS.csv"
+    ]
+
+
+def test_an_attached_file_is_not_reported_as_ignored(tmp_path):
+    folder = copy_observation(tmp_path / "obs")
+    plot = folder / "plot.png"
+    plot.write_bytes(b"png")
+    (folder / "notes.txt").write_text("notes\n")
+
+    mapping = map_folder(folder, attachments=False, attach=[plot])
+
+    assert mapping.attachments == [plot]
+    assert [path.name for path in mapping.ignored] == ["notes.txt"]
 
 
 def test_an_explicit_path_may_come_from_outside_the_folder(tmp_path):
@@ -461,7 +502,8 @@ def test_an_explicit_aperture_record_wins_over_the_rule(tmp_path):
     mapping = map_folder(folder, aperture_record=folder / "X.pymovie")
 
     assert mapping.slots["aperture_record"].name == "X.pymovie"
-    assert [path.name for path in mapping.attachments] == ["X_Tangra.lc"]
+    assert mapping.attachments == []
+    assert [path.name for path in mapping.ignored] == ["X_Tangra.lc"]
 
 
 def test_an_explicit_log_may_be_any_txt(tmp_path):

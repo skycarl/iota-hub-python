@@ -581,10 +581,15 @@ checks the `.pymovie` signature; the client checks its extension.
   `details.missing`. Name the appropriate override flag in the error.
 - Spell flags with hyphens in place of underscores, including
   `--aperture-record`.
-- Explicit paths override automatic selection for that slot. Validate the
+- Explicit paths override automatic selection for that slot. Resolve a
+  relative explicit path (`--report`, `--lightcurve`, ..., `--attach`) against
+  the current working directory, not the submitted folder. Validate the
   extension, raising `invalid_extension` if it is wrong. `--log` accepts any
   `.txt` filename, including Tangra fit logs and AOTA exports; the filename
   only needs `log` for automatic selection.
+- The folder's other candidates for an overridden slot are not uploaded as
+  attachments. Report them as `ignored`, displayed as "not uploaded", as with
+  `--no-attachments`.
 - Upload remaining files as attachments, sorted by filename codepoint for
   consistent ordering across platforms.
 - `--no-attachments` (library: `attachments=False`) excludes those extra files
@@ -597,8 +602,9 @@ checks the `.pymovie` signature; the client checks its extension.
   why a file is missing. Explicit paths (`--report`, `--attach`, ...) are the
   caller's own choice and are not subject to this rule.
 - Repeated `--attach PATH` (library: `attach=`) adds files from any location,
-  even with `--no-attachments`. Do not add a path twice if it is already mapped
-  to a slot or included as an attachment.
+  even with `--no-attachments` or over a slot override's displaced candidate.
+  Do not add a path twice if it is already mapped to a slot or included as an
+  attachment. An attached path is never also reported as `ignored`.
 - Support one observation per directory. Folders containing several stations
   (`_POS-1`, `_POS-2`) are not supported; multiple reports cause a selection
   error. Use a separate folder for each station.

@@ -1023,7 +1023,7 @@ def _dry_run(directory: Path, overrides: dict[str, Any]) -> None:
 def _render_not_uploaded(ignored: list[str], symlinks: list[str]) -> None:
     """What the folder held that was not sent, and the reason for each group."""
     if ignored:
-        _out(f"Not uploaded (--no-attachments): {', '.join(ignored)}")
+        _out(f"Not uploaded: {', '.join(ignored)}")
     if symlinks:
         _out(f"Not uploaded (symbolic links are skipped): {', '.join(symlinks)}")
 

@@ -236,6 +236,57 @@ def test_dry_run_maps_the_folder_without_calling_anything(
     assert "Target:" not in result.stdout
 
 
+def test_dry_run_an_override_leaves_the_other_candidate_unsent(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    for source in (REPORT, LIGHTCURVE, LOG):
+        (folder / source.name).write_bytes(source.read_bytes())
+    chosen = folder / "final.csv"
+    chosen.write_text("t,v\n", encoding="utf-8")
+
+    result = run(
+        runner,
+        "--json",
+        "submit",
+        str(folder),
+        "--dry-run",
+        "--lightcurve",
+        str(chosen),
+    )
+
+    assert result.exit_code == 0
+    document = json.loads(result.stdout)
+    assert {"lightcurve": "final.csv"}.items() <= {
+        item["slot"]: item["filename"] for item in document["uploads"]
+    }.items()
+    assert document["attachments"] == []
+    assert document["ignored"] == [LIGHTCURVE.name]
+
+
+def test_dry_run_an_attached_file_is_not_also_not_uploaded(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    for source in (REPORT, LIGHTCURVE, LOG):
+        (folder / source.name).write_bytes(source.read_bytes())
+    plot = folder / "plot.png"
+    plot.write_bytes(b"png")
+
+    args = ["submit", str(folder), "--dry-run", "--no-attachments", "--attach"]
+    result = run(runner, *args, str(plot))
+    assert result.exit_code == 0
+    assert "attachment  plot.png" in result.stdout
+    assert "Not uploaded" not in result.stdout
+
+    result = run(runner, "--json", *args, str(plot))
+    document = json.loads(result.stdout)
+    assert [item["filename"] for item in document["attachments"]] == ["plot.png"]
+    assert document["ignored"] == []
+
+
 def test_dry_run_announces_even_the_production_target(
     runner: CliRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -322,7 +373,7 @@ def test_dry_run_lists_attachments_and_no_attachments_ignores_them(
     result = run(runner, "submit", str(folder), "--dry-run", "--no-attachments")
     assert result.exit_code == 0
     assert "X_Tangra.xml" not in result.stdout.split("Not uploaded")[0]
-    assert "Not uploaded (--no-attachments): X_Tangra.xml" in result.stdout
+    assert "Not uploaded: X_Tangra.xml" in result.stdout
 
 
 def test_attach_adds_a_file_to_the_dry_run(runner: CliRunner, tmp_path: Path) -> None:

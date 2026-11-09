@@ -129,10 +129,16 @@ def map_folder(
     rule exists to tell two ``.txt`` files apart, and a caller who names the
     file has already done that.
 
+    Explicit paths are used as given, so a relative one is relative to the
+    current working directory, not to ``directory``. The folder's other
+    candidates for an overridden slot are not attachments: they are reported
+    on ``ignored``.
+
     Every other file in the listing is an attachment; ``attachments=False``
     leaves them out and reports them on ``ignored`` instead. ``attach`` adds
-    files from anywhere (honoured either way). The attachment rules are then
-    checked for all of them at once (:func:`check_attachments`).
+    files from anywhere (honoured either way), and a file it adds is not
+    reported as ignored. The attachment rules are then checked for all of
+    them at once (:func:`check_attachments`).
     """
     base = Path(directory)
     entries, symlinks = _list_folder(base)
@@ -148,12 +154,20 @@ def map_folder(
     # Resolved, so an override spelled ``./dir/lc.csv`` still matches the
     # ``dir/lc.csv`` the listing produced and is not reported as ignored.
     claimed: set[Path] = set()
+    # The folder's other candidates for an overridden slot. The caller chose a
+    # different file for that slot, so these are not uploaded as attachments
+    # either: a second light curve riding along would contradict the choice.
+    displaced: set[Path] = set()
     for slot in SLOTS:
-        if slot in overrides:
-            slots[slot] = overrides[slot]
-            claimed.add(overrides[slot].resolve())
-            continue
         candidates = [entry for entry in entries if _matches(slot, entry)]
+        if slot in overrides:
+            chosen = overrides[slot].resolve()
+            slots[slot] = overrides[slot]
+            claimed.add(chosen)
+            displaced.update(
+                entry.resolve() for entry in candidates if entry.resolve() != chosen
+            )
+            continue
         if len(candidates) > 1:
             raise _ambiguous(slot, candidates)
         if candidates:
@@ -164,8 +178,16 @@ def map_folder(
     mapping = FolderMapping(
         directory=base,
         slots=slots,
-        attachments=leftovers if attachments else [],
-        ignored=[] if attachments else leftovers,
+        attachments=[
+            entry
+            for entry in leftovers
+            if attachments and entry.resolve() not in displaced
+        ],
+        ignored=[
+            entry
+            for entry in leftovers
+            if not attachments or entry.resolve() in displaced
+        ],
         symlinks=symlinks,
     )
     missing = mapping.missing_required()
@@ -182,10 +204,15 @@ def map_folder(
                 hint="Check the path passed to --attach.",
                 details={"missing": [ATTACHMENT_SLOT], "path": str(path)},
             )
-        if path.resolve() in seen or path.resolve() in claimed:
+        resolved = path.resolve()
+        if resolved in seen or resolved in claimed:
             continue
-        seen.add(path.resolve())
+        seen.add(resolved)
         mapping.attachments.append(path)
+        # Attached on purpose, so it is no longer "not uploaded".
+        mapping.ignored = [
+            entry for entry in mapping.ignored if entry.resolve() != resolved
+        ]
     check_attachments(mapping.attachments)
     return mapping
 
