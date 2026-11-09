@@ -952,9 +952,10 @@ match is `2094-33777-995661-234407-U152286`. Against development, the expected
 `submit --draft` result is `ready`, with no open findings or skipped checks.
 
 Check 12 uses the station prediction from the light curve's Astrid
-`#OCCULTATION-PREDICTED-CENTER-TIME` key. The report contains no coordinates.
+`#OCCULTATION-PREDICTED-CENTER-TIME` key. The report's coordinates are fictional
+round numbers (32 00 00 N, 111 00 00 W), not a real station.
 
 Fixtures in this public repository must use fictional observer identities.
-These fixtures use "Test Observer", `cli-smoke@example.com`, no coordinates
-and no real station. Check new fixtures for personal information before
+These fixtures use "Test Observer", `cli-smoke@example.com`, fictional
+round-number coordinates and no real station. Check new fixtures for personal information before
 committing them.
