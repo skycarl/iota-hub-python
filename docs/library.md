@@ -13,6 +13,9 @@ Or add it to a uv project:
 
     uv add iota-hub
 
+To upgrade, run `pip install --upgrade iota-hub`, or
+`uv lock --upgrade-package iota-hub` in a uv project.
+
 ## Connect
 
 Create an [API key](https://iota-hub.com/developers/keys) and set the
@@ -31,7 +34,8 @@ Use the same client for calls to the same API. The `with` block closes its
 connections when finished. The examples below assume an open `client`.
 
 The default API address is `https://api.iota-hub.com`. Pass `base_url` to use
-another deployment. The library adds `/public/v1` to this address.
+another deployment. The library adds `/public/v1` to this address; an address
+copied with `/public/v1` already on the end also works.
 
 To use settings saved by the CLI, call `resolve()`:
 
@@ -46,9 +50,19 @@ with Client(settings.api_key, settings.base_url) as client:
 Omit `profile` to use the default selection. Settings passed to `resolve()`
 take precedence over environment variables (`IOTA_HUB_API_KEY`,
 `IOTA_HUB_BASE_URL`, `IOTA_HUB_PROFILE`), followed by saved settings and defaults.
-`profile` only selects saved settings: `IOTA_HUB_API_KEY` still overrides its
-saved key, and an `IOTA_HUB_BASE_URL` that differs from the URL saved with that
-key raises `IotaHubError` with code `invalid_config`.
+
+A saved key stays with the URL saved beside it. These raise `IotaHubError`
+with code `invalid_config` instead of sending a key to the wrong place:
+
+- The key comes from the profile, and `resolve(base_url=...)` or
+  `IOTA_HUB_BASE_URL` differs from the profile's saved URL. Use a profile
+  saved for that URL, or pass a key for it with `api_key=` or
+  `IOTA_HUB_API_KEY`.
+- `IOTA_HUB_API_KEY` is set without `IOTA_HUB_BASE_URL` (or `base_url=`), and
+  the selected profile stores a non-production URL. Set the URL as well, or
+  unset `IOTA_HUB_API_KEY` to use the profile's key.
+
+`resolve()` reads `os.environ` unless you pass `env=`.
 
 ## Submit an observation
 
@@ -71,7 +85,7 @@ containing files for multiple stations.
 | `attach=[path, ...]` | Add attachments explicitly. |
 | `submit=False` | Upload and run checks, but leave the observation as a draft. |
 | `wait=False` | Return after uploading and starting checks, without waiting or submitting. |
-| `timeout=900` | Set the wait for checks to 900 seconds. The default is 600. Request time is additional. |
+| `timeout=900` | Set the wait for checks to 900 seconds. The default is 600. Request time is additional. When it expires, `IotaHubError` with code `timeout` is raised; the draft is kept (`.details["observation_id"]`) and you can wait again with `client.wait_for_checks(observation_id)`. |
 | `on_progress=print` | Print progress messages. You can supply your own function instead. |
 
 If the files are in different folders, use `submit_files`:
@@ -100,6 +114,11 @@ If more than one file matches, specify which one to use:
 ```python
 result = client.submit_folder("observation", lightcurve="observation/final.csv")
 ```
+
+Explicit paths are used as given, so a relative path is relative to the
+current working directory, not to the folder. The folder's other candidates
+for that slot are not uploaded; they are listed in `result.ignored`. Pass one
+in `attach=[...]` to upload it as an attachment anyway.
 
 A folder with no report raises `MappingError` with code `missing_files`.
 Multiple matches raise `MappingError` with code `ambiguous_files`. Both stop
@@ -138,13 +157,16 @@ if result.outcome == "needs_attention":
 ```
 
 `result.skipped_checks` lists checks that could not run. These do not prevent
-submission. If the Hub could not select an Occult Watcher Cloud (OWC) event,
-`result.owc_commands` lists CLI commands for linking one.
+submission. Check 12 ("Near predicted time"), for example, needs an Occult
+Watcher Cloud (OWC) event. If the Hub could not select one,
+`result.owc_commands` lists CLI commands for linking one. The library
+equivalent is `update_draft` (see below).
 
 `result.uploads` contains the selected filenames by file type.
 `result.attachments` lists attachment filenames, `result.ignored` lists
-files excluded by `attachments=False`, and `result.symlinks` lists symbolic
-links found in the folder, which are never uploaded.
+files not uploaded (excluded by `attachments=False`, or other candidates for a
+slot you chose a file for), and `result.symlinks` lists symbolic links found
+in the folder, which are never uploaded.
 
 ## Fix and resubmit
 
@@ -159,8 +181,8 @@ if observation.readiness and observation.readiness.state == "ready":
     client.submit_draft(obs_id, version=observation.version)
 ```
 
-Replacing a file automatically starts checks. To request another check run,
-call `client.run_checks(obs_id)`.
+Replacing a file in a draft automatically starts checks. To request another
+check run, call `client.run_checks(obs_id)`.
 
 You can also remove a file or add an attachment:
 
@@ -178,7 +200,12 @@ client.dismiss_finding(obs_id, fingerprint, note="why this is acceptable")
 client.undo_dismissal(obs_id, fingerprint)  # Restore the finding if needed
 ```
 
-Findings about missing required items cannot be dismissed.
+Missing requirements (`readiness.missing_required`) cannot be dismissed.
+Upload the missing file with `replace_file`. If a POS or UNSURE observation
+was processed with software that produces no light curve or log, you can
+instead submit without them: call `update_draft(obs_id, version=...,
+bypass_required_files=True, comments="...")` and explain in `comments` for
+the reviewer. Missing identity fields need a corrected report.
 
 Use `update_draft` to set a reviewer comment, select an OWC event or confirm
 an asteroid identifier. Pass the observation's latest `version` so the API
@@ -189,8 +216,22 @@ observation = client.get_observation(obs_id)
 client.update_draft(obs_id, version=observation.version, comments="Clouds after R.")
 ```
 
-The API raises `ConflictError` if that version is out of date. See the
-[HTTP API guide](https://iota-hub.com/developers/api) for the OWC options.
+To settle the OWC link, pass `owc_link_choice` with `"picked"` and one of
+`observation.owc.resolution.candidates[].owc_event_id`, `"pasted"` and any
+OWC event ID or URL, or `"proceed_unlinked"` with no `owc_event`:
+
+```python
+candidate = observation.owc.resolution.candidates[0]
+client.update_draft(
+    obs_id,
+    version=observation.version,
+    owc_link_choice="picked",
+    owc_event=candidate.owc_event_id,
+)
+```
+
+The API raises `ConflictError` (`stale_version`) if that version is out of
+date: read the observation again before retrying.
 
 `submit_draft` succeeds if the observation is already submitted.
 `delete_draft(obs_id)` deletes an unsubmitted draft.
@@ -204,7 +245,7 @@ or submitted observation:
 answer = client.check_observation(
     asteroid_name="Doty",
     asteroid_id="9721",
-    star_id="1234-56789",
+    star_id="123456",
     observed_date="2018-03-05",
 )
 if answer.found == "observation":
@@ -217,9 +258,19 @@ if answer.found == "observation":
 | `event` | No matching observation belongs to you, but a matching event exists. |
 | `none` | Neither was found. |
 
-Use the returned observation ID to continue the draft or update the submission.
-Include `station` and `star_catalog` when needed to identify the observation.
-An event lookup requires `asteroid_id`.
+Take the values from the report; the example matches the Doty example report,
+whose star is `TYC 123456`. All arguments are keyword-only strings:
+
+- `observed_date` is the UTC date, `YYYY-MM-DD`.
+- `asteroid_name` and `star_id` must match the report as it spells them; case
+  and repeated spaces are ignored. Write `"1999 RM158"`, not `"1999RM158"`.
+- Include `station` and `star_catalog` when needed to identify the
+  observation.
+- The event is looked up only when you pass `asteroid_id`. Without it, `none`
+  only means you have no matching draft or observation.
+
+If several of your observations match, the newest is returned. Use the
+returned observation ID to continue the draft or update the submission.
 
 ## Update a submitted observation
 
@@ -228,7 +279,14 @@ changes to `amended`. A replacement report must describe the same observation;
 otherwise, the API rejects it with `identity_changed`.
 
 Once the event enters review, the owner can no longer change its files
-(`already_processed`). Contact a coordinator if a correction is needed.
+(`already_processed`). The observation's `status` is then `locked`, so
+`client.get_observation(obs_id).status` tells you before you upload. Contact a
+coordinator if a correction is needed.
+
+Replacing a file in a submitted observation runs the observer checks again,
+but their results appear only on the observation's page on IOTA Hub: a
+submitted observation's `checks` is `None` in the API, and `run_checks` and
+dismissals work on drafts only.
 
 ## Read observations and download files
 
@@ -249,7 +307,9 @@ client.download_files("event", event_id, "downloads/", slot="occelmnt")
 `list_observations` and `list_events` methods return one page. Filters use
 the parameter names in the [API reference](https://iota-hub.com/developers/reference).
 
-Downloads preserve existing files. Pass `overwrite=True` to replace them.
+If a destination file already exists, `download_files` raises `IotaHubError`
+with code `file_exists` before downloading anything. Pass `overwrite=True` to
+replace existing files.
 Without reviewer access, an event's file list is empty until the event is `COMPLETE`.
 
 ## Errors
@@ -257,6 +317,12 @@ Without reviewer access, an event's file list is empty until the event is `COMPL
 API and connection errors raise `IotaHubError`. Its `.code` identifies the
 error, `.message` explains it, and `.hint` suggests what to do next.
 Use `.code` in error-handling logic, since message wording can change.
+
+Hints are worded for the CLI and may name its flags. The library equivalents
+are: `--force` is `overwrite=True`, `--lightcurve PATH` (and the other slot
+flags) is `lightcurve=PATH`, `--no-attachments` is `attachments=False`,
+`--attach PATH` is `attach=[PATH]`, and `--profile NAME` is
+`resolve(profile=NAME)`.
 
 | Exception | Meaning |
 | --------- | ------- |

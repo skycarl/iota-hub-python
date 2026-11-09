@@ -470,7 +470,7 @@ def test_the_owc_and_skipped_fields_parse(client, mock_api):
                 "status": "complete",
                 "skipped": [
                     {
-                        "check_number": 11,
+                        "check_number": 12,
                         "code": "observation_predicted_time",
                         "name": "Near predicted time",
                         "status": "skipped",
@@ -490,7 +490,7 @@ def test_the_owc_and_skipped_fields_parse(client, mock_api):
 
     observation = client.get_observation("obs_1")
 
-    assert observation.checks.skipped[0].check_number == 11
+    assert observation.checks.skipped[0].check_number == 12
     assert observation.owc.choice == "matched"
     assert observation.owc.resolution.status == "matched"
 

@@ -403,7 +403,8 @@ After polling ends, report every skipped check through `on_progress` as a
 all modes, buffering it in JSON mode until a result is returned (§ 13).
 Include the same information in the JSON result.
 
-Observer check 11 needs an Occult Watcher Cloud (OWC) link. The server attempts
+Observer check 12 ("Near predicted time") needs an Occult Watcher Cloud (OWC)
+link. The server attempts
 to match an event after reading the report and returns `owc.resolution`.
 The result may be `ambiguous`, `mismatch`, `not_found` or `error`.
 
@@ -647,9 +648,13 @@ removes one. IDs appear in `attachments[]` and `drafts show`.
 ### Find an existing observation
 
 The transport method is
-`check_observation(asteroid_name, star_id, observed_date, *, asteroid_id,
-star_catalog, station)`. It calls `POST /observations/check`, which uses the
-`read` scope and read rate limit. The CLI equivalent is:
+`check_observation(*, asteroid_name, star_id, observed_date, asteroid_id=None,
+star_catalog=None, station=None)`, with every argument keyword-only and a
+string. `observed_date` is the UTC date, `YYYY-MM-DD`. It calls
+`POST /observations/check`, which uses the `read` scope and read rate limit.
+The server ignores case and repeated whitespace but otherwise matches names
+and star IDs as the report spells them (`1999 RM158`, not `1999RM158`). The
+CLI equivalent is:
 
 ```text
 iota-hub observations check --asteroid-name <name> --star-id <star> --date YYYY-MM-DD [--asteroid-id <number>] [--star-catalog <catalog>] [--station <station>]
@@ -892,6 +897,11 @@ Use the same fields and file layout as a real submission:
 The JSON result includes `target`. Send no requests and require no key, but
 apply the same attachment checks as a real submission.
 
+A dry run's `uploads` is a list of `{slot, filename, path, size}` and its
+`attachments` a list of `{filename, path, size}`, while `submit --json` gives
+`uploads` as `{slot: filename}` and `attachments` as filenames. Both shapes
+are part of the contract; callers must not assume one from the other.
+
 ### Observation and event identities
 
 Use the same identity fields throughout human output:
@@ -921,7 +931,8 @@ The JSON `found` values remain unchanged.
 
 It tests selection of the three files required for a positive observation,
 including the `log` filename rule, without a VizieR or aperture record file.
-Development smoke tests submit and delete it. Ship the same fixture in every
+Development smoke tests upload it with `submit --draft` and then delete the
+draft; a submitted observation cannot be deleted. Ship the same fixture in every
 client repository so tests use the same input.
 
 `tests/fixtures/clean-observation/` contains the corresponding valid submission
@@ -931,7 +942,7 @@ real event (33777) 1999 RM158 / UCAC4 326-152286 on 2026-09-26. The expected OWC
 match is `2094-33777-995661-234407-U152286`. Against development, the expected
 `submit --draft` result is `ready`, with no open findings or skipped checks.
 
-Check 11 uses the station prediction from the light curve's Astrid
+Check 12 uses the station prediction from the light curve's Astrid
 `#OCCULTATION-PREDICTED-CENTER-TIME` key. The report contains no coordinates.
 
 Fixtures in this public repository must use fictional observer identities.

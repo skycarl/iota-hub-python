@@ -22,12 +22,16 @@ uvx iota-hub submit
 run `uv tool install iota-hub` or `pipx install iota-hub`, then use `iota-hub`
 in place of `uvx iota-hub`.
 
+To upgrade, run `uv tool upgrade iota-hub` or `pipx upgrade iota-hub`. `uvx`
+can reuse a cached older version; run `uvx iota-hub@latest ...` to get the
+latest release.
+
 The CLI creates a draft, uploads the files directly to storage, waits for checks
 and submits when the draft is ready. Progress goes to stderr; the result goes
 to stdout. A successful result includes these lines (other fields omitted):
 
 ```text
-Observation:  obs_01HZY4A1K2QX
+Observation:  3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936
 Outcome:      submitted
 ```
 
@@ -45,8 +49,8 @@ submissions do not delete the draft.
 | `--timeout S` | Set the wait for checks in seconds. The default is 600; request time is additional. |
 
 Skipped checks appear as warnings with a reason for each one. They do not block
-submission. Check 11, for example, needs an Occult Watcher Cloud (OWC) event
-link. If the Hub cannot select an event, the CLI lists candidates and commands
+submission. Check 12 ("Near predicted time"), for example, needs an Occult
+Watcher Cloud (OWC) event link. If the Hub cannot select an event, the CLI lists candidates and commands
 to choose one (`drafts owc <id> --pick <owc_event_id>`), provide a link
 (`--link <url>`) or proceed without one (`--none`). Use `submit --draft` to
 review these warnings before submitting.
@@ -55,10 +59,13 @@ If an earlier command stopped or you lost its output, check for an existing
 observation before running `submit` again:
 
 ```bash
-iota-hub observations check --asteroid-id 9721 --asteroid-name Doty --star-id 1234-56789 --date 2018-03-05
+iota-hub observations check --asteroid-id 9721 --asteroid-name Doty --star-id 123456 --date 2018-03-05
 ```
 
-This finds your draft or submission, or reports whether the event exists.
+Take the values from the report (the Doty example report's star is
+`TYC 123456`), spelled as the report spells them, with the UTC date. This
+finds your newest matching draft or submission, or reports whether the event
+exists. The event is looked up only with `--asteroid-id`.
 A new `submit` command creates a new draft. To submit an existing draft, use
 `iota-hub drafts submit <id>`. That command also succeeds if the observation
 has already been submitted.
@@ -93,7 +100,10 @@ iota-hub submit --report observation.xlsx --lightcurve corrected.csv
 ```
 
 The available flags are `--report`, `--lightcurve`, `--log`, `--vizier` and
-`--aperture-record`. Explicit paths must have the correct extension. `--log`
+`--aperture-record`. Explicit paths must have the correct extension, and a
+relative path is relative to your current directory, not to the folder. The
+folder's other candidates for a slot you choose are not uploaded; add
+`--attach PATH` to upload one as an attachment. `--log`
 accepts any `.txt` filename, including a Tangra fit log. A folder with both a
 spreadsheet and a JSON file needs `--report` to select one.
 
@@ -118,10 +128,11 @@ To add or remove an attachment later:
 
 ```bash
 iota-hub drafts files add <id> attachment <path>
-iota-hub drafts files rm <id> attachment <attachment_id>
+iota-hub drafts files rm <id> attachment <attachment_id> --yes
 ```
 
-Find attachment IDs with `iota-hub drafts show <id>`.
+`--yes` confirms the removal; without a terminal the command otherwise fails
+with `confirmation_required`. Find attachment IDs with `iota-hub drafts show <id>`.
 
 ### Correct a submitted observation
 
@@ -134,7 +145,10 @@ iota-hub drafts files add <id> <slot> <path>
 The observation becomes `amended`. A replacement report must describe the same
 observation; otherwise the API returns `identity_changed` (exit `2`) and leaves
 the original unchanged. Once the event is in review, replacements return
-`already_processed` (exit `1`). Contact a coordinator for changes at that stage.
+`already_processed` (exit `1`); the observation's `status` is then `locked`.
+Contact a coordinator for changes at that stage. A replacement runs the
+observer checks again, but their results appear only on the observation's
+page on IOTA Hub, not in the CLI.
 
 ## API keys and profiles
 
@@ -173,9 +187,12 @@ iota-hub submit --profile dev
 ```
 
 Settings use flags first, then environment variables, saved settings and
-defaults. If `IOTA_HUB_BASE_URL` differs from the address saved with a profile's
-key, the CLI returns `invalid_config`. Unset it, provide `IOTA_HUB_API_KEY`
-as well, or explicitly select the address with `--base-url`.
+defaults. A saved key stays with the address saved beside it: if `--base-url`
+or `IOTA_HUB_BASE_URL` differs from a profile key's address, the CLI returns
+`invalid_config`. Log in to a profile for that address, or set
+`IOTA_HUB_API_KEY` to a key for it. `IOTA_HUB_API_KEY` needs its own address
+too: with a profile that stores a non-production address, set
+`IOTA_HUB_BASE_URL` as well, or unset `IOTA_HUB_API_KEY` to use the profile.
 
 `--json`, `--profile` and `--base-url` work before or after the subcommand.
 If the same option appears in both places, the value after the subcommand wins.
@@ -212,9 +229,11 @@ Errors go to stderr, with stdout left empty:
 ```
 
 Check `code`, not the message text. Invalid arguments return `usage_error`
-with exit code `2`. Errors after draft creation include `details.observation_id`
-so you can recover the draft. A network failure during a download returns
-`transport_error` with the file's `details.slot` and `details.filename`.
+with exit code `2`. A `submit` that ends with `needs_attention` exits `4` with
+its full result on stdout, not an error. Errors after draft creation include
+`details.observation_id` so you can recover the draft. A network failure during
+a download returns `transport_error` with the file's `details.slot` and
+`details.filename`.
 
 In JSON mode, progress and target messages are buffered. They are printed to
 stderr when a result is returned and discarded on error, leaving only the JSON
@@ -224,8 +243,8 @@ do not prompt. Destructive commands require `--yes` without a terminal.
 | Exit code | Meaning |
 | --------- | ------- |
 | `0` | Success, including `--draft`, `--dry-run` and `--no-wait`. |
-| `1` | Other errors, including server and network failures. |
-| `2` | Invalid arguments or local files, ambiguous file selection, or `identity_changed`. |
+| `1` | Other errors, including server and network failures, local configuration problems (`invalid_config`) and existing download files (`file_exists`). |
+| `2` | Invalid arguments or files, including ones the server rejects (`validation_error`), ambiguous file selection, or `identity_changed`. |
 | `3` | Missing key or an authorization error. |
 | `4` | Findings to address, missing requirements or a check timeout. |
 | `5` | Rate limit still exceeded after automatic retries. |
@@ -238,16 +257,21 @@ naming it; run `drafts list` before submitting again.
 
 `submit --json` includes `next_commands` for available actions, `skipped_checks`
 with their reasons and `owc_commands` for an unresolved OWC link. Skipped checks
-and an unresolved link do not change the exit code.
+and an unresolved link do not change the exit code. Its `uploads` is
+`{slot: filename}`; `submit --dry-run --json` lists `uploads` as
+`[{slot, filename, path, size}]` instead.
+
+`auth status` exits `0` even when the key check fails. Read `check` in
+`auth status --json` (`valid` or the API's error code).
 
 The client retries temporary API failures. Do not wrap calls in your own retry
-loop; see the [retry rules](docs/client-conventions.md#6-retries).
+loop; see the [retry rules](https://github.com/skycarl/iota-hub-python/blob/main/docs/client-conventions.md#6-retries).
 
 Output is styled on a terminal and plain when piped, under `--json` or when
 `NO_COLOR` is set. Plain labels use ASCII for compatibility with Windows
 consoles.
 
-Run `iota-hub guide` for the full offline CLI guide. [SKILL.md](SKILL.md)
+Run `iota-hub guide` for the full offline CLI guide. [SKILL.md](https://github.com/skycarl/iota-hub-python/blob/main/SKILL.md)
 provides instructions for agents submitting or managing observations.
 
 ## Python library
@@ -255,10 +279,12 @@ provides instructions for agents submitting or managing observations.
 Install with `pip install iota-hub` or `uv add iota-hub`:
 
 ```python
-import os
-from iota_hub import Client
+from iota_hub import Client, resolve
 
-with Client(api_key=os.environ["IOTA_HUB_API_KEY"]) as client:
+# The key and address from IOTA_HUB_API_KEY and IOTA_HUB_BASE_URL, or from a
+# profile saved with `iota-hub auth login`.
+settings = resolve()
+with Client(settings.api_key, settings.base_url) as client:
     result = client.submit_folder("path/to/observation")
     print(result.outcome, result.observation_id)
 
@@ -285,9 +311,9 @@ Use the same client to look up observations, replace files or download them:
 ```python
 # These examples assume an open client and an existing observation_id.
 existing = client.check_observation(
-    asteroid_id=9721,
+    asteroid_id="9721",
     asteroid_name="Doty",
-    star_id="1234-56789",
+    star_id="123456",
     observed_date="2018-03-05",
 )
 client.replace_file(observation_id, "lightcurve", "fixed.csv")
@@ -311,7 +337,7 @@ All library errors inherit from `IotaHubError`, with `code`, `message`, `hint`,
 `NotFoundError`, `ConflictError`, `RequestError` or `TransportError` to handle
 an error category.
 
-See the [Python library guide](docs/library.md) for the full workflow and
+See the [Python library guide](https://github.com/skycarl/iota-hub-python/blob/main/docs/library.md) for the full workflow and
 examples. It is also published at
 [iota-hub.com/developers/library](https://iota-hub.com/developers/library).
 
@@ -319,15 +345,16 @@ examples. It is also published at
 
 The default API address is `https://api.iota-hub.com`. The public API's
 production release is pending. Until then, use the development deployment and
-create a key there. Its `/developers` page lists the development API address.
+create a key there. Its `/developers` page lists the development API address;
+paste it into `--base-url` as shown.
 
 ```bash
 iota-hub auth login --profile dev --base-url <dev-base-url>
 iota-hub observations list --profile dev
 ```
 
-`--base-url` and `IOTA_HUB_BASE_URL` take the API base address without
-`/public/v1`; the client adds that path. For a local API checkout, use
+`--base-url` and `IOTA_HUB_BASE_URL` take the API base address, with or
+without a trailing `/public/v1`; the client adds that path when it is missing. For a local API checkout, use
 `--base-url http://localhost:8000`. The package has no built-in development URL.
 
 ## HTTP API and other clients
@@ -337,8 +364,8 @@ To call `/public/v1` directly, use the
 [interactive reference](https://iota-hub.com/developers/reference) or
 [Markdown guide](https://iota-hub.com/developers/guide.md).
 
-For a client in another language, start with [spec/openapi.json](spec/openapi.json)
-and [client conventions](docs/client-conventions.md). The OpenAPI document is
+For a client in another language, start with [spec/openapi.json](https://github.com/skycarl/iota-hub-python/blob/main/spec/openapi.json)
+and [client conventions](https://github.com/skycarl/iota-hub-python/blob/main/docs/client-conventions.md). The OpenAPI document is
 copied from the deployed API and checked for changes in CI. The conventions
 define configuration, retries, polling, file selection, exit codes and output.
 
@@ -364,4 +391,4 @@ project.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/skycarl/iota-hub-python/blob/main/LICENSE).

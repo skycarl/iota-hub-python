@@ -1097,7 +1097,7 @@ def _hostile_observation() -> dict:
                     how_to_fix="Re-export\x1b]0;pwned\x1b\\ the curve.",
                 )
             ],
-            skipped=[{**SKIPPED_11, "reason": "No match\x1b[2K: pick one."}],
+            skipped=[{**SKIPPED_12, "reason": "No match\x1b[2K: pick one."}],
         ),
         next_actions=["dismiss_or_fix"],
     )
@@ -1690,8 +1690,8 @@ def test_a_usage_error_without_json_is_clicks_own_message(
 
 OWC_A = "2018-9721-12345-678901-T0001"
 OWC_B = "2018-9721-12345-678901-T0002"
-SKIPPED_11 = {
-    "check_number": 11,
+SKIPPED_12 = {
+    "check_number": 12,
     "code": "observation_predicted_time",
     "name": "Near predicted time",
     "status": "skipped",
@@ -1727,12 +1727,12 @@ def ambiguous_owc(choice=None):
 def test_submit_warns_about_skipped_checks_and_the_owc_link_but_does_not_block(
     runner: CliRunner, mock_api: MockAPI
 ) -> None:
-    """A ready draft with check 11 skipped is still submitted -- loudly."""
+    """A ready draft with check 12 skipped is still submitted -- loudly."""
     script_submit(
         mock_api,
         observation(
             readiness=ready(),
-            checks=checks(skipped=[SKIPPED_11]),
+            checks=checks(skipped=[SKIPPED_12]),
             owc=ambiguous_owc(),
         ),
     )
@@ -1742,7 +1742,7 @@ def test_submit_warns_about_skipped_checks_and_the_owc_link_but_does_not_block(
 
     assert result.exit_code == 0, result.output
     assert "WARNING: 1 check did not run" in result.stderr
-    assert "[11] Near predicted time: No OWC match: 2 candidates" in result.stderr
+    assert "[12] Near predicted time: No OWC match: 2 candidates" in result.stderr
     assert "WARNING: no OWC link (ambiguous)" in result.stderr
     assert f"iota-hub drafts owc {OBS_ID} --pick {OWC_A}" in result.stderr
     assert f"iota-hub drafts owc {OBS_ID} --none" in result.stderr
@@ -1756,7 +1756,7 @@ def test_submit_json_carries_the_skipped_checks_and_owc_commands(
         mock_api,
         observation(
             readiness=ready(),
-            checks=checks(skipped=[SKIPPED_11]),
+            checks=checks(skipped=[SKIPPED_12]),
             owc=ambiguous_owc(),
         ),
     )
@@ -1766,7 +1766,7 @@ def test_submit_json_carries_the_skipped_checks_and_owc_commands(
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["outcome"] == "ready"
-    assert payload["skipped_checks"] == [SKIPPED_11]
+    assert payload["skipped_checks"] == [SKIPPED_12]
     assert payload["owc_commands"] == [
         f"iota-hub drafts owc {OBS_ID} --pick {OWC_A}",
         f"iota-hub drafts owc {OBS_ID} --pick {OWC_B}",
@@ -1882,7 +1882,7 @@ def test_show_renders_the_owc_state_and_the_skipped_checks(
     mock_api.json(
         "GET",
         GET,
-        observation(checks=checks(skipped=[SKIPPED_11]), owc=ambiguous_owc()),
+        observation(checks=checks(skipped=[SKIPPED_12]), owc=ambiguous_owc()),
     )
 
     result = run(runner, "drafts", "show", OBS_ID)

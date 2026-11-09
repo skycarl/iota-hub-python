@@ -17,6 +17,12 @@ To run a command without installing the tool, use `uvx iota-hub`, for example:
 
     uvx iota-hub --version
 
+To upgrade to the latest release:
+
+    uv tool upgrade iota-hub
+    pipx upgrade iota-hub
+    uvx iota-hub@latest --version   # uvx can otherwise reuse a cached older version
+
 ## Authenticate
 
 Create an [API key](https://iota-hub.com/developers/keys), then run:
@@ -67,7 +73,13 @@ If more than one file matches, specify which one to use:
     iota-hub submit --lightcurve observation.csv
 
 Use `--report`, `--lightcurve`, `--log`, `--vizier` or `--aperture-record`
-followed by the file path. The CLI reports these problems before uploading.
+followed by the file path. A relative path is relative to your current
+directory, not to the observation folder. The CLI reports these problems
+before uploading.
+
+When you choose a file this way, the folder's other candidates for that slot
+are not uploaded; the output lists them as not uploaded. To upload one of them
+as an attachment anyway, add `--attach PATH`.
 
 Negative (NEG) observations do not need a light curve or log. The CLI stops
 before uploading if the folder has no report. If a POS or UNSURE observation is
@@ -79,7 +91,8 @@ a folder containing files for multiple stations.
 Other files in the folder are uploaded as attachments. You can include up to
 25 attachments, each up to 50 MB. Executables and scripts are not allowed.
 Use `--no-attachments` to exclude these extra files, or `--attach PATH` to add
-an attachment explicitly. Files whose names start with a dot, files in
+an attachment explicitly (a relative `--attach` path is also relative to your
+current directory). Files whose names start with a dot, files in
 subfolders and symbolic links are excluded from automatic selection; skipped
 links are listed as not uploaded.
 
@@ -100,7 +113,8 @@ next steps. Conflicts with existing event files must be resolved in the web app.
 ### Skipped checks and the OWC link
 
 Checks that could not run appear as warnings. They do not prevent submission.
-For example, check 11 needs a link to the Occult Watcher Cloud (OWC) event.
+For example, check 12 ("Near predicted time") needs a link to the Occult
+Watcher Cloud (OWC) event.
 
 If the Hub cannot select an OWC event automatically, use one of these commands:
 
@@ -120,10 +134,14 @@ Replace a file or add an attachment:
     iota-hub drafts files add <id> lightcurve <path>
     iota-hub drafts files add <id> attachment <path>
 
-Replacing a file automatically runs the checks again. To remove a file:
+Replacing a file in a draft automatically runs the checks again. To remove a
+file:
 
-    iota-hub drafts files rm <id> vizier
-    iota-hub drafts files rm <id> attachment <attachment_id>
+    iota-hub drafts files rm <id> vizier --yes
+    iota-hub drafts files rm <id> attachment <attachment_id> --yes
+
+`--yes` confirms the removal; without it, the CLI asks on a terminal and
+refuses (`confirmation_required`) when input is not a terminal.
 
 If a finding is acceptable, dismiss it with an explanation. You can undo the
 dismissal later:
@@ -151,14 +169,23 @@ Other draft commands:
 Before repeating a submission, check whether you already have a matching
 draft or submitted observation:
 
-    iota-hub observations check --asteroid-id 9721 --asteroid-name Doty --star-id 1234-56789 --date 2018-03-05
+    iota-hub observations check --asteroid-id 9721 --asteroid-name Doty --star-id 123456 --date 2018-03-05
 
-Use the observation's UTC date. Add `--star-catalog UCAC4` or `--station 2`
-when needed to identify the observation.
+Take the values from the report. The example matches the Doty example report,
+whose star is `TYC 123456`:
 
-The result tells you whether your observation was found. If it was, use the
-returned ID to continue the draft or update the submission. If it was not,
-the result indicates whether a matching event exists in the Hub.
+- `--date` is the observation's UTC date, `YYYY-MM-DD`.
+- `--asteroid-name` and `--star-id` must match the report as it spells them;
+  case and repeated spaces are ignored. Write `1999 RM158`, not `1999RM158`.
+- Add `--star-catalog TYC` or `--station 2` when needed to identify the
+  observation.
+- The Hub looks up the event only when you give `--asteroid-id`. Without it,
+  a `none` result only means you have no matching draft or observation.
+
+The result tells you whether your observation was found. If several match,
+the newest is returned. Use the returned ID to continue the draft or update
+the submission. If none was found, the result indicates whether a matching
+event exists in the Hub.
 
 ## Update a submitted observation
 
@@ -171,8 +198,13 @@ it must still describe the same observation. Otherwise, the API rejects it
 with `identity_changed` (exit code `2`).
 
 Once the event enters review, you can no longer change its files
-(`already_processed`, exit code `1`). Contact a coordinator if a correction is
-needed.
+(`already_processed`, exit code `1`). The observation's `status` is then
+`locked`, so `observations show <id>` tells you before you upload. Contact a
+coordinator if a correction is needed.
+
+Replacing a file in a submitted observation runs the observer checks again,
+but their results appear only on the observation's page on IOTA Hub, not in
+the CLI.
 
 ## Read observations and download files
 
@@ -186,7 +218,9 @@ needed.
 Use `--help` on a command to see its filters and options.
 `observations list` and `events list` return one page of results. Add `--all` to retrieve every page.
 
-Downloads preserve existing files. Add `--force` to overwrite them.
+If a file being downloaded already exists, the command stops with
+`file_exists` (exit code `1`) before downloading anything. Add `--force` to
+overwrite existing files.
 Without reviewer access, an event's file list is empty until the event is `COMPLETE`.
 
 ## Automation and agents
@@ -195,11 +229,24 @@ Add `--json` to get results as JSON on stdout. Errors are written as JSON to
 stderr, with a `code`, `message`, `hint`, `details` and `exit_code`. Use the
 error code in scripts, since message wording can change.
 
+A `submit` that ends with `needs_attention` exits `4` but is a result, not an
+error: the full JSON result is on stdout, and stderr holds the buffered
+progress lines, not an error document.
+
+The two `uploads` shapes differ. `submit --dry-run --json` lists
+`uploads` as `[{slot, filename, path, size}]` (and `attachments` as
+`[{filename, path, size}]`). `submit --json` returns `uploads` as
+`{slot: filename}` and `attachments` as a list of filenames.
+
+`auth status` exits `0` even when the key check fails, because it reports a
+status. Scripts must read the reported check: the `Check` line, or `check` in
+`auth status --json` (`valid` or the API's error code).
+
 | Exit code | Meaning |
 | --------- | ------- |
 | `0` | Success |
-| `1` | General error, including `already_processed` |
-| `2` | Invalid command-line arguments or local files, or `identity_changed` |
+| `1` | General error, including `already_processed`, local configuration problems (`invalid_config`) and existing download files (`file_exists`) |
+| `2` | Invalid arguments or files, including ones the server rejects (`validation_error`), or `identity_changed` |
 | `3` | Authentication or permission error |
 | `4` | `submit` or `drafts submit` found the draft needs attention or not ready, or a wait timed out |
 | `5` | Rate limit reached |
@@ -224,7 +271,8 @@ Avoid rerunning an entire submission, which can create another draft. Check for
 an existing observation before starting again.
 
 Commands do not prompt when input is redirected or piped. Pass `--yes` to
-confirm file removal or draft deletion in scripts. Output has no color when
+confirm file removal or draft deletion in scripts; without it they fail with
+`confirmation_required`. Output has no color when
 piped or when using `--json`.
 
 Agent instructions are available in
@@ -265,14 +313,26 @@ out of the default profile does not pick another: `auth logout` lists what remai
 and commands that name no profile use one named `default`, or else report that no
 key is configured.
 
-Command-line settings
-take precedence over environment variables, followed by saved settings and
-defaults. API keys are supplied through login or `IOTA_HUB_API_KEY`, which
-overrides a profile's saved key even with `--profile`.
+Command-line settings take precedence over environment variables, followed by
+saved settings and defaults. A saved key stays with the API address saved
+beside it:
 
-When using a non-default API address, the CLI prints it on stderr (as `Target:` when not
-on a terminal). With `--json`, this line and progress messages appear when the command
-ends, and only if it succeeded: a failed command's stderr is just the JSON error.
+- With a profile's key, `--base-url` or `IOTA_HUB_BASE_URL` must match the
+  profile's address, or the command fails with `invalid_config`. To use
+  another address, log in to a profile for it (`auth login --profile <name>
+  --base-url <url>`), or set `IOTA_HUB_API_KEY` to a key for that address.
+- `IOTA_HUB_API_KEY` takes the place of a profile's key, but it needs its
+  own address: set `IOTA_HUB_BASE_URL` (or pass `--base-url`) with it. If
+  the selected profile stores a non-production address, `IOTA_HUB_API_KEY`
+  alone fails with `invalid_config`; unset it to use the profile's key.
+
+`--base-url` takes the API address as shown on the Hub's developer page, with
+or without its trailing `/public/v1`.
+
+When using a non-default API address, the CLI prints `Target: <address>` on
+stderr. With `--json`, this line and progress messages are held until the
+command returns a result, including a `needs_attention` result (exit `4`). A
+command that fails prints only the JSON error on stderr.
 Settings are stored in:
 
     Linux     ~/.config/iota-hub/config.toml

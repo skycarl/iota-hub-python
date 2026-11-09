@@ -8,6 +8,8 @@ description: Submit occultation observation files to IOTA Hub and manage drafts 
 ## Prerequisites
 
 - Run the CLI with `uvx iota-hub ...`, or install it with `pipx install iota-hub`.
+  The commands below are written as `iota-hub ...`; if you run it with `uvx`,
+  prefix every command with `uvx` (`uvx iota-hub submit ...`).
 - Use a key in `IOTA_HUB_API_KEY` or a profile saved with `iota-hub auth login`.
   Never put a key in a command-line argument: it can appear in shell history
   and process listings. If no key is configured, ask the observer to run
@@ -40,6 +42,11 @@ If a previous run may have created a draft, check before repeating `submit`:
 ```bash
 iota-hub observations check --asteroid-id <number> --asteroid-name <name> --star-id <star> --date <YYYY-MM-DD> --json
 ```
+
+Take the values from the report, spelled as the report spells them
+(`1999 RM158`, not `1999RM158`), with the UTC date. Without `--asteroid-id`
+there is no event lookup, so `none` then only means no matching draft or
+observation of this observer's. With several matches, the newest is returned.
 
 If `found` is `observation`, use the returned ID to continue working on the
 observer's draft or submission. `event` means the event exists but no matching
@@ -79,9 +86,9 @@ value. A dismissal note must come from the observer.
 ```bash
 iota-hub drafts show <id>
 iota-hub drafts files add <id> lightcurve <path>
-iota-hub drafts files rm <id> vizier
+iota-hub drafts files rm <id> vizier --yes
 iota-hub drafts files add <id> attachment <path>
-iota-hub drafts files rm <id> attachment <attachment_id>
+iota-hub drafts files rm <id> attachment <attachment_id> --yes
 iota-hub drafts dismiss <id> <fingerprint> --note "observer's reason"
 iota-hub drafts dismiss <id> <fingerprint> --undo
 iota-hub drafts owc <id> --pick <owc_event_id>
@@ -95,7 +102,11 @@ iota-hub drafts submit <id>
 the draft's checks. `files rm` clears the named file or removes an attachment.
 Attachment IDs are listed by `drafts show`. `confirm-asteroid` records that
 an asteroid ID without a number is intentional. `comment` sets the comment
-for the reviewer.
+for the reviewer. Relative file paths are relative to the current directory.
+
+Destructive commands (`drafts files rm`, `drafts delete`) need `--yes` when
+stdin is not a terminal, or they fail with `confirmation_required`. Ask the
+observer first, then pass `--yes`.
 
 ### Correct a submitted observation
 
@@ -119,10 +130,10 @@ Other commands include `drafts list`, `observations list|show`,
 | Code | Meaning |
 | ---- | ------- |
 | `0` | Success. |
-| `1` | Other errors, including server and network failures. |
-| `2` | Invalid arguments or local files, ambiguous file selection, attachment limits, or `identity_changed`. |
+| `1` | Other errors, including server and network failures, `invalid_config` and `file_exists`. |
+| `2` | Invalid arguments or files, including ones the server rejects (`validation_error`), ambiguous file selection, attachment limits, or `identity_changed`. |
 | `3` | Missing key or an authorization error. |
-| `4` | Findings, missing requirements or a check timeout. |
+| `4` | Findings, missing requirements or a check timeout. A `needs_attention` submit result is still the full JSON result on stdout. |
 | `5` | Rate limit still exceeded after automatic retries. |
 | `130` | Interrupted with Ctrl-C outside a prompt. |
 
@@ -147,7 +158,8 @@ may leave a draft without naming it; run `drafts list` before submitting again.
   The CLI prints `Target: <base URL>` on stderr for a non-default target;
   `--dry-run` also prints it for production. With `--json`, the line appears
   only after a result is returned. Use `auth status --json` to check the target
-  before submitting.
+  before submitting; it exits `0` even for a bad key, so read its `check`
+  field (`valid` or an error code).
 - `auth login` selects `--profile`, then `IOTA_HUB_PROFILE`, then the saved
   `default_profile`, then `default`. Specify `--profile` when adding a second
   profile to avoid replacing the current one.
@@ -156,7 +168,9 @@ may leave a draft without naming it; run `drafts list` before submitting again.
   `missing_api_key` (exit `3`). Select the intended profile explicitly.
 - If multiple files match a type, show the observer the candidates and ask
   which to use. Pass their choice with `--report`, `--lightcurve`, `--log`,
-  `--vizier` or `--aperture-record`. If the report is missing, ask for it.
+  `--vizier` or `--aperture-record`. The folder's other candidates for that
+  slot are then not uploaded; `--attach PATH` uploads one as an attachment if
+  the observer wants it. If the report is missing, ask for it.
 - A NEG observation needs no light curve or log. A POS or UNSURE observation
   without them stays a draft, with the missing files listed in
   `readiness.missing_required`.
