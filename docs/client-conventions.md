@@ -618,8 +618,8 @@ no draft and report all affected files.
 | Per-observation count | 25 | `too_many_attachments` | `files`, `count`, `max_allowed` |
 
 Each error suggests `--no-attachments`. The server also enforces these limits.
-If its rules differ from the client's constants, report the server's `422`
-response (exit `1`).
+If its rules differ from the client's constants, report the server's `422
+validation_error` response (exit `2`).
 
 Declare attachments as `{slot: "attachment", filename, size, sha256}` after the
 fixed file slots. The create response returns one upload target per file in
@@ -694,7 +694,7 @@ observation page otherwise. Print `Web:` when `submit` returns `needs_attention`
 | ---- | ------- | ------------- |
 | `0` | Success | Includes `ready` and `draft` outcomes requested by the caller. |
 | `1` | Other error | Server errors, network failures or unclassified errors. |
-| `2` | Usage | Invalid arguments or files, ambiguous file selection, or `identity_changed`. |
+| `2` | Usage | Invalid arguments or files, including ones the server rejects (`validation_error`), ambiguous file selection, or `identity_changed`. Local configuration problems and existing download files are exit `1`. |
 | `3` | Authentication | Authentication category from § 10. |
 | `4` | Not ready | `open_findings`, `missing_required`, `checks_stale`, `event_files_conflict` or a check timeout. |
 | `5` | Rate limited | Rate-limit category after retries are exhausted. |
@@ -705,7 +705,7 @@ Use these mappings for specific codes:
 | Exit | Codes or outcomes |
 | ---- | ----------------- |
 | `1` | `upload_failed`, `download_failed`, `file_exists`, `invalid_config`, `aborted`, `invalid_response`, `already_processed`, `already_submitted` |
-| `2` | `usage_error`, `ambiguous_files`, `missing_files`, `invalid_extension`, `not_a_directory`, `not_writable`, `blocked_attachment`, `attachment_too_large`, `too_many_attachments`, `unknown_profile`, `confirmation_required`, `identity_changed` |
+| `2` | `usage_error`, `ambiguous_files`, `missing_files`, `invalid_extension`, `not_a_directory`, `not_writable`, `blocked_attachment`, `attachment_too_large`, `too_many_attachments`, `unknown_profile`, `confirmation_required`, `identity_changed`, `validation_error` |
 | `3` | `missing_api_key` |
 | `4` | `timeout`, outcome `needs_attention` |
 

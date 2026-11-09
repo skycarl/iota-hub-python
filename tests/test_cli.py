@@ -2455,7 +2455,8 @@ def test_plain_errors_print_the_details(runner: CliRunner, mock_api: MockAPI) ->
 
     result = run(runner, "drafts", "dismiss", OBS_ID, "fp", "--note", "x")
 
-    assert result.exit_code == 1
+    # The server's own validation_error is an invalid argument: exit 2.
+    assert result.exit_code == 2
     lines = result.stderr.splitlines()
     hint = lines.index("hint: See 'details' for what to fix.")
     assert lines[hint + 1] == 'details: {"field": "note", "min_length": 3}'
@@ -2470,8 +2471,20 @@ def test_styled_errors_print_the_details(
 
     result = run(runner, "drafts", "dismiss", OBS_ID, "fp", "--note", "x")
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert '{"field": "note", "min_length": 3}' in streams[True].getvalue()
+
+
+@pytest.mark.parametrize(
+    ("code", "status", "expected"),
+    [
+        ("validation_error", 422, 2),
+        ("invalid_config", None, 1),
+        ("file_exists", None, 1),
+    ],
+)
+def test_validation_error_is_usage_but_local_config_is_not(code, status, expected):
+    assert exit_code_for(IotaHubError(code, "m", status=status)) == expected
 
 
 def test_plain_errors_omit_empty_details(runner: CliRunner, mock_api: MockAPI) -> None:

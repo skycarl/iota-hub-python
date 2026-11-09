@@ -80,6 +80,9 @@ USAGE_CODES = frozenset(
         "unknown_profile",
         "confirmation_required",
         "not_writable",
+        # The API's schema and field validation (422): the server refused an
+        # argument or a file, which is the same mistake as a local usage error.
+        "validation_error",
         # The API's own: the replacement report describes another observation.
         # Nothing is wrong with the observation; the file the caller named is
         # the wrong one for it, like an ``invalid_extension``.
