@@ -111,7 +111,8 @@ observer first, then pass `--yes`.
 ### Correct a submitted observation
 
 Use `drafts files add` to replace a file in a submitted observation. Its status
-becomes `amended`; this does not start a new check run.
+becomes `amended`. The checks run again, but their results appear only on the
+observation's page on IOTA Hub, not in the CLI.
 
 - `identity_changed` (exit `2`): the replacement report describes a different
   observation. Show `details.changed` and ask the observer to correct the

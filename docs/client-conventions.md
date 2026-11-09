@@ -681,8 +681,10 @@ response, the caller should check before starting another `submit` command.
 
 There is no separate amend operation. Replacing a fixed-slot file as the owner
 with `replace_file` or `drafts files add ID SLOT PATH` marks a submitted
-observation as `amended`, with `amendment_count` and `amended_at`. It does not
-start a check run.
+observation as `amended`, with `amendment_count` and `amended_at`. The server
+re-runs the observer checks, but a submitted observation's response has
+`checks: null`, so the client neither waits for nor reports that run; its
+results appear only on the observation's web page.
 
 | Error | Reason | Category | Exit |
 | ----- | ------ | -------- | ---- |
