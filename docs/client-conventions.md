@@ -177,10 +177,16 @@ The library's `resolve(api_key=...)` accepts an explicit key. Resolved settings
 report the key source as `flag`, `env` or `profile`; `flag` here includes a
 library argument and does not imply a CLI key option.
 
-An explicit `--base-url` overrides a profile's URL. If the key comes from a
-profile and `IOTA_HUB_BASE_URL` differs from its saved URL, raise
-`invalid_config`. The caller can unset that variable, also supply
-`IOTA_HUB_API_KEY`, or explicitly pass `--base-url`.
+A stored key is bound to the base URL saved with it. If the key comes from a
+profile and an explicit `--base-url` (library: `resolve(base_url=...)`) or,
+without one, `IOTA_HUB_BASE_URL` differs from the profile's saved URL, raise
+`invalid_config` rather than sending the key somewhere it was not saved for.
+Compare the URLs after normalization (§ 4). To use another URL, the caller can
+set `IOTA_HUB_API_KEY` with a key for that URL, or use or create a profile for
+it (`iota-hub auth login --profile <name> --base-url <url>`). For an
+environment URL, the caller can also unset `IOTA_HUB_BASE_URL` to use the
+profile. The hint says what to do. `auth login --base-url` is unaffected: it
+saves a new key for that URL.
 
 The rule is symmetric. If the key comes from `IOTA_HUB_API_KEY` with neither
 `IOTA_HUB_BASE_URL` nor `--base-url`, and the selected profile stores a base
@@ -190,12 +196,17 @@ caller can set `IOTA_HUB_BASE_URL` as well, pass `--base-url`, or unset
 `IOTA_HUB_API_KEY` to use the profile's key. A stored production URL is where
 an unaccompanied key goes anyway and raises nothing.
 
+A library resolver reads the process environment by default, but its
+signature must not show that environment: in Python, `resolve(env=None)`
+means `os.environ`, so `help(resolve)` never prints `IOTA_HUB_API_KEY`.
+
 Resolved settings must not include the key in their string or debug
 representation.
 
 For a non-default base URL, print `Target: <base URL>` on stderr before acting.
 `submit --dry-run` prints it even for the default URL. In JSON mode, buffer the
-line until the command returns a result (§ 13).
+line until the command returns a result (§ 13). Styled output keeps the
+`Target:` label and may add a badge naming the profile.
 
 ### Profile selection and login
 
@@ -251,8 +262,12 @@ expiry from its value.
 
 ## 4. Base URL
 
-`base_url` is the API address without `/public/v1`. Strip a trailing slash,
-then append `/public/v1` when constructing requests.
+`base_url` is the API address without `/public/v1`. Normalize every base URL
+(flag, environment, profile or library argument) before using, comparing or
+saving it: strip trailing slashes, then strip one trailing `/public/v1` and any
+slash before it. Append `/public/v1` when constructing requests. The Hub's
+developer page shows the API address with `/public/v1`, so a pasted copy works
+rather than requesting `/public/v1/public/v1/...`.
 
 | Target | `base_url` | Example request |
 | ------ | ---------- | --------------- |

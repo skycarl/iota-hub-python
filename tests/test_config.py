@@ -113,13 +113,35 @@ def test_the_profile_supplies_the_key_and_the_base_url_together(config_path):
     assert settings.is_default_target is False
 
 
-def test_an_explicit_base_url_overrides_the_profiles(config_path):
+def test_an_explicit_base_url_cannot_redirect_a_stored_key(config_path):
+    """The key and the URL it was stored with stay together, flag or not."""
+    with pytest.raises(IotaHubError) as excinfo:
+        resolve(base_url="http://localhost:8000/", env={}, config_path=config_path)
+
+    assert excinfo.value.code == "invalid_config"
+    assert excinfo.value.details == {"field": "base_url", "profile": "dev"}
+    assert "IOTA_HUB_API_KEY" in excinfo.value.hint
+    assert "auth login --profile" in excinfo.value.hint
+    assert PROFILE_KEY not in str(excinfo.value)
+
+
+def test_an_explicit_base_url_that_agrees_with_the_profile_is_fine(config_path):
+    settings = resolve(base_url=DEV_URL + "/", env={}, config_path=config_path)
+
+    assert settings.base_url == DEV_URL
+    assert settings.api_key == PROFILE_KEY
+
+
+def test_an_explicit_base_url_goes_with_an_explicit_key(config_path):
     settings = resolve(
-        base_url="http://localhost:8000/", env={}, config_path=config_path
+        api_key=FLAG_KEY,
+        base_url="http://localhost:8000",
+        env={},
+        config_path=config_path,
     )
 
     assert settings.base_url == "http://localhost:8000"
-    assert settings.api_key == PROFILE_KEY
+    assert settings.api_key == FLAG_KEY
 
 
 def test_an_environment_base_url_cannot_redirect_a_stored_key(config_path):
@@ -149,17 +171,70 @@ def test_an_environment_base_url_goes_with_an_environment_key(config_path):
     assert settings.api_key == ENV_KEY
 
 
-def test_the_base_url_flag_still_overrides_the_profile_despite_the_environment(
-    config_path,
-):
+def test_a_base_url_flag_matching_the_profile_beats_the_environment(config_path):
     settings = resolve(
-        base_url=DEFAULT_BASE_URL,
+        base_url=DEV_URL,
         env={"IOTA_HUB_BASE_URL": "https://elsewhere.example.test"},
         config_path=config_path,
     )
 
-    assert settings.base_url == DEFAULT_BASE_URL
+    assert settings.base_url == DEV_URL
     assert settings.api_key == PROFILE_KEY
+
+
+# -- base URL normalization ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "given",
+    [DEV_URL, DEV_URL + "/", DEV_URL + "/public/v1", DEV_URL + "/public/v1/"],
+)
+def test_every_base_url_source_drops_a_pasted_public_v1(tmp_path, given):
+    path = tmp_path / "config.toml"
+    save_profile("dev", api_key=PROFILE_KEY, base_url=given, config_path=path)
+    assert load_config(path)["profiles"]["dev"]["base_url"] == DEV_URL
+
+    assert resolve(env={}, config_path=path).base_url == DEV_URL
+    assert resolve(base_url=given, env={}, config_path=path).base_url == DEV_URL
+    from_env = resolve(
+        env={"IOTA_HUB_API_KEY": ENV_KEY, "IOTA_HUB_BASE_URL": given},
+        config_path=path,
+    )
+    assert from_env.base_url == DEV_URL
+
+
+def test_a_hand_edited_profile_url_with_public_v1_still_matches(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        f'[profiles.default]\nbase_url = "{DEV_URL}/public/v1"\n'
+        f'api_key = "{PROFILE_KEY}"\n',
+        encoding="utf-8",
+    )
+
+    settings = resolve(base_url=DEV_URL, env={}, config_path=path)
+
+    assert settings.base_url == DEV_URL
+
+
+def test_resolve_does_not_show_the_environment_in_its_signature(monkeypatch):
+    """``help(resolve)`` must not print the process environment and its key."""
+    import inspect
+
+    monkeypatch.setenv("IOTA_HUB_API_KEY", ENV_KEY)
+
+    assert ENV_KEY not in str(inspect.signature(resolve))
+    assert ENV_KEY not in str(inspect.signature(select_profile))
+    assert inspect.signature(resolve).parameters["env"].default is None
+
+
+def test_resolve_reads_os_environ_by_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("IOTA_HUB_API_KEY", ENV_KEY)
+    monkeypatch.setenv("IOTA_HUB_BASE_URL", "http://localhost:8000")
+
+    settings = resolve(config_path=tmp_path / "none.toml")
+
+    assert settings.api_key == ENV_KEY
+    assert settings.source_of_key == "env"
 
 
 def test_the_environment_names_the_profile(tmp_path):

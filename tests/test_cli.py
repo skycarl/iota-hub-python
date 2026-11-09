@@ -1297,7 +1297,7 @@ def test_every_command_help_carries_an_example(runner: CliRunner) -> None:
     for command in commands:
         result = run(runner, *command, "--help")
         assert result.exit_code == 0, command
-        assert "Example: iota-hub" in result.stdout, command
+        assert re.search(r"Examples?:\s+iota-hub ", result.stdout), command
 
 
 # -- the shared options, before or after the subcommand ---------------------
@@ -1333,6 +1333,38 @@ def test_the_target_options_work_after_the_subcommand(
     result = run(runner, "observations", "list", *args)
     assert result.exit_code == 0
     assert f"Target: {OTHER_URL}" in result.stderr
+
+
+def test_base_url_cannot_send_a_profile_key_elsewhere(
+    runner: CliRunner,
+    mock_api: MockAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    config_file: Path,
+) -> None:
+    monkeypatch.delenv("IOTA_HUB_BASE_URL")
+    monkeypatch.delenv("IOTA_HUB_API_KEY")
+    config_file.write_text(
+        f'[profiles.default]\nbase_url = "{OTHER_URL}"\napi_key = "{API_KEY}"\n',
+        encoding="utf-8",
+    )
+
+    result = run(runner, "--json", "observations", "list", "--base-url", BASE_URL)
+
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["code"] == "invalid_config"
+    assert mock_api.requests == []
+
+
+def test_base_url_pasted_with_public_v1_reaches_the_api(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json("GET", OBSERVATIONS, {"items": [], "next_cursor": None})
+
+    result = run(runner, "observations", "list", "--base-url", f"{OTHER_URL}/public/v1")
+
+    assert result.exit_code == 0
+    assert str(mock_api.last_request.url).startswith(f"{OTHER_URL}/public/v1/obs")
+    assert f"Target: {OTHER_URL}\n" in result.stderr
 
 
 def test_a_leaf_option_beats_the_root_one(runner: CliRunner, mock_api: MockAPI) -> None:
@@ -2663,6 +2695,29 @@ def test_a_piped_login_says_which_profile_it_replaced(
     assert config.load_config()["profiles"]["dev"]["api_key"] == new
     output = result.stdout + result.stderr
     assert old not in output and new not in output
+
+
+def test_login_saves_a_pasted_base_url_without_public_v1(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    _script_key_check(mock_api)
+
+    result = run(
+        runner,
+        "--json",
+        "auth",
+        "login",
+        "--profile",
+        "dev",
+        "--base-url",
+        f"{OTHER_URL}/public/v1/",
+        input="iotahub_new_tail\n",
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["base_url"] == OTHER_URL
+    assert config.load_config()["profiles"]["dev"]["base_url"] == OTHER_URL
+    assert str(mock_api.last_request.url).startswith(f"{OTHER_URL}/public/v1/obs")
 
 
 def test_a_piped_login_under_json_reports_the_replacement_too(

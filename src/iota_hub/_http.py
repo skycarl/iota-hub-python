@@ -55,7 +55,7 @@ class Transport:
         sleep: Callable[[float], None] = _default_sleep,
     ) -> None:
         self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
+        self.base_url = normalize_base_url(base_url)
         check_base_url(self.base_url)
         self.api_root = f"{self.base_url}{API_PREFIX}"
         self.max_retries = max_retries
@@ -169,6 +169,19 @@ class Transport:
             details={"slot": target.slot, "filename": target.filename},
             status=response.status_code,
         )
+
+
+def normalize_base_url(base_url: str) -> str:
+    """The API base as the client uses and stores it (conventions § 4).
+
+    Trailing slashes go, and so does one trailing ``/public/v1``: the Hub's
+    developer page shows the versioned address, and a pasted copy of it would
+    otherwise be requested as ``/public/v1/public/v1/...``.
+    """
+    url = base_url.rstrip("/")
+    if url.endswith(API_PREFIX):
+        url = url[: -len(API_PREFIX)].rstrip("/")
+    return url
 
 
 def check_base_url(base_url: str) -> None:

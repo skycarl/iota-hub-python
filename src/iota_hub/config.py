@@ -18,7 +18,7 @@ from pathlib import Path
 
 from platformdirs import user_config_dir
 
-from ._http import DEFAULT_BASE_URL
+from ._http import DEFAULT_BASE_URL, normalize_base_url
 from .errors import AuthError, IotaHubError
 
 _TEMP_NAME_ATTEMPTS = 100
@@ -58,7 +58,7 @@ def select_profile(
     config: Mapping,
     profile: str | None = None,
     *,
-    env: Mapping[str, str] = os.environ,
+    env: Mapping[str, str] | None = None,
 ) -> tuple[str, bool]:
     """Which profile a command means, and whether it was asked for by name.
 
@@ -66,8 +66,10 @@ def select_profile(
     ``default``. Every command selects this way, ``auth login`` and ``auth
     logout`` included. A ``default_profile`` that no longer exists is ignored,
     so deleting a profile never wedges the CLI. The name may not exist: what
-    that means is the caller's to decide.
+    that means is the caller's to decide. ``env`` defaults to ``os.environ``.
     """
+    if env is None:
+        env = os.environ
     requested = profile or env.get(ENV_PROFILE)
     if requested:
         return requested, True
@@ -82,23 +84,28 @@ def resolve(
     api_key: str | None = None,
     base_url: str | None = None,
     profile: str | None = None,
-    env: Mapping[str, str] = os.environ,
+    env: Mapping[str, str] | None = None,
     config_path: str | Path | None = None,
 ) -> Settings:
     """Settle the key and the target, highest precedence first.
 
     Key: argument, then ``IOTA_HUB_API_KEY``, then the profile's stored key.
     Target: argument, then ``IOTA_HUB_BASE_URL``, then the profile's base URL,
-    then the production default. Passing ``--base-url`` while using a profile
-    is allowed and the flag wins — an explicit instruction beats a stored one.
-    ``IOTA_HUB_BASE_URL`` is not explicit enough to do the same: when it
-    disagrees with the base URL stored beside the profile's key, that is
-    ``invalid_config`` rather than the key going somewhere it was not stored for.
-    The mirror image holds too: a key from ``IOTA_HUB_API_KEY`` with no base URL
-    of its own is not sent to a profile's stored, non-production URL -- that URL
-    was stored for the profile's key, not for whatever key the environment
-    happens to carry.
+    then the production default. A key and the URL it was stored with stay
+    together: when the key comes from a profile, a ``base_url`` argument or an
+    ``IOTA_HUB_BASE_URL`` that differs from the profile's stored URL is
+    ``invalid_config`` rather than the key going somewhere it was not stored
+    for. The mirror image holds too: a key from ``IOTA_HUB_API_KEY`` with no
+    base URL of its own is not sent to a profile's stored, non-production URL
+    -- that URL was stored for the profile's key, not for whatever key the
+    environment happens to carry.
+
+    Every base URL is normalized first (:func:`normalize_base_url`): no
+    trailing slash and no trailing ``/public/v1``. ``env`` defaults to
+    ``os.environ``.
     """
+    if env is None:
+        env = os.environ
     config = load_config(config_path)
     profiles = config.get("profiles") or {}
     name, requested = select_profile(config, profile, env=env)
@@ -130,30 +137,39 @@ def resolve(
             hint="Set IOTA_HUB_API_KEY or run `iota-hub auth login`.",
         )
 
-    env_target = (env.get(ENV_BASE_URL) or "").rstrip("/")
-    stored_target = (stored.get("base_url") or "").rstrip("/")
+    explicit_target = normalize_base_url(base_url or "")
+    env_target = normalize_base_url(env.get(ENV_BASE_URL) or "")
+    stored_target = normalize_base_url(stored.get("base_url") or "")
+    if source == "profile" and stored_target:
+        # The stored key belongs to the stored target. Neither an explicit
+        # base URL nor an ambient environment variable may send it elsewhere
+        # -- a leftover dev IOTA_HUB_BASE_URL would otherwise send the prod
+        # key to dev.
+        if explicit_target and explicit_target != stored_target:
+            raise IotaHubError(
+                "invalid_config",
+                f"The base URL {explicit_target} differs from {stored_target}, "
+                f"which profile {name!r} stores for its key.",
+                hint=(
+                    f"Set {ENV_API_KEY} for that URL, or use a profile stored for "
+                    "it: `iota-hub auth login --profile <name> --base-url "
+                    f"{explicit_target}`, then `--profile <name>`."
+                ),
+                details={"field": "base_url", "profile": name},
+            )
+        if not explicit_target and env_target and env_target != stored_target:
+            raise IotaHubError(
+                "invalid_config",
+                f"{ENV_BASE_URL} is {env_target}, but the key comes from profile "
+                f"{name!r}, which is stored for {stored_target}.",
+                hint=(
+                    f"Unset {ENV_BASE_URL} to use the profile, or set "
+                    f"{ENV_API_KEY} as well for that URL."
+                ),
+                details={"field": "base_url", "profile": name},
+            )
     if (
-        not base_url
-        and source == "profile"
-        and env_target
-        and stored_target
-        and env_target != stored_target
-    ):
-        # The stored key belongs to the stored target. An ambient environment
-        # variable must not quietly redirect it elsewhere -- a leftover dev
-        # IOTA_HUB_BASE_URL would otherwise send the prod key to dev.
-        raise IotaHubError(
-            "invalid_config",
-            f"{ENV_BASE_URL} is {env_target}, but the key comes from profile "
-            f"{name!r}, which is stored for {stored_target}.",
-            hint=(
-                f"Unset {ENV_BASE_URL}, set {ENV_API_KEY} as well, or pass "
-                "--base-url to choose the target explicitly."
-            ),
-            details={"field": "base_url", "profile": name},
-        )
-    if (
-        not base_url
+        not explicit_target
         and source == "env"
         and not env_target
         and stored_target
@@ -176,7 +192,7 @@ def resolve(
             details={"field": "base_url", "profile": name},
         )
 
-    target = (base_url or env_target or stored_target or DEFAULT_BASE_URL).rstrip("/")
+    target = explicit_target or env_target or stored_target or DEFAULT_BASE_URL
 
     return Settings(
         api_key=key,
@@ -257,7 +273,7 @@ def save_profile(
     profiles = dict(config.get("profiles") or {})
     if select_profile(config, env={})[0] not in profiles:
         config["default_profile"] = name
-    profiles[name] = {"base_url": base_url.rstrip("/"), "api_key": api_key}
+    profiles[name] = {"base_url": normalize_base_url(base_url), "api_key": api_key}
     config["profiles"] = profiles
     return _write_config(config, config_path)
 

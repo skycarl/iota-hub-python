@@ -66,6 +66,15 @@ def test_user_agent_can_be_overridden(mock_api, sleeps):
             "https://x.execute-api.us-west-2.amazonaws.com/dev/api/",
             "https://x.execute-api.us-west-2.amazonaws.com/dev/api/public/v1/events",
         ),
+        # The address as the Hub's developer page shows it, pasted whole.
+        (
+            "https://x.execute-api.us-west-2.amazonaws.com/dev/api/public/v1",
+            "https://x.execute-api.us-west-2.amazonaws.com/dev/api/public/v1/events",
+        ),
+        (
+            "https://x.execute-api.us-west-2.amazonaws.com/dev/api/public/v1/",
+            "https://x.execute-api.us-west-2.amazonaws.com/dev/api/public/v1/events",
+        ),
     ],
 )
 def test_base_url_is_the_api_base_and_the_client_appends_the_prefix(

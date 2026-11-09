@@ -35,7 +35,7 @@ except ImportError:  # pragma: no cover - typer < 0.27 only
     from click.exceptions import UsageError  # type: ignore[no-redef]
 
 from . import _term, config
-from ._http import DEFAULT_BASE_URL
+from ._http import DEFAULT_BASE_URL, normalize_base_url
 from ._version import __version__
 from .client import Client
 from .config import ENV_BASE_URL, Settings
@@ -1094,16 +1094,18 @@ def auth_login(yes: YesOption = False) -> None:
     on stdin -- never from a command-line argument, which would land in the
     shell history and in `ps`.
 
-    Example: iota-hub auth login --profile dev --base-url https://host/dev/api
+    \b
+    Example:
+      iota-hub auth login --profile dev --base-url https://host/dev/api
     """
     name = _auth_profile()
     stored = (config.load_config().get("profiles") or {}).get(name) or {}
-    target = (
+    target = normalize_base_url(
         _OPTIONS.base_url
         or os.environ.get(ENV_BASE_URL)
         or stored.get("base_url")
         or DEFAULT_BASE_URL
-    ).rstrip("/")
+    )
     if target != DEFAULT_BASE_URL:
         _note(f"Target: {target}")
 
