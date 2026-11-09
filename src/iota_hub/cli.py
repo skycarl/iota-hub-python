@@ -677,6 +677,8 @@ def _render_observation(observation: PublicObservation) -> None:
     if observation.web_url:
         _field("Web", observation.web_url)
     _render_identity(observation.metadata)
+    if observation.metadata.comments:
+        _field("Comment", observation.metadata.comments)
     _field("Updated", observation.updated_at)
     _render_readiness(observation)
     _render_owc(observation)
@@ -854,7 +856,9 @@ def root(
     The three options below are also accepted after the subcommand:
     `iota-hub submit DIR --json` is the same run as `iota-hub --json submit DIR`.
 
-    Example: iota-hub submit ./20180305_9721_Doty_Observer_POS --json
+    \b
+    Example:
+      iota-hub submit ./20180305_9721_Doty_Observer_POS --json
     """
     _OPTIONS.base_url = base_url
     _OPTIONS.profile = profile
@@ -948,7 +952,9 @@ def submit(
     Exits 4 when the draft came back with open findings or something missing,
     so the whole job is one command a script can branch on.
 
-    Example: iota-hub submit ./20180305_9721_Doty_Observer_POS --draft
+    \b
+    Example:
+      iota-hub submit ./20180305_9721_Doty_Observer_POS --draft
     """
     overrides: dict[str, Any] = {
         "report": report,
@@ -1197,7 +1203,9 @@ def auth_status() -> None:
 
     It reports the check rather than failing on it, so it exits 0 either way.
 
-    Example: iota-hub auth status --profile dev
+    \b
+    Example:
+      iota-hub auth status --profile dev
     """
     settings = _settings()
     with _make_client(settings) as client:
@@ -1238,7 +1246,9 @@ def auth_logout() -> None:
     IOTA_HUB_PROFILE, then default_profile, then "default". Removing
     default_profile clears it: no other profile is chosen in its place.
 
-    Example: iota-hub auth logout --profile dev
+    \b
+    Example:
+      iota-hub auth logout --profile dev
     """
     name = _auth_profile()
     before = config.load_config()
@@ -1282,7 +1292,9 @@ def _note_cleared_default(name: str, remaining: dict[str, dict[str, str]]) -> No
 def drafts_list() -> None:
     """List every unsubmitted draft, following the cursor to the end.
 
-    Example: iota-hub drafts list
+    \b
+    Example:
+      iota-hub drafts list
     """
     settings = _settings()
     with _make_client(settings) as client:
@@ -1314,7 +1326,9 @@ def drafts_list() -> None:
 def drafts_show(observation_id: IdArgument) -> None:
     """Show one draft with its readiness, findings and next commands.
 
-    Example: iota-hub drafts show obs_01JABCDEF
+    \b
+    Example:
+      iota-hub drafts show 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936
     """
     settings = _settings()
     with _make_client(settings) as client:
@@ -1331,7 +1345,9 @@ def drafts_check(
 ) -> None:
     """Start a fresh observer check run on a draft and wait for it.
 
-    Example: iota-hub drafts check obs_01JABCDEF
+    \b
+    Example:
+      iota-hub drafts check 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936
     """
     settings = _settings()
     with _make_client(settings) as client:
@@ -1363,7 +1379,9 @@ def drafts_submit(observation_id: IdArgument) -> None:
     An observation that is already submitted is a success: it is printed as it
     is, exactly what the API's own submit would answer.
 
-    Example: iota-hub drafts submit obs_01JABCDEF
+    \b
+    Example:
+      iota-hub drafts submit 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936
     """
     settings = _settings()
     with _make_client(settings) as client:
@@ -1448,8 +1466,10 @@ def drafts_owc(
     this is for the cases it leaves open (several candidates, a mismatch, not
     found). Exactly one of --pick, --link, --none.
 
-    Example: iota-hub drafts owc obs_01JABCDEF --pick 1917-2448-97311-649282-U033649
-    """
+    \b
+    Example:
+      iota-hub drafts owc 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936 --pick 1917-2448-97311-649282-U033649
+    """  # noqa: E501
     chosen = [flag for flag, value in (("--pick", pick), ("--link", link)) if value]
     if none:
         chosen.append("--none")
@@ -1483,7 +1503,9 @@ def drafts_confirm_asteroid(observation_id: IdArgument) -> None:
     A comet or an unnumbered designation is fine; the Hub only asks so that a
     numbered asteroid entered without its number is caught.
 
-    Example: iota-hub drafts confirm-asteroid obs_01JABCDEF
+    \b
+    Example:
+      iota-hub drafts confirm-asteroid 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936
     """
     settings = _settings()
     with _make_client(settings) as client:
@@ -1504,7 +1526,9 @@ def drafts_comment(
 ) -> None:
     """Set the free-text comment a reviewer reads on a draft.
 
-    Example: iota-hub drafts comment obs_01JABCDEF "Clouds after R."
+    \b
+    Example:
+      iota-hub drafts comment 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936 "Clouds after R."
     """
     settings = _settings()
     with _make_client(settings) as client:
@@ -1520,12 +1544,25 @@ def drafts_comment(
 def drafts_delete(observation_id: IdArgument, yes: YesOption = False) -> None:
     """Throw away an unsubmitted draft. A submitted observation cannot be deleted.
 
-    Example: iota-hub drafts delete obs_01JABCDEF --yes
+    \b
+    Example:
+      iota-hub drafts delete 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936 --yes
     """
     _confirm(f"Delete draft {observation_id}?", yes)
     settings = _settings()
     with _make_client(settings) as client:
-        client.delete_draft(observation_id)
+        try:
+            client.delete_draft(observation_id)
+        except IotaHubError as error:
+            if error.code == "already_submitted":
+                # The API's hint is written for HTTP callers; say what a CLI
+                # user can do with a submitted observation instead.
+                error.hint = (
+                    "A submitted observation cannot be deleted. To correct it, "
+                    "replace a file with `iota-hub drafts files add "
+                    f"{observation_id} <slot> <path>`, or contact a coordinator."
+                )
+            raise
     if _OPTIONS.json:
         _emit({"observation_id": observation_id, "deleted": True})
         return
@@ -1560,8 +1597,10 @@ def drafts_dismiss(
 ) -> None:
     """Dismiss one finding with a note, or undo that dismissal.
 
-    Example: iota-hub drafts dismiss obs_01JABCDEF 9f2a1c --note "Known offset"
-    """
+    \b
+    Example:
+      iota-hub drafts dismiss 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936 9f2a1c4d8e7b6a50 --note "Known offset"
+    """  # noqa: E501
     if not undo and not note:
         # A missing flag is a usage error, and typer already owns those: it
         # prints the usage line and exits 2.
@@ -1597,9 +1636,11 @@ def drafts_files_add(
     describe the same observation (identity_changed, exit 2, otherwise), and
     once its event is in review the API refuses (already_processed, exit 1).
 
-    Example: iota-hub drafts files add obs_01JABCDEF lightcurve ./fixed.csv
-    Example: iota-hub drafts files add obs_01JABCDEF attachment ./plot.png
-    """
+    \b
+    Examples:
+      iota-hub drafts files add 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936 lightcurve ./fixed.csv
+      iota-hub drafts files add 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936 attachment ./plot.png
+    """  # noqa: E501
     settings = _settings()
     with _make_client(settings) as client:
         if slot is SlotName.attachment:
@@ -1629,9 +1670,11 @@ def drafts_files_rm(
 ) -> None:
     """Clear one file slot on a draft, or remove one attachment by its id.
 
-    Example: iota-hub drafts files rm obs_01JABCDEF vizier --yes
-    Example: iota-hub drafts files rm obs_01JABCDEF attachment 3f1c2b9e-... --yes
-    """
+    \b
+    Examples:
+      iota-hub drafts files rm 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936 vizier --yes
+      iota-hub drafts files rm 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936 attachment 3f1c2b9e-8d4a-4c1e-9f7a-2b6d5e8c1a90 --yes
+    """  # noqa: E501
     if slot is SlotName.attachment and not attachment_id:
         raise typer.BadParameter(
             "removing an attachment needs its id; `iota-hub drafts show ID` "
@@ -1693,7 +1736,9 @@ def observations_list(
 ) -> None:
     """List observations with the web app's filters.
 
-    Example: iota-hub observations list --submission-status submitted --all
+    \b
+    Example:
+      iota-hub observations list --submission-status submitted --all
     """
     filters: dict[str, Any] = {
         "observer_names": list(observer_name) if observer_name else None,
@@ -1751,7 +1796,9 @@ def observations_list(
 def observations_show(observation_id: IdArgument) -> None:
     """Show one observation.
 
-    Example: iota-hub observations show obs_01JABCDEF
+    \b
+    Example:
+      iota-hub observations show 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936
     """
     settings = _settings()
     with _make_client(settings) as client:
@@ -1797,9 +1844,15 @@ def observations_check(
     observation. Run it before `submit` when an earlier run may have created
     the draft already. Exits 0 whatever it finds.
 
-    Example: iota-hub observations check --asteroid-id 9721
-    --asteroid-name Doty --star-id 1234-56789 --date 2018-03-05
-    """
+    The values come from the report, spelled as it spells them ("1999 RM158",
+    not "1999RM158"); --date is the UTC date. Without --asteroid-id there is
+    no event lookup, so "none" then only means no draft or observation of
+    yours. With several matches, the newest is returned.
+
+    \b
+    Example:
+      iota-hub observations check --asteroid-id 9721 --asteroid-name Doty --star-id 123456 --date 2018-03-05
+    """  # noqa: E501
     settings = _settings()
     with _make_client(settings) as client:
         answer = client.check_observation(
@@ -1871,7 +1924,9 @@ def events_list(
 ) -> None:
     """List events with the web app's filters.
 
-    Example: iota-hub events list --status COMPLETE,DELIVERED --all
+    \b
+    Example:
+      iota-hub events list --status COMPLETE,DELIVERED --all
     """
     filters: dict[str, Any] = {
         "status": status,
@@ -1930,7 +1985,9 @@ def events_list(
 def events_show(event_id: Annotated[str, typer.Argument(metavar="ID")]) -> None:
     """Show one event.
 
-    Example: iota-hub events show evt_01JABCDEF
+    \b
+    Example:
+      iota-hub events show 8b2f4d61-0c7a-4e93-b5d8-1a6e9f2c7b40
     """
     settings = _settings()
     with _make_client(settings) as client:
@@ -1972,8 +2029,10 @@ def files_download(
 ) -> None:
     """Download an observation's or an event's files with presigned links.
 
-    Example: iota-hub files download observation obs_01JABCDEF -o ./downloads
-    """
+    \b
+    Example:
+      iota-hub files download observation 3c9a7e52-8f14-4b6d-a0e2-5d71c8b4f936 -o ./downloads
+    """  # noqa: E501
     settings = _settings()
     with _make_client(settings) as client:
         written = client.download_files(
@@ -2015,7 +2074,9 @@ def _nothing_to_download(kind: ResourceKind, resource_id: str, slot: str | None)
 def guide() -> None:
     """Print the bundled CLI workflow guide.
 
-    Example: iota-hub guide
+    \b
+    Example:
+      iota-hub guide
     """
     try:
         text = (

@@ -770,6 +770,25 @@ def test_drafts_show_renders_findings_and_next(
     assert "Next:" in result.stdout
 
 
+def test_drafts_show_displays_the_comment(runner: CliRunner, mock_api: MockAPI) -> None:
+    body = observation()
+    body["metadata"]["comments"] = "Clouds after R."
+    mock_api.json("GET", GET, body)
+
+    result = run(runner, "drafts", "show", OBS_ID)
+
+    assert result.exit_code == 0
+    assert "Comment:      Clouds after R." in result.stdout
+
+
+def test_drafts_show_omits_an_unset_comment(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json("GET", GET, observation())
+    result = run(runner, "drafts", "show", OBS_ID)
+    assert "Comment" not in result.stdout
+
+
 def test_drafts_submit_refuses_a_draft_that_is_not_ready(
     runner: CliRunner, mock_api: MockAPI
 ) -> None:
@@ -810,6 +829,43 @@ def test_drafts_delete_with_yes(runner: CliRunner, mock_api: MockAPI) -> None:
     result = run(runner, "--json", "drafts", "delete", OBS_ID, "--yes")
     assert result.exit_code == 0
     assert json.loads(result.stdout) == {"observation_id": OBS_ID, "deleted": True}
+
+
+def test_drafts_delete_of_a_submitted_observation_gives_a_cli_hint(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "DELETE",
+        GET,
+        {
+            "code": "already_submitted",
+            "message": "This observation has been submitted.",
+            "hint": "Submit answers 200 with its current state.",
+            "details": {"observation_id": OBS_ID},
+        },
+        status=409,
+    )
+
+    result = run(runner, "drafts", "delete", OBS_ID, "--yes")
+
+    assert result.exit_code == 1
+    assert "answers 200" not in result.stderr
+    assert f"iota-hub drafts files add {OBS_ID} <slot> <path>" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "command", [("drafts", "files", "rm"), ("drafts", "files", "add")]
+)
+def test_help_examples_are_one_per_line(runner: CliRunner, command) -> None:
+    result = run(runner, *command, "--help")
+
+    examples = [
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("iota-hub drafts files")
+    ]
+    assert len(examples) == 2
+    assert all(line.count("iota-hub") == 1 for line in examples)
 
 
 def test_drafts_dismiss_sends_the_note(runner: CliRunner, mock_api: MockAPI) -> None:
