@@ -1579,7 +1579,21 @@ def _confirm(question: str, yes: bool) -> None:
             f"{question} Refusing to assume an answer: stdin is not a terminal.",
             hint="Pass --yes to confirm without being asked.",
         )
-    typer.confirm(question, abort=True, err=True)
+    # typer.confirm with the stdout taken out of it: it hands the prompt's
+    # last character to input(), which writes it to stdout whenever stdout is
+    # not a terminal -- a stray space where the --json document belongs.
+    while True:
+        typer.echo(f"{question} [y/N]: ", nl=False, err=True)
+        try:
+            # End of input reads as the empty answer, which is the default: no.
+            answer = sys.stdin.readline().strip().lower()
+        except KeyboardInterrupt:
+            raise typer.Abort() from None
+        if answer in ("y", "yes"):
+            return
+        if answer in ("", "n", "no"):
+            raise typer.Abort()
+        typer.echo("Error: invalid input", err=True)
 
 
 @drafts_app.command("dismiss")

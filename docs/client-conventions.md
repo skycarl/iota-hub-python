@@ -517,7 +517,7 @@ specified in § 12.
 | ------ | ----------- |
 | `upload_failed` | S3 rejects a presigned POST. Includes `status` and `details.slot`. |
 | `download_failed` | S3 rejects a presigned GET, such as an expired link returning `403`. Also used before writing if a filename is empty, `.` or `..` after removing directories, or filenames collide when compared case-insensitively. |
-| `transport_error` | A request or download fails at the network level. `status` is null. A failed download includes `details.slot` and `details.filename`. |
+| `transport_error` | An API request, upload or download fails at the network level. `status` is null. A failed upload or download includes `details.slot` and `details.filename`. |
 | `file_exists` | A download would replace an existing file without `overwrite`. |
 | `timeout` | The check wait exceeds its timeout (§ 8). |
 | `ambiguous_files` | Multiple files match one slot. Includes `details.slot` and `details.candidates`. |
@@ -793,6 +793,13 @@ the buffered lines on stderr instead of discarding them, so stderr is empty or
 plain text. Scripts must check for exit `130` before parsing stderr as JSON.
 Plain mode also exits `130`, without `Aborted!`. An interrupted `submit` may
 leave a draft, and nothing reports its `observation_id`.
+
+An interrupt during startup cannot be handled: for roughly the first 150 ms the
+interpreter is still importing, before any client code runs. The process then
+dies from SIGINT itself, possibly with a Python traceback on stderr. A shell
+reports that as `130`; a parent process sees a signal death instead (Python's
+`subprocess` gives `returncode == -2`). Wrappers must treat death by SIGINT the
+same as exit `130`.
 
 ### Plain and styled output
 

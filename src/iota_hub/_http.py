@@ -115,7 +115,9 @@ class Transport:
             except httpx.HTTPError as exc:
                 if attempt >= self.max_retries:
                     raise TransportError(
-                        f"{method} {url} failed: {exc}", cause=exc
+                        f"{method} {url} failed: {exc}",
+                        hint="Check the connection and the base URL, then try again.",
+                        cause=exc,
                     ) from exc
                 self.sleep(_backoff(attempt))
                 attempt += 1
@@ -156,7 +158,10 @@ class Transport:
             )
         except httpx.HTTPError as exc:
             raise TransportError(
-                f"upload of {target.filename} to S3 failed: {exc}", cause=exc
+                f"upload of {target.filename} to S3 failed: {exc}",
+                hint="Check the connection, then upload the file again.",
+                details={"slot": target.slot, "filename": target.filename},
+                cause=exc,
             ) from exc
 
         if response.is_success:

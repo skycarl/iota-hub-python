@@ -255,7 +255,9 @@ status. Scripts must read the reported check: the `Check` line, or `check` in
 An interrupted run has no result to report, so it writes no JSON error. Check
 for exit code `130` before parsing stderr as JSON. An interrupted `submit` may
 leave a draft without naming it; run `iota-hub drafts list` before submitting
-again.
+again. A Ctrl-C in the first moments of startup ends the process by signal
+instead (a shell still reports `130`; Python's `subprocess` reports `-2`), so
+treat that the same as `130`.
 
 A successful `observations check` lookup exits with `0` even when nothing
 matches. Read its JSON `found` field to distinguish the results:

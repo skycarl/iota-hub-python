@@ -146,6 +146,8 @@ def test_a_transport_failure_is_retried_then_raises_transport_error(mock_api, sl
     assert sleeps == [0.5, 1.0]
     assert isinstance(raised.value.cause, httpx.ConnectError)
     assert raised.value.status is None
+    assert raised.value.hint == "Check the connection and the base URL, then try again."
+    assert raised.value.details == {}
 
 
 def test_409_is_never_retried(mock_api, sleeps):
@@ -357,8 +359,12 @@ def test_a_rejected_upload_raises_upload_failed(mock_api, sleeps):
 
 def test_an_unreachable_bucket_raises_transport_error(mock_api, sleeps):
     mock_api.add("POST", "/bucket", httpx.ConnectError("no route to host"))
-    with pytest.raises(TransportError):
+    with pytest.raises(TransportError) as raised:
         transport(mock_api, sleeps).upload_to_s3(_target(), b"x")
+
+    assert raised.value.hint == "Check the connection, then upload the file again."
+    assert raised.value.details == {"slot": "lightcurve", "filename": "lightcurve.csv"}
+    assert isinstance(raised.value.cause, httpx.ConnectError)
 
 
 def test_transport_error_takes_a_hint_and_details():

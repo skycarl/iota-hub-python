@@ -1494,7 +1494,7 @@ class _Tty(io.StringIO):
 
 
 def test_the_key_prompt_and_the_confirmation_are_written_to_stderr(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     asked: dict[str, dict] = {}
 
@@ -1502,18 +1502,17 @@ def test_the_key_prompt_and_the_confirmation_are_written_to_stderr(
         asked["prompt"] = kwargs
         return "iotahub_key_secret"
 
-    def fake_confirm(text: str, **kwargs) -> bool:
-        asked["confirm"] = kwargs
-        return True
-
-    monkeypatch.setattr(cli_module.sys, "stdin", _Tty())
+    monkeypatch.setattr(cli_module.sys, "stdin", _Tty("y\n"))
     monkeypatch.setattr(cli_module.typer, "prompt", fake_prompt)
-    monkeypatch.setattr(cli_module.typer, "confirm", fake_confirm)
 
     assert cli_module._read_key() == "iotahub_key_secret"
     cli_module._confirm("Delete draft obs_1?", False)
     assert asked["prompt"]["err"] is True
-    assert asked["confirm"]["err"] is True
+    # The whole confirmation, its last character included, and none of it on
+    # stdout.
+    captured = capsys.readouterr()
+    assert captured.err == "Delete draft obs_1? [y/N]: "
+    assert captured.out == ""
 
 
 # -- drafts submit and drafts check -----------------------------------------
@@ -2741,23 +2740,26 @@ def _script_key_check(mock_api: MockAPI) -> None:
 
 
 def _at_a_terminal(monkeypatch: pytest.MonkeyPatch, *, answer: bool = True) -> dict:
-    """A stdin that is a TTY, whatever CliRunner installs; returns what was asked."""
-    asked: dict = {"questions": [], "key_prompts": 0}
+    """A stdin that is a TTY, whatever CliRunner installs, answering y or n.
 
-    def fake_confirm(text: str, **kwargs) -> bool:
-        asked["questions"].append(text)
-        if not answer:
-            raise cli_module.typer.Abort()
-        return True
+    The confirmation is the real one, reading that answer; what it asked is
+    read back from stderr with :func:`_questions`. Returns the key prompts.
+    """
+    asked: dict = {"key_prompts": 0}
 
     def fake_prompt(text: str, **kwargs) -> str:
         asked["key_prompts"] += 1
         return "iotahub_new_secrettail"
 
-    monkeypatch.setattr(cli_module, "sys", SimpleNamespace(stdin=_Tty()))
-    monkeypatch.setattr(cli_module.typer, "confirm", fake_confirm)
+    stdin = _Tty("y\n" if answer else "n\n")
+    monkeypatch.setattr(cli_module, "sys", SimpleNamespace(stdin=stdin))
     monkeypatch.setattr(cli_module.typer, "prompt", fake_prompt)
     return asked
+
+
+def _questions(result) -> list[str]:
+    """Every confirmation a run asked, read back from its stderr."""
+    return re.findall(r"^(.*?) \[y/N\]: ", result.stderr, flags=re.MULTILINE)
 
 
 def test_bare_logout_removes_the_default_profile_and_names_it(
@@ -2800,7 +2802,8 @@ def test_the_first_ever_login_creates_default_and_replaces_nothing(
     payload = json.loads(result.stdout)
     assert payload["profile"] == "default"
     assert payload["replaced"] is False
-    assert asked == {"questions": [], "key_prompts": 1}
+    assert asked == {"key_prompts": 1}
+    assert _questions(result) == []
     assert "Replaced" not in result.stderr
     stored = config.load_config()
     assert stored["default_profile"] == "default"
@@ -2871,7 +2874,7 @@ def test_a_terminal_login_asks_before_replacing_a_key_and_can_be_declined(
     result = run(runner, "auth", "login")
 
     assert result.exit_code == 1
-    assert asked["questions"] == [
+    assert _questions(result) == [
         f"Profile 'dev' already holds key iotahub_old_... for {BASE_URL}. "
         f"Replace it with a key for {BASE_URL}?"
     ]
@@ -2886,12 +2889,12 @@ def test_a_terminal_login_replaces_the_key_once_confirmed(
 ) -> None:
     config.save_profile("dev", api_key="iotahub_old_tail", base_url=BASE_URL)
     _script_key_check(mock_api)
-    asked = _at_a_terminal(monkeypatch)
+    _at_a_terminal(monkeypatch)
 
     result = run(runner, "auth", "login")
 
     assert result.exit_code == 0
-    assert len(asked["questions"]) == 1
+    assert len(_questions(result)) == 1
     assert "Replaced profile 'dev'" in result.stderr
     stored = config.load_config()["profiles"]["dev"]["api_key"]
     assert stored == "iotahub_new_secrettail"
@@ -2902,12 +2905,12 @@ def test_yes_skips_the_question_but_not_the_notice(
 ) -> None:
     config.save_profile("dev", api_key="iotahub_old_tail", base_url=BASE_URL)
     _script_key_check(mock_api)
-    asked = _at_a_terminal(monkeypatch)
+    _at_a_terminal(monkeypatch)
 
     result = run(runner, "auth", "login", "--yes")
 
     assert result.exit_code == 0
-    assert asked["questions"] == []
+    assert _questions(result) == []
     assert "Replaced profile 'dev'" in result.stderr
 
 
@@ -2916,13 +2919,14 @@ def test_login_base_url_names_both_targets_of_the_selected_profile(
 ) -> None:
     config.save_profile("dev", api_key="iotahub_old_tail", base_url=BASE_URL)
     _script_key_check(mock_api)
-    asked = _at_a_terminal(monkeypatch)
+    _at_a_terminal(monkeypatch)
 
     result = run(runner, "auth", "login", "--base-url", OTHER_URL)
 
     assert result.exit_code == 0
-    assert BASE_URL in asked["questions"][0]
-    assert OTHER_URL in asked["questions"][0]
+    (question,) = _questions(result)
+    assert BASE_URL in question
+    assert OTHER_URL in question
     assert config.load_config()["profiles"]["dev"]["base_url"] == OTHER_URL
 
 
@@ -3020,6 +3024,41 @@ def test_submit_json_names_the_draft_when_an_upload_fails_twice(
     error = json.loads(result.stderr)
     assert error["code"] == "upload_failed"
     assert error["details"]["observation_id"] == OBS_ID
+
+
+def test_submit_json_names_the_slot_and_the_draft_when_storage_is_unreachable(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "POST",
+        DRAFTS,
+        {
+            "observation": observation(),
+            "uploads": [upload_target("report", REPORT.name)],
+        },
+        status=201,
+    )
+    # Unreachable for the first target and for the fresh one alike.
+    mock_api.add("POST", BUCKET, httpx.ConnectError("no route to host"))
+    mock_api.json(
+        "POST",
+        f"{GET}/files/report/upload/init",
+        upload_target("report", REPORT.name),
+    )
+
+    result = run(runner, "--json", "submit", str(OBSERVATION_DIR))
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    error = json.loads(result.stderr)
+    assert error["code"] == "transport_error"
+    assert error["status"] is None
+    assert "upload the file again" in error["hint"]
+    assert error["details"] == {
+        "slot": "report",
+        "filename": REPORT.name,
+        "observation_id": OBS_ID,
+    }
 
 
 # -- local paths that cannot be used ------------------------------------------
@@ -3254,6 +3293,10 @@ def test_logout_says_nothing_when_no_bare_command_changes_course(
 
 # -- a declined prompt under --json ---------------------------------------------
 
+#: What ``drafts delete`` asks, exactly as it reaches stderr. The prompt was
+#: already shown, so it may precede the error document (conventions § 13).
+DELETE_PROMPT = f"Delete draft {OBS_ID}? [y/N]: "
+
 
 def test_declining_a_prompt_under_json_is_a_json_error(
     runner: CliRunner, mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch
@@ -3264,7 +3307,7 @@ def test_declining_a_prompt_under_json_is_a_json_error(
 
     assert result.exit_code == 1
     assert result.stdout == ""
-    error = json.loads(result.stderr)
+    error = json.loads(result.stderr.removeprefix(DELETE_PROMPT))
     assert error["code"] == "aborted"
     assert error["exit_code"] == 1
     assert error["hint"]
@@ -3277,11 +3320,15 @@ def test_a_declined_login_under_json_prints_only_the_error_document(
     _store_profiles("dev")
     _at_a_terminal(monkeypatch, answer=False)
 
-    # The Target: note is held by then; the document must still be all of stderr.
+    # The Target: note is held by then; after the prompt, which was already
+    # shown, the document must still be all of stderr.
     result = run(runner, "--json", "auth", "login", "--base-url", OTHER_URL)
 
     assert result.exit_code == 1
-    assert json.loads(result.stderr)["code"] == "aborted"
+    assert result.stdout == ""
+    question, document = result.stderr.split(" [y/N]: ")
+    assert question.startswith("Profile 'dev' already holds")
+    assert json.loads(document)["code"] == "aborted"
 
 
 @pytest.mark.parametrize("flags", [["--json"], []], ids=["json", "plain"])
@@ -3308,22 +3355,84 @@ def test_an_interrupt_exits_130_with_no_error_document(
     assert captured.err == f"Target: {OTHER_URL}\n"
 
 
+class _Interrupted(_Tty):
+    """A terminal where Ctrl-C arrives while the prompt is waiting."""
+
+    def readline(self, *args) -> str:
+        raise KeyboardInterrupt
+
+
+def _delete_at_a_terminal(
+    monkeypatch: pytest.MonkeyPatch, stdin: io.StringIO, *flags: str
+) -> int:
+    """``drafts delete`` through main(), its real prompt reading ``stdin``."""
+    monkeypatch.setattr(sys, "argv", ["iota-hub", *flags, "drafts", "delete", OBS_ID])
+    monkeypatch.setattr(sys, "stdin", stdin)
+    with pytest.raises(SystemExit) as excinfo:
+        cli_module.main()
+    return excinfo.value.code
+
+
 def test_declining_a_prompt_without_json_still_says_aborted(
     mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
-    def decline(text: str, **kwargs) -> bool:
-        raise cli_module.typer.Abort()
+    code = _delete_at_a_terminal(monkeypatch, _Tty("n\n"))
 
-    monkeypatch.setattr(sys, "argv", ["iota-hub", "drafts", "delete", OBS_ID])
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
-    monkeypatch.setattr(cli_module.typer, "confirm", decline)
-
-    with pytest.raises(SystemExit) as excinfo:
-        cli_module.main()
-
-    assert excinfo.value.code == 1
-    assert capsys.readouterr().err.strip() == "Aborted!"
+    assert code == 1
+    captured = capsys.readouterr()
+    assert captured.err == f"{DELETE_PROMPT}Aborted!\n"
+    assert captured.out == ""
     assert mock_api.requests == []
+
+
+@pytest.mark.parametrize(
+    "stdin",
+    [_Tty("n\n"), _Tty("NO\n"), _Tty("\n"), _Tty(""), _Interrupted()],
+    ids=["n", "NO", "enter", "end-of-input", "ctrl-c"],
+)
+def test_a_declined_or_cancelled_prompt_leaves_stdout_empty(
+    stdin: io.StringIO, mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    code = _delete_at_a_terminal(monkeypatch, stdin, "--json")
+
+    # Ctrl-C at a prompt is a cancelled prompt (1), not an interrupted run (130).
+    assert code == 1
+    captured = capsys.readouterr()
+    # Not one byte: no part of the prompt belongs to stdout.
+    assert captured.out == ""
+    assert captured.err.startswith(DELETE_PROMPT)
+    assert json.loads(captured.err.removeprefix(DELETE_PROMPT))["code"] == "aborted"
+    assert mock_api.requests == []
+
+
+@pytest.mark.parametrize("answer", ["y\n", "YES\n"])
+def test_an_accepted_prompt_puts_only_the_document_on_stdout(
+    answer: str, mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    mock_api.add("DELETE", GET, httpx.Response(204))
+
+    code = _delete_at_a_terminal(monkeypatch, _Tty(answer), "--json")
+
+    assert code == 0
+    captured = capsys.readouterr()
+    document = json.dumps({"observation_id": OBS_ID, "deleted": True}, indent=2)
+    assert captured.out == f"{document}\n"
+    assert captured.err == f"{DELETE_PROMPT}Target: {BASE_URL}\n"
+
+
+def test_an_unrecognized_answer_is_asked_again(
+    mock_api: MockAPI, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    mock_api.add("DELETE", GET, httpx.Response(204))
+
+    code = _delete_at_a_terminal(monkeypatch, _Tty("maybe\ny\n"))
+
+    assert code == 0
+    captured = capsys.readouterr()
+    assert captured.out == f"Deleted draft {OBS_ID}\n"
+    assert captured.err == (
+        f"{DELETE_PROMPT}Error: invalid input\n{DELETE_PROMPT}Target: {BASE_URL}\n"
+    )
 
 
 # -- download failures and malformed responses reach the handler -----------------

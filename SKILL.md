@@ -141,12 +141,15 @@ Other commands include `drafts list`, `observations list|show`,
 With `--json`, errors go to stderr as an object with `code`, `message`, `hint`,
 `details`, `status`, `retry_after` and `exit_code`. Check `code`, not message
 text. Invalid arguments return `usage_error` with exit code `2`. A network
-failure during a download returns `transport_error` with the file's
-`details.slot` and `details.filename`.
+failure during an upload or a download returns `transport_error` with the
+file's `details.slot` and `details.filename`.
 
 Exit code `130` has no JSON error: stdout is empty and stderr holds only any
 buffered messages. Check for it before parsing stderr. An interrupted `submit`
 may leave a draft without naming it; run `drafts list` before submitting again.
+A Ctrl-C during startup kills the process by signal instead (`subprocess`
+reports `returncode == -2`, possibly with a traceback on stderr): treat it the
+same as `130`.
 
 ## Observer decisions and file handling
 

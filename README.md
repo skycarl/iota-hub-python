@@ -232,8 +232,8 @@ Check `code`, not the message text. Invalid arguments return `usage_error`
 with exit code `2`. A `submit` that ends with `needs_attention` exits `4` with
 its full result on stdout, not an error. Errors after draft creation include
 `details.observation_id` so you can recover the draft. A network failure during
-a download returns `transport_error` with the file's `details.slot` and
-`details.filename`.
+an upload or a download returns `transport_error` with the file's
+`details.slot` and `details.filename`.
 
 In JSON mode, progress and target messages are buffered. They are printed to
 stderr when a result is returned and discarded on error, leaving only the JSON
@@ -253,7 +253,9 @@ do not prompt. Destructive commands require `--yes` without a terminal.
 An interrupted run has no result to report, so it writes no JSON error: stdout
 is empty and stderr holds only any buffered messages. Check for exit code `130`
 before parsing stderr as JSON. An interrupted `submit` may leave a draft without
-naming it; run `drafts list` before submitting again.
+naming it; run `drafts list` before submitting again. A Ctrl-C in the first
+moments of startup kills the process by signal instead (a shell still reports
+`130`; Python's `subprocess` reports `-2`), so treat that the same way.
 
 `submit --json` includes `next_commands` for available actions, `skipped_checks`
 with their reasons and `owc_commands` for an unresolved OWC link. Skipped checks

@@ -336,7 +336,8 @@ flags) is `lightcurve=PATH`, `--no-attachments` is `attachments=False`,
 Additional information is available in `.details`, `.status` (the HTTP status)
 and `.retry_after` (the requested retry delay). API error codes are listed in
 the [reference](https://iota-hub.com/developers/reference). A `TransportError`
-from a failed download has `.details["slot"]` and `.details["filename"]`.
+from a failed upload or download has `.details["slot"]` and
+`.details["filename"]`.
 
 If `submit_folder` or `submit_files` fails after creating the draft, the draft is
 kept and `.details["observation_id"]` names it.
