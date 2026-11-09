@@ -409,11 +409,14 @@ def _settings(*, api_key: str | None = None, always_announce: bool = False) -> S
         if _term.styled(err=True):
             fallback = "production" if settings.is_default_target else "not production"
             badge = (settings.profile_name or fallback).upper()
+            # The same "Target: <url>" fact as plain output, with the badge
+            # after it: styling may add emphasis, never drop the label.
             _term.show(
                 _term.text(
-                    (f" {badge} ", "bold black on yellow"),
-                    " ",
+                    "Target: ",
                     (settings.base_url, "yellow"),
+                    " ",
+                    (f" {badge} ", "bold black on yellow"),
                 ),
                 err=True,
                 soft_wrap=True,

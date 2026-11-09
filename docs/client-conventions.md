@@ -786,7 +786,7 @@ leave a draft, and nothing reports its `observation_id`.
 Plain output defines which facts are displayed and their order. Style a stream
 only if it is a terminal, `NO_COLOR` is unset and JSON mode is off. Styling may
 add color, bold or dim text, and section spacing, but must not change the facts
-or their order.
+or their order. For example, styled output keeps the `Target:` label.
 
 Wrap prose to the terminal width, capped at 100 columns. Do not insert line
 breaks into table rows, file rows, field values, commands or progress lines;

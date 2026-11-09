@@ -2208,6 +2208,16 @@ def test_styled_glyphs_need_utf8(runner: CliRunner, mock_api, terminal) -> None:
     (out + streams[True].getvalue()).encode("ascii")
 
 
+def test_styled_target_keeps_the_target_label(runner: CliRunner, terminal) -> None:
+    streams = terminal()
+
+    result = run(runner, "submit", str(OBSERVATION_DIR), "--dry-run")
+
+    assert result.exit_code == 0
+    err = re.sub(r"\x1b\[[0-9;]*m", "", streams[True].getvalue())
+    assert f"Target: {BASE_URL}" in err
+
+
 def test_json_is_never_styled(runner: CliRunner, mock_api, terminal) -> None:
     streams = terminal()
     script_submit(mock_api, _needs_attention())
