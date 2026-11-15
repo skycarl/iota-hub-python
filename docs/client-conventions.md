@@ -326,7 +326,8 @@ Do not add an outer retry loop around client calls.
 The transport does not retry S3 uploads because a presigned target may have
 expired. The submission workflow requests a new target through
 `init_file_upload` and retries the upload once. A second failure raises an
-error and leaves the draft available.
+error and leaves the draft available. A local file that cannot be opened or
+read is `missing_files` and is not retried.
 
 After recovery, call `finalize_file_upload` for that file before finalizing
 the draft. The per-file finalize clears the expired target from
@@ -346,7 +347,11 @@ a `PublicUploadTarget` with these fields:
 1. POST `multipart/form-data` to `upload_url`.
 2. Send every entry of `fields` in the returned order, without changing, adding
    or removing fields. These values are part of the signed upload policy.
-3. Put the file part last, with the name `file`.
+3. Put the file part last, with the name `file`. Stream it from the file
+   rather than loading it into memory: an aperture record can be 500 MB. Open
+   the file again for each attempt, so a retry sends it whole, and close it
+   afterwards. A file that cannot be opened or read during the upload raises
+   `missing_files` with `details.slot`, `details.filename` and `details.path`.
 4. Do not send `X-API-Key` or `Authorization`.
 5. Treat any `2xx` response as success. S3 normally returns `204`, but some
    configurations return `200` or `201`. Other statuses mean the upload failed.
@@ -526,7 +531,7 @@ specified in § 12.
 | `file_exists` | A download would replace an existing file without `overwrite`. |
 | `timeout` | The check wait exceeds its timeout (§ 8). |
 | `ambiguous_files` | Multiple files match one slot. Includes `details.slot` and `details.candidates`. |
-| `missing_files` | A folder has no report or cannot be listed, or an explicit path is missing, unreadable or a directory. Check paths before requests in `submit_files`, `replace_file` and `add_attachment`. `details.missing` lists slots, using `attachment` for an invalid `--attach` path. |
+| `missing_files` | A folder has no report or cannot be listed, or an explicit path is missing, unreadable or a directory. Check paths before requests in `submit_files`, `replace_file` and `add_attachment`. `details.missing` lists slots, using `attachment` for an invalid `--attach` path. Also raised when a file cannot be opened or read during its upload (§ 7), with `details.slot` and `details.filename`. |
 | `invalid_extension` | An explicit file has the wrong extension for its slot. |
 | `not_a_directory` | The submission folder is not a directory, or a file blocks the download destination directory. |
 | `not_writable` | The client cannot write a download or config path because of permissions or a conflicting directory. Includes `details.path`. |
@@ -540,6 +545,7 @@ specified in § 12.
 | `aborted` | A prompt was declined or cancelled in JSON mode. Plain mode prints `Aborted!`; both use exit `1`. |
 | `invalid_response` | A `2xx` response is not JSON or does not match the operation's schema. Includes `status`, the method and path in `details.call`, and up to 10 field names in `details.fields`, without their values. Do not retry. |
 | `usage_error` | The argument parser rejects the invocation. |
+| `unexpected_error` | The CLI hit an exception that is not a client error, such as a bug. Shows only the exception's type, in the message and `details.exception`, never its text or a traceback. |
 
 Submitting an already submitted observation succeeds. `already_submitted` can
 still come from the API when attempting to delete a submitted observation.
@@ -722,12 +728,14 @@ Use these mappings for specific codes:
 
 | Exit | Codes or outcomes |
 | ---- | ----------------- |
-| `1` | `upload_failed`, `download_failed`, `file_exists`, `invalid_config`, `aborted`, `invalid_response`, `already_processed`, `already_submitted` |
+| `1` | `upload_failed`, `download_failed`, `file_exists`, `invalid_config`, `aborted`, `invalid_response`, `already_processed`, `already_submitted`, `unexpected_error` |
 | `2` | `usage_error`, `ambiguous_files`, `missing_files`, `invalid_extension`, `not_a_directory`, `not_writable`, `blocked_attachment`, `attachment_too_large`, `too_many_attachments`, `unknown_profile`, `confirmation_required`, `identity_changed`, `validation_error` |
 | `3` | `missing_api_key` |
 | `4` | `timeout`, outcome `needs_attention` |
 
-Use one mapping function and a shared error handler for all commands. Check
+Use one mapping function and a shared error handler for all commands. The
+handler also turns any other exception into `unexpected_error` in the same
+format, except an interrupt and the argument parser's own exits. Check
 specific codes before exception categories: for example, `422 missing_required`
 is exit `4`, while `missing_api_key` remains exit `3`.
 

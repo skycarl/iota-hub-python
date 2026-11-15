@@ -304,6 +304,7 @@ Common examples:
 | `unknown_profile` | Check the profile name or create it with `auth login`. |
 | `usage_error` | Check the command's `--help`. |
 | `timeout` | Checks have not finished. Use `drafts show <id>` to check progress. |
+| `unexpected_error` | Run the command again. If it fails the same way, report it with the command you ran. |
 
 API error codes are listed in the
 [API reference](https://iota-hub.com/developers/reference).

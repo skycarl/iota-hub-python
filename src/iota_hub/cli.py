@@ -30,9 +30,12 @@ import typer
 from rich.text import Text
 
 try:  # typer 0.27+ vendors click; older typer depends on the package.
-    from typer._click.exceptions import UsageError
+    from typer._click.exceptions import ClickException, UsageError
 except ImportError:  # pragma: no cover - typer < 0.27 only
-    from click.exceptions import UsageError  # type: ignore[no-redef]
+    from click.exceptions import (  # type: ignore[no-redef]
+        ClickException,
+        UsageError,
+    )
 
 from . import _term, config
 from ._http import DEFAULT_BASE_URL, normalize_base_url
@@ -164,7 +167,9 @@ def handle_errors(command):
     """The one wrapper around every command: shared options in, errors out.
 
     It turns any :class:`IotaHubError` into the documented output and exit
-    code, and it appends ``--base-url``, ``--profile`` and ``--json`` to the
+    code, and any other exception into ``unexpected_error`` (exit ``1``,
+    no traceback); ``KeyboardInterrupt`` and click's exits pass through. It
+    also appends ``--base-url``, ``--profile`` and ``--json`` to the
     command's signature, so the three are accepted *after* the subcommand
     (`iota-hub submit --json`) as well as before it, without any command
     having to declare them.
@@ -195,6 +200,27 @@ def handle_errors(command):
                         "Run the command again; --yes skips a confirmation on "
                         "the commands that ask for one."
                     ),
+                )
+            )
+        except (ClickException, typer.Exit):
+            # click's own control flow (an exit code, a bad parameter): not ours.
+            raise
+        except Exception as error:
+            # The last resort: a bug or an unforeseen failure still owes one
+            # error in the documented format, never a traceback. Only the
+            # exception's type is shown: its text could quote anything,
+            # including the key.
+            _HELD_NOTES[:] = []
+            _fail(
+                IotaHubError(
+                    "unexpected_error",
+                    f"The command failed unexpectedly ({type(error).__name__}).",
+                    hint=(
+                        "Run the command again. If it fails the same way, report "
+                        "it with the command you ran at "
+                        "https://github.com/skycarl/iota-hub-python/issues."
+                    ),
+                    details={"exception": type(error).__name__},
                 )
             )
         finally:

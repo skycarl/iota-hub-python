@@ -479,6 +479,97 @@ def test_submit_json_is_one_document(runner: CliRunner, mock_api: MockAPI) -> No
     assert payload["observation"]["observation_id"] == OBS_ID
 
 
+def test_a_file_unreadable_mid_submit_is_one_json_error_with_the_draft_id(
+    runner: CliRunner,
+    mock_api: MockAPI,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folder = tmp_path / OBSERVATION_DIR.name
+    folder.mkdir()
+    for path in (REPORT, LIGHTCURVE, LOG):
+        (folder / path.name).write_bytes(path.read_bytes())
+    script_submit(mock_api, observation())
+    create_draft = Client.create_draft
+
+    def create_then_lose_the_lightcurve(self, *args, **kwargs):
+        created = create_draft(self, *args, **kwargs)
+        (folder / LIGHTCURVE.name).unlink()
+        return created
+
+    monkeypatch.setattr(Client, "create_draft", create_then_lose_the_lightcurve)
+
+    result = run(runner, "--json", "submit", str(folder))
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    payload = json.loads(result.stderr)
+    assert payload["code"] == "missing_files"
+    assert payload["details"]["slot"] == "lightcurve"
+    assert payload["details"]["filename"] == LIGHTCURVE.name
+    assert payload["details"]["observation_id"] == OBS_ID
+    assert "Traceback" not in result.stderr
+
+
+def _crash(*args, **kwargs):
+    # The text could be anything, the key included; none of it is shown.
+    raise RuntimeError(f"something broke near {API_KEY}")
+
+
+def test_an_unexpected_exception_is_one_json_error_and_exit_1(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Client, "list_observations", _crash)
+
+    result = run(runner, "--json", "observations", "list", "--base-url", OTHER_URL)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    # One document: the held Target: note is discarded, as for any error.
+    assert json.loads(result.stderr) == {
+        "code": "unexpected_error",
+        "message": "The command failed unexpectedly (RuntimeError).",
+        "hint": (
+            "Run the command again. If it fails the same way, report it with the "
+            "command you ran at https://github.com/skycarl/iota-hub-python/issues."
+        ),
+        "details": {"exception": "RuntimeError"},
+        "status": None,
+        "retry_after": None,
+        "exit_code": 1,
+    }
+    assert API_KEY not in result.stderr
+
+
+def test_an_unexpected_exception_without_json_is_an_error_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(Client, "list_observations", _crash)
+    monkeypatch.setattr(sys, "argv", ["iota-hub", "observations", "list"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_module.main()
+
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "\nerror: unexpected_error: " in captured.err
+    assert "Traceback" not in captured.err
+    assert API_KEY not in captured.err
+
+
+def test_a_non_ascii_key_is_invalid_config_not_a_traceback(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("IOTA_HUB_API_KEY", "iotahub_abc_SECR\u00c9T")
+
+    result = run(runner, "--json", "observations", "list")
+
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["code"] == "invalid_config"
+    assert "SECR" not in result.stderr
+
+
 def test_submit_draft_stops_before_submitting(
     runner: CliRunner, mock_api: MockAPI
 ) -> None:

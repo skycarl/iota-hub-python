@@ -23,6 +23,13 @@ Changes since 0.2.2:
   are no longer uploaded as attachments.
 - Prompts are written to stderr, so stdout holds only the result.
 - Network failures include a hint.
+- Uploads stream each file from disk instead of reading it into memory, so a
+  500 MB aperture record no longer needs 500 MB of memory.
+- A file that cannot be read during an upload returns `missing_files` with its
+  slot and filename, and with `observation_id` when `submit` already created
+  the draft, instead of a traceback. It is not retried on a fresh target.
+- Any other unexpected failure in a command returns `unexpected_error` with
+  exit code `1`, as one JSON error under `--json`, instead of a traceback.
 - An API key is stripped of surrounding whitespace, and a key that cannot be
   sent as a header returns `invalid_config`. A key ending in a newline used to
   appear in full in the network error.
