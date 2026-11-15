@@ -273,7 +273,8 @@
         "description": "A file to upload when creating a draft.",
         "properties": {
           "filename": {
-            "description": "Filename, with extension",
+            "description": "Filename, with extension (at most 255 characters)",
+            "maxLength": 255,
             "minLength": 1,
             "title": "Filename",
             "type": "string"
@@ -323,12 +324,13 @@
         "description": "Body of ``POST \u2026/validation/findings/{fingerprint}/dismiss``.",
         "examples": [
           {
-            "note": "The catalog disagreement is a known typo in the light curve header; the timings are correct."
+            "note": "GPS-timed recording; the OWC orbit is out of date for this asteroid."
           }
         ],
         "properties": {
           "note": {
-            "description": "Why this finding is not a real problem",
+            "description": "Why this finding is not a real problem (3 to 2000 characters)",
+            "maxLength": 2000,
             "minLength": 3,
             "title": "Note",
             "type": "string"
@@ -485,13 +487,14 @@
           "comments": {
             "anyOf": [
               {
+                "maxLength": 4000,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "Free-text notes for the reviewer",
+            "description": "Free-text notes for the reviewer (at most 4000 characters)",
             "title": "Comments"
           },
           "confirm_unnumbered_asteroid_id": {
@@ -1013,13 +1016,14 @@
         "examples": [
           {
             "attachment_id": "3f1c2b9e-8d4a-4c1e-9f7a-2b6d5e8c1a90",
-            "file_key": "staging/obs_01HZY4A1/attachment_3f1c\u2026_1742025600.png",
+            "file_key": "staging/3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17/attachment_3f1c2b9e-8d4a-4c1e-9f7a-2b6d5e8c1a90_1773563400.517902.png",
             "filename": "pyote_plot.png"
           }
         ],
         "properties": {
           "attachment_id": {
             "description": "The `attachment_id` the init call returned",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
             "title": "Attachment Id",
             "type": "string"
           },
@@ -1030,6 +1034,7 @@
           },
           "filename": {
             "description": "Filename, with extension",
+            "maxLength": 255,
             "minLength": 1,
             "title": "Filename",
             "type": "string"
@@ -1048,7 +1053,7 @@
         "description": "Body of ``POST \u2026/files/{slot}/upload/finalize``.",
         "examples": [
           {
-            "file_key": "staging/obs_01HZY4A1/lightcurve/lightcurve.csv",
+            "file_key": "staging/3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17/lightcurve_upload_1773562214.902113_b83e07d5.csv",
             "filename": "lightcurve.csv"
           }
         ],
@@ -1060,6 +1065,7 @@
           },
           "filename": {
             "description": "Filename, with extension",
+            "maxLength": 255,
             "minLength": 1,
             "title": "Filename",
             "type": "string"
@@ -1171,6 +1177,7 @@
         "properties": {
           "filename": {
             "description": "Filename, with extension",
+            "maxLength": 255,
             "minLength": 1,
             "title": "Filename",
             "type": "string"
@@ -1532,7 +1539,7 @@
                 "type": "null"
               }
             ],
-            "description": "The Occult Watcher Cloud link and, for drafts, the automatic match result. A missing link does not prevent submission, but check 11 is skipped."
+            "description": "The Occult Watcher Cloud link and, for drafts, the automatic match result. A missing link does not prevent submission, but check 12 is skipped."
           },
           "readiness": {
             "anyOf": [
@@ -1545,6 +1552,17 @@
             ],
             "description": "What is needed for submission; null for submitted observations"
           },
+          "report_details": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicReportDetails"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the current report records about equipment, conditions and D/R timing, as the observer entered it. Null when there is no readable report."
+          },
           "report_parse": {
             "anyOf": [
               {
@@ -1555,6 +1573,17 @@
               }
             ],
             "description": "Result of reading the report, included in responses that finalize a report upload."
+          },
+          "report_site": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicReportSite"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The observing site the current report records. Personal data: returned only to the observation's owner and to accounts that may view observer contact details; null otherwise, and when the report records none."
           },
           "status": {
             "default": "draft",
@@ -1844,6 +1873,325 @@
         "title": "PublicReadiness",
         "type": "object"
       },
+      "PublicReportDetails": {
+        "description": "The report's equipment, conditions and timing (not PII).",
+        "properties": {
+          "aperture": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Telescope aperture with its unit, e.g. '8 in'",
+            "title": "Aperture"
+          },
+          "clouds": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Clouds / transparency",
+            "title": "Clouds"
+          },
+          "d_corrected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Disappearance time after the form's camera-delay correction; ISO 8601 time of day (UTC), e.g. '04:12:07.245000'. Null when the form had no correction for the camera",
+            "title": "D Corrected"
+          },
+          "d_err": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: the single disappearance error (\u00b1), seconds, at no stated confidence level",
+            "title": "D Err"
+          },
+          "d_err_68": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Disappearance error bar at 68.3 %, seconds",
+            "title": "D Err 68"
+          },
+          "d_err_95": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Disappearance error bar at 95 %, seconds",
+            "title": "D Err 95"
+          },
+          "d_err_9973": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Disappearance error bar at 99.73 %, seconds",
+            "title": "D Err 9973"
+          },
+          "d_uncorrected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Disappearance time as the observer entered it; ISO 8601 time of day (UTC), e.g. '04:12:07.245000'. Null for a Tangra JSON report, whose times are already corrected",
+            "title": "D Uncorrected"
+          },
+          "detector_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Camera model/type",
+            "title": "Detector Model"
+          },
+          "f_ratio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Telescope f/ratio",
+            "title": "F Ratio"
+          },
+          "integration": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Exposure/integration",
+            "title": "Integration"
+          },
+          "ote_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Occultation timing extractor (analysis program)",
+            "title": "Ote Used"
+          },
+          "r_corrected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reappearance time after camera-delay correction; ISO 8601 time of day (UTC), e.g. '04:12:07.245000'",
+            "title": "R Corrected"
+          },
+          "r_err": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: the single reappearance error (\u00b1), seconds, at no stated confidence level",
+            "title": "R Err"
+          },
+          "r_err_68": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reappearance error bar at 68.3 %, seconds",
+            "title": "R Err 68"
+          },
+          "r_err_95": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reappearance error bar at 95 %, seconds",
+            "title": "R Err 95"
+          },
+          "r_err_9973": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reappearance error bar at 99.73 %, seconds",
+            "title": "R Err 9973"
+          },
+          "r_uncorrected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reappearance time as the observer entered it; ISO 8601 time of day (UTC), e.g. '04:12:07.245000'",
+            "title": "R Uncorrected"
+          },
+          "stability": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Image stability",
+            "title": "Stability"
+          },
+          "started_observing": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Started Observing time; ISO 8601 time of day (UTC), e.g. '04:12:07.245000'",
+            "title": "Started Observing"
+          },
+          "stopped_observing": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Stopped Observing time; ISO 8601 time of day (UTC), e.g. '04:12:07.245000'",
+            "title": "Stopped Observing"
+          },
+          "telescope_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Telescope type",
+            "title": "Telescope Type"
+          },
+          "timing_device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Timing device",
+            "title": "Timing Device"
+          },
+          "timing_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Timing method",
+            "title": "Timing Method"
+          },
+          "timing_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Time source",
+            "title": "Timing Source"
+          },
+          "video_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Video format",
+            "title": "Video Format"
+          }
+        },
+        "title": "PublicReportDetails",
+        "type": "object"
+      },
       "PublicReportParse": {
         "description": "Whether the Hub read the uploaded report successfully.",
         "properties": {
@@ -1881,6 +2229,73 @@
           "status"
         ],
         "title": "PublicReportParse",
+        "type": "object"
+      },
+      "PublicReportSite": {
+        "description": "Where the observer stood, as the report records it (PII).\n\nVisible only to the observation's owner and to ``observation.view_pii``\nholders; ``null`` for everyone else.",
+        "properties": {
+          "datum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Geodetic datum, e.g. 'WGS84'",
+            "title": "Datum"
+          },
+          "elevation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Elevation with its unit, e.g. '780 m'",
+            "title": "Elevation"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Latitude as entered, with its hemisphere, e.g. '32 13 18.1 N' (a Tangra JSON report gives signed decimal degrees)",
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Longitude as entered, with its hemisphere, e.g. '110 56 41.2 W' (a Tangra JSON report gives signed decimal degrees)",
+            "title": "Longitude"
+          },
+          "observing_location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The observing location's name",
+            "title": "Observing Location"
+          }
+        },
+        "title": "PublicReportSite",
         "type": "object"
       },
       "PublicSkippedCheck": {
@@ -2013,7 +2428,7 @@
   },
   "info": {
     "contact": {
-      "email": "support@iota-hub.org",
+      "email": "admin@iota-hub.com",
       "name": "IOTA Hub Support"
     },
     "description": "Submit observations, manage drafts and download files with the IOTA Hub API.\n\nSend your API key in the `X-API-Key` header. Access depends on your account permissions and the permissions selected for the key. Use keys in scripts and server applications, not browser code.\n\nStart with the [HTTP API guide](/developers/api). Create and manage keys on the [API keys page](/developers/keys).",
@@ -2272,13 +2687,13 @@
                   "items": [
                     {
                       "assigned_reviewer_ids": [
-                        "usr_reviewer_1"
+                        "d2f63b19-7e04-4a8c-b5d1-6c9e0f3a7b82"
                       ],
                       "asteroid_id": "1036",
                       "asteroid_name": "Ganymed",
                       "created_at": "2026-03-01T09:00:00Z",
                       "date_window_utc": "2026-03-14T04:12:00Z",
-                      "event_id": "evt_01HZY3K9",
+                      "event_id": "b71e9a04-2c58-4d3f-9e61-0a8f47c2d9b5",
                       "files": {
                         "occelmnt": {
                           "filename": "1036_ganymed.occelmnt",
@@ -2288,8 +2703,8 @@
                         }
                       },
                       "observation_ids": [
-                        "obs_01HZY4A1",
-                        "obs_01HZY4A2"
+                        "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
+                        "e09c4d7b-5a13-4f82-9c6e-2b8d1f7a3e54"
                       ],
                       "observer_names": [
                         "A. Observer",
@@ -2352,13 +2767,13 @@
               "application/json": {
                 "example": {
                   "assigned_reviewer_ids": [
-                    "usr_reviewer_1"
+                    "d2f63b19-7e04-4a8c-b5d1-6c9e0f3a7b82"
                   ],
                   "asteroid_id": "1036",
                   "asteroid_name": "Ganymed",
                   "created_at": "2026-03-01T09:00:00Z",
                   "date_window_utc": "2026-03-14T04:12:00Z",
-                  "event_id": "evt_01HZY3K9",
+                  "event_id": "b71e9a04-2c58-4d3f-9e61-0a8f47c2d9b5",
                   "files": {
                     "occelmnt": {
                       "filename": "1036_ganymed.occelmnt",
@@ -2368,8 +2783,8 @@
                     }
                   },
                   "observation_ids": [
-                    "obs_01HZY4A1",
-                    "obs_01HZY4A2"
+                    "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
+                    "e09c4d7b-5a13-4f82-9c6e-2b8d1f7a3e54"
                   ],
                   "observer_names": [
                     "A. Observer",
@@ -2429,7 +2844,7 @@
             "content": {
               "application/json": {
                 "example": {
-                  "event_id": "evt_01HZY3K9",
+                  "event_id": "b71e9a04-2c58-4d3f-9e61-0a8f47c2d9b5",
                   "expires_in": 900,
                   "files": [
                     {
@@ -2733,7 +3148,7 @@
                       "attachments": [],
                       "created_at": "2026-03-15T08:02:00Z",
                       "created_via": "api",
-                      "event_id": "evt_01HZY3K9",
+                      "event_id": "b71e9a04-2c58-4d3f-9e61-0a8f47c2d9b5",
                       "files": {
                         "report": {
                           "filename": "20260314_1036_Ganymed_POS-2.xlsx",
@@ -2756,14 +3171,45 @@
                         "station": "2"
                       },
                       "next_actions": [],
-                      "observation_id": "obs_01HZY4A1",
-                      "observer_user_id": "usr_observer_1",
+                      "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
+                      "observer_user_id": "a4c81e2f-9b37-4d60-8e15-c3f7b2a09d48",
+                      "report_details": {
+                        "aperture": "8 in",
+                        "clouds": "Clear",
+                        "d_err_68": 0.024,
+                        "d_err_95": 0.06,
+                        "d_err_9973": 0.159,
+                        "d_uncorrected": "04:12:07.245000",
+                        "detector_model": "Watec 910HX",
+                        "f_ratio": "10",
+                        "integration": "2x",
+                        "ote_used": "PYOTE",
+                        "r_err_68": 0.024,
+                        "r_err_95": 0.06,
+                        "r_err_9973": 0.159,
+                        "r_uncorrected": "04:12:09.805000",
+                        "stability": "Steady",
+                        "started_observing": "04:10:00",
+                        "stopped_observing": "04:15:00",
+                        "telescope_type": "SCT including Cass and Mak",
+                        "timing_device": "IOTA-VTI",
+                        "timing_method": "Video with frame analysis",
+                        "timing_source": "GPS - time inserted",
+                        "video_format": "NTSC/EIA"
+                      },
+                      "report_site": {
+                        "datum": "WGS84",
+                        "elevation": "780 m",
+                        "latitude": "32 13 18.1 N",
+                        "longitude": "110 56 41.2 W",
+                        "observing_location": "Near Tucson, AZ"
+                      },
                       "status": "amended",
                       "submission_status": "submitted",
                       "submitted_at": "2026-03-15T08:30:00Z",
                       "updated_at": "2026-03-15T09:05:00Z",
                       "version": 3,
-                      "web_url": "https://iota-hub.com/observations/obs_01HZY4A1"
+                      "web_url": "https://iota-hub.com/observations/3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                     }
                   ]
                 },
@@ -2819,7 +3265,7 @@
                     "summary": "No observation of yours, but the event exists",
                     "value": {
                       "event": {
-                        "event_id": "evt_01HZY3K9",
+                        "event_id": "b71e9a04-2c58-4d3f-9e61-0a8f47c2d9b5",
                         "status": "WAITING_FOR_OBSERVATIONS"
                       },
                       "found": "event"
@@ -2837,9 +3283,9 @@
                       "found": "observation",
                       "observation": {
                         "amendment_count": 0,
-                        "observation_id": "obs_01HZY4A1",
+                        "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
                         "status": "draft",
-                        "web_url": "https://iota-hub.com/new-observation?draft=obs_01HZY4A1"
+                        "web_url": "https://iota-hub.com/new-observation?draft=3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                       }
                     }
                   }
@@ -2931,8 +3377,8 @@
                     "next_actions": [
                       "upload:report"
                     ],
-                    "observation_id": "obs_01HZY4A1",
-                    "observer_user_id": "usr_observer_1",
+                    "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
+                    "observer_user_id": "a4c81e2f-9b37-4d60-8e15-c3f7b2a09d48",
                     "readiness": {
                       "checks_current": false,
                       "dismissed_findings": 0,
@@ -2952,16 +3398,16 @@
                     "submission_status": "draft",
                     "updated_at": "2026-03-15T08:02:01Z",
                     "version": 2,
-                    "web_url": "https://iota-hub.com/new-observation?draft=obs_01HZY4A1"
+                    "web_url": "https://iota-hub.com/new-observation?draft=3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                   },
                   "uploads": [
                     {
                       "fields": {
-                        "key": "staging/obs_01HZY4A1/report/report.xlsx",
+                        "key": "staging/3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17/report_upload_1773562200.418265_4f1a9c2e.xlsx",
                         "policy": "eyJleHBpcmF0aW9uIjoi...",
                         "x-amz-signature": "1a2b3c..."
                       },
-                      "file_key": "staging/obs_01HZY4A1/report/report.xlsx",
+                      "file_key": "staging/3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17/report_upload_1773562200.418265_4f1a9c2e.xlsx",
                       "filename": "report.xlsx",
                       "slot": "report",
                       "upload_url": "https://prod-iota-hub-storage.s3.amazonaws.com/"
@@ -3073,7 +3519,7 @@
                   "code": "already_submitted",
                   "details": {
                     "amendment_count": 0,
-                    "observation_id": "obs_01HZY4A1",
+                    "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
                     "status": "submitted"
                   },
                   "hint": "This observation is already submitted. Submit answers 200 with its current state; a submitted observation cannot be deleted through the API.",
@@ -3128,7 +3574,7 @@
                   "attachments": [],
                   "created_at": "2026-03-15T08:02:00Z",
                   "created_via": "api",
-                  "event_id": "evt_01HZY3K9",
+                  "event_id": "b71e9a04-2c58-4d3f-9e61-0a8f47c2d9b5",
                   "files": {
                     "report": {
                       "filename": "20260314_1036_Ganymed_POS-2.xlsx",
@@ -3151,14 +3597,45 @@
                     "station": "2"
                   },
                   "next_actions": [],
-                  "observation_id": "obs_01HZY4A1",
-                  "observer_user_id": "usr_observer_1",
+                  "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
+                  "observer_user_id": "a4c81e2f-9b37-4d60-8e15-c3f7b2a09d48",
+                  "report_details": {
+                    "aperture": "8 in",
+                    "clouds": "Clear",
+                    "d_err_68": 0.024,
+                    "d_err_95": 0.06,
+                    "d_err_9973": 0.159,
+                    "d_uncorrected": "04:12:07.245000",
+                    "detector_model": "Watec 910HX",
+                    "f_ratio": "10",
+                    "integration": "2x",
+                    "ote_used": "PYOTE",
+                    "r_err_68": 0.024,
+                    "r_err_95": 0.06,
+                    "r_err_9973": 0.159,
+                    "r_uncorrected": "04:12:09.805000",
+                    "stability": "Steady",
+                    "started_observing": "04:10:00",
+                    "stopped_observing": "04:15:00",
+                    "telescope_type": "SCT including Cass and Mak",
+                    "timing_device": "IOTA-VTI",
+                    "timing_method": "Video with frame analysis",
+                    "timing_source": "GPS - time inserted",
+                    "video_format": "NTSC/EIA"
+                  },
+                  "report_site": {
+                    "datum": "WGS84",
+                    "elevation": "780 m",
+                    "latitude": "32 13 18.1 N",
+                    "longitude": "110 56 41.2 W",
+                    "observing_location": "Near Tucson, AZ"
+                  },
                   "status": "amended",
                   "submission_status": "submitted",
                   "submitted_at": "2026-03-15T08:30:00Z",
                   "updated_at": "2026-03-15T09:05:00Z",
                   "version": 3,
-                  "web_url": "https://iota-hub.com/observations/obs_01HZY4A1"
+                  "web_url": "https://iota-hub.com/observations/3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/PublicObservation"
@@ -3223,7 +3700,7 @@
                     "dismissed_findings": 0,
                     "findings": [],
                     "open_findings": 0,
-                    "run_id": "vrun_01HZY5B2",
+                    "run_id": "5c9d2e7a-1b84-4f06-8a3c-e2f19b6d4a70",
                     "skipped": [],
                     "status": "running"
                   },
@@ -3252,8 +3729,8 @@
                   "next_actions": [
                     "poll"
                   ],
-                  "observation_id": "obs_01HZY4A1",
-                  "observer_user_id": "usr_observer_1",
+                  "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
+                  "observer_user_id": "a4c81e2f-9b37-4d60-8e15-c3f7b2a09d48",
                   "owc": {
                     "choice": "picked",
                     "owc_event_id": "1917-2448-97311-649282-U033649",
@@ -3289,19 +3766,50 @@
                     "checks_current": false,
                     "dismissed_findings": 0,
                     "event_files_blocked": false,
-                    "latest_run_id": "vrun_01HZY5B2",
+                    "latest_run_id": "5c9d2e7a-1b84-4f06-8a3c-e2f19b6d4a70",
                     "missing_required": [],
                     "open_findings": 0,
                     "state": "checking"
                   },
+                  "report_details": {
+                    "aperture": "8 in",
+                    "clouds": "Clear",
+                    "d_err_68": 0.024,
+                    "d_err_95": 0.06,
+                    "d_err_9973": 0.159,
+                    "d_uncorrected": "04:12:07.245000",
+                    "detector_model": "Watec 910HX",
+                    "f_ratio": "10",
+                    "integration": "2x",
+                    "ote_used": "PYOTE",
+                    "r_err_68": 0.024,
+                    "r_err_95": 0.06,
+                    "r_err_9973": 0.159,
+                    "r_uncorrected": "04:12:09.805000",
+                    "stability": "Steady",
+                    "started_observing": "04:10:00",
+                    "stopped_observing": "04:15:00",
+                    "telescope_type": "SCT including Cass and Mak",
+                    "timing_device": "IOTA-VTI",
+                    "timing_method": "Video with frame analysis",
+                    "timing_source": "GPS - time inserted",
+                    "video_format": "NTSC/EIA"
+                  },
                   "report_parse": {
                     "status": "parsed"
+                  },
+                  "report_site": {
+                    "datum": "WGS84",
+                    "elevation": "780 m",
+                    "latitude": "32 13 18.1 N",
+                    "longitude": "110 56 41.2 W",
+                    "observing_location": "Near Tucson, AZ"
                   },
                   "status": "draft",
                   "submission_status": "draft",
                   "updated_at": "2026-03-15T08:11:00Z",
                   "version": 7,
-                  "web_url": "https://iota-hub.com/new-observation?draft=obs_01HZY4A1"
+                  "web_url": "https://iota-hub.com/new-observation?draft=3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/PublicObservation"
@@ -3445,7 +3953,7 @@
                     "dismissed_findings": 0,
                     "findings": [],
                     "open_findings": 0,
-                    "run_id": "vrun_01HZY5B2",
+                    "run_id": "5c9d2e7a-1b84-4f06-8a3c-e2f19b6d4a70",
                     "skipped": [],
                     "status": "running"
                   },
@@ -3474,26 +3982,57 @@
                   "next_actions": [
                     "poll"
                   ],
-                  "observation_id": "obs_01HZY4A1",
-                  "observer_user_id": "usr_observer_1",
+                  "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
+                  "observer_user_id": "a4c81e2f-9b37-4d60-8e15-c3f7b2a09d48",
                   "owc": {},
                   "readiness": {
                     "checks_current": false,
                     "dismissed_findings": 0,
                     "event_files_blocked": false,
-                    "latest_run_id": "vrun_01HZY5B2",
+                    "latest_run_id": "5c9d2e7a-1b84-4f06-8a3c-e2f19b6d4a70",
                     "missing_required": [],
                     "open_findings": 0,
                     "state": "checking"
                   },
+                  "report_details": {
+                    "aperture": "8 in",
+                    "clouds": "Clear",
+                    "d_err_68": 0.024,
+                    "d_err_95": 0.06,
+                    "d_err_9973": 0.159,
+                    "d_uncorrected": "04:12:07.245000",
+                    "detector_model": "Watec 910HX",
+                    "f_ratio": "10",
+                    "integration": "2x",
+                    "ote_used": "PYOTE",
+                    "r_err_68": 0.024,
+                    "r_err_95": 0.06,
+                    "r_err_9973": 0.159,
+                    "r_uncorrected": "04:12:09.805000",
+                    "stability": "Steady",
+                    "started_observing": "04:10:00",
+                    "stopped_observing": "04:15:00",
+                    "telescope_type": "SCT including Cass and Mak",
+                    "timing_device": "IOTA-VTI",
+                    "timing_method": "Video with frame analysis",
+                    "timing_source": "GPS - time inserted",
+                    "video_format": "NTSC/EIA"
+                  },
                   "report_parse": {
                     "status": "parsed"
+                  },
+                  "report_site": {
+                    "datum": "WGS84",
+                    "elevation": "780 m",
+                    "latitude": "32 13 18.1 N",
+                    "longitude": "110 56 41.2 W",
+                    "observing_location": "Near Tucson, AZ"
                   },
                   "status": "draft",
                   "submission_status": "draft",
                   "updated_at": "2026-03-15T08:11:00Z",
                   "version": 6,
-                  "web_url": "https://iota-hub.com/new-observation?draft=obs_01HZY4A1"
+                  "web_url": "https://iota-hub.com/new-observation?draft=3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/PublicObservation"
@@ -3568,11 +4107,11 @@
                 "example": {
                   "attachment_id": "3f1c2b9e-8d4a-4c1e-9f7a-2b6d5e8c1a90",
                   "fields": {
-                    "key": "staging/obs_01HZY4A1/attachment_3f1c2b9e_1742025600.png",
+                    "key": "staging/3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17/attachment_3f1c2b9e-8d4a-4c1e-9f7a-2b6d5e8c1a90_1773563400.517902.png",
                     "policy": "eyJleHBpcmF0aW9uIjoi...",
                     "x-amz-signature": "1a2b3c..."
                   },
-                  "file_key": "staging/obs_01HZY4A1/attachment_3f1c2b9e_1742025600.png",
+                  "file_key": "staging/3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17/attachment_3f1c2b9e-8d4a-4c1e-9f7a-2b6d5e8c1a90_1773563400.517902.png",
                   "filename": "pyote_plot.png",
                   "slot": "attachment",
                   "upload_url": "https://prod-iota-hub-storage.s3.amazonaws.com/"
@@ -3653,7 +4192,7 @@
                     "dismissed_findings": 0,
                     "findings": [],
                     "open_findings": 0,
-                    "run_id": "vrun_01HZY5B2",
+                    "run_id": "5c9d2e7a-1b84-4f06-8a3c-e2f19b6d4a70",
                     "skipped": [],
                     "status": "running"
                   },
@@ -3682,26 +4221,57 @@
                   "next_actions": [
                     "poll"
                   ],
-                  "observation_id": "obs_01HZY4A1",
-                  "observer_user_id": "usr_observer_1",
+                  "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
+                  "observer_user_id": "a4c81e2f-9b37-4d60-8e15-c3f7b2a09d48",
                   "owc": {},
                   "readiness": {
                     "checks_current": false,
                     "dismissed_findings": 0,
                     "event_files_blocked": false,
-                    "latest_run_id": "vrun_01HZY5B2",
+                    "latest_run_id": "5c9d2e7a-1b84-4f06-8a3c-e2f19b6d4a70",
                     "missing_required": [],
                     "open_findings": 0,
                     "state": "checking"
                   },
+                  "report_details": {
+                    "aperture": "8 in",
+                    "clouds": "Clear",
+                    "d_err_68": 0.024,
+                    "d_err_95": 0.06,
+                    "d_err_9973": 0.159,
+                    "d_uncorrected": "04:12:07.245000",
+                    "detector_model": "Watec 910HX",
+                    "f_ratio": "10",
+                    "integration": "2x",
+                    "ote_used": "PYOTE",
+                    "r_err_68": 0.024,
+                    "r_err_95": 0.06,
+                    "r_err_9973": 0.159,
+                    "r_uncorrected": "04:12:09.805000",
+                    "stability": "Steady",
+                    "started_observing": "04:10:00",
+                    "stopped_observing": "04:15:00",
+                    "telescope_type": "SCT including Cass and Mak",
+                    "timing_device": "IOTA-VTI",
+                    "timing_method": "Video with frame analysis",
+                    "timing_source": "GPS - time inserted",
+                    "video_format": "NTSC/EIA"
+                  },
                   "report_parse": {
                     "status": "parsed"
+                  },
+                  "report_site": {
+                    "datum": "WGS84",
+                    "elevation": "780 m",
+                    "latitude": "32 13 18.1 N",
+                    "longitude": "110 56 41.2 W",
+                    "observing_location": "Near Tucson, AZ"
                   },
                   "status": "draft",
                   "submission_status": "draft",
                   "updated_at": "2026-03-15T08:11:00Z",
                   "version": 6,
-                  "web_url": "https://iota-hub.com/new-observation?draft=obs_01HZY4A1"
+                  "web_url": "https://iota-hub.com/new-observation?draft=3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/PublicObservation"
@@ -3774,7 +4344,7 @@
                       "url": "https://s3.amazonaws.com/...&X-Amz-Signature=..."
                     }
                   ],
-                  "observation_id": "obs_01HZY4A1"
+                  "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/PublicFileList"
@@ -3845,8 +4415,8 @@
                   "next_actions": [
                     "upload:report"
                   ],
-                  "observation_id": "obs_01HZY4A1",
-                  "observer_user_id": "usr_observer_1",
+                  "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
+                  "observer_user_id": "a4c81e2f-9b37-4d60-8e15-c3f7b2a09d48",
                   "readiness": {
                     "checks_current": false,
                     "dismissed_findings": 0,
@@ -3866,7 +4436,7 @@
                   "submission_status": "draft",
                   "updated_at": "2026-03-15T08:02:01Z",
                   "version": 2,
-                  "web_url": "https://iota-hub.com/new-observation?draft=obs_01HZY4A1"
+                  "web_url": "https://iota-hub.com/new-observation?draft=3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/PublicObservation"
@@ -3972,7 +4542,7 @@
                       "amendment_count": 1,
                       "created_at": "2026-03-15T08:02:00Z",
                       "created_via": "api",
-                      "event_id": "evt_01HZY3K9",
+                      "event_id": "b71e9a04-2c58-4d3f-9e61-0a8f47c2d9b5",
                       "files": {
                         "report": {
                           "filename": "report.xlsx",
@@ -3994,15 +4564,46 @@
                         "star_id": "1234567890123456789"
                       },
                       "next_actions": [],
-                      "observation_id": "obs_01HZY4A1",
-                      "observer_user_id": "usr_observer_1",
+                      "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
+                      "observer_user_id": "a4c81e2f-9b37-4d60-8e15-c3f7b2a09d48",
                       "owc": {},
+                      "report_details": {
+                        "aperture": "8 in",
+                        "clouds": "Clear",
+                        "d_err_68": 0.024,
+                        "d_err_95": 0.06,
+                        "d_err_9973": 0.159,
+                        "d_uncorrected": "04:12:07.245000",
+                        "detector_model": "Watec 910HX",
+                        "f_ratio": "10",
+                        "integration": "2x",
+                        "ote_used": "PYOTE",
+                        "r_err_68": 0.024,
+                        "r_err_95": 0.06,
+                        "r_err_9973": 0.159,
+                        "r_uncorrected": "04:12:09.805000",
+                        "stability": "Steady",
+                        "started_observing": "04:10:00",
+                        "stopped_observing": "04:15:00",
+                        "telescope_type": "SCT including Cass and Mak",
+                        "timing_device": "IOTA-VTI",
+                        "timing_method": "Video with frame analysis",
+                        "timing_source": "GPS - time inserted",
+                        "video_format": "NTSC/EIA"
+                      },
+                      "report_site": {
+                        "datum": "WGS84",
+                        "elevation": "780 m",
+                        "latitude": "32 13 18.1 N",
+                        "longitude": "110 56 41.2 W",
+                        "observing_location": "Near Tucson, AZ"
+                      },
                       "status": "amended",
                       "submission_status": "submitted",
                       "submitted_at": "2026-03-15T08:30:00Z",
                       "updated_at": "2026-03-16T09:00:00Z",
                       "version": 9,
-                      "web_url": "https://iota-hub.com/observations/obs_01HZY4A1"
+                      "web_url": "https://iota-hub.com/observations/3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                     }
                   },
                   "draft": {
@@ -4013,7 +4614,7 @@
                         "dismissed_findings": 0,
                         "findings": [],
                         "open_findings": 0,
-                        "run_id": "vrun_01HZY5B2",
+                        "run_id": "5c9d2e7a-1b84-4f06-8a3c-e2f19b6d4a70",
                         "skipped": [],
                         "status": "running"
                       },
@@ -4042,26 +4643,57 @@
                       "next_actions": [
                         "poll"
                       ],
-                      "observation_id": "obs_01HZY4A1",
-                      "observer_user_id": "usr_observer_1",
+                      "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
+                      "observer_user_id": "a4c81e2f-9b37-4d60-8e15-c3f7b2a09d48",
                       "owc": {},
                       "readiness": {
                         "checks_current": false,
                         "dismissed_findings": 0,
                         "event_files_blocked": false,
-                        "latest_run_id": "vrun_01HZY5B2",
+                        "latest_run_id": "5c9d2e7a-1b84-4f06-8a3c-e2f19b6d4a70",
                         "missing_required": [],
                         "open_findings": 0,
                         "state": "checking"
                       },
+                      "report_details": {
+                        "aperture": "8 in",
+                        "clouds": "Clear",
+                        "d_err_68": 0.024,
+                        "d_err_95": 0.06,
+                        "d_err_9973": 0.159,
+                        "d_uncorrected": "04:12:07.245000",
+                        "detector_model": "Watec 910HX",
+                        "f_ratio": "10",
+                        "integration": "2x",
+                        "ote_used": "PYOTE",
+                        "r_err_68": 0.024,
+                        "r_err_95": 0.06,
+                        "r_err_9973": 0.159,
+                        "r_uncorrected": "04:12:09.805000",
+                        "stability": "Steady",
+                        "started_observing": "04:10:00",
+                        "stopped_observing": "04:15:00",
+                        "telescope_type": "SCT including Cass and Mak",
+                        "timing_device": "IOTA-VTI",
+                        "timing_method": "Video with frame analysis",
+                        "timing_source": "GPS - time inserted",
+                        "video_format": "NTSC/EIA"
+                      },
                       "report_parse": {
                         "status": "parsed"
+                      },
+                      "report_site": {
+                        "datum": "WGS84",
+                        "elevation": "780 m",
+                        "latitude": "32 13 18.1 N",
+                        "longitude": "110 56 41.2 W",
+                        "observing_location": "Near Tucson, AZ"
                       },
                       "status": "draft",
                       "submission_status": "draft",
                       "updated_at": "2026-03-15T08:11:00Z",
                       "version": 6,
-                      "web_url": "https://iota-hub.com/new-observation?draft=obs_01HZY4A1"
+                      "web_url": "https://iota-hub.com/new-observation?draft=3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                     }
                   }
                 },
@@ -4091,7 +4723,7 @@
                   "code": "already_processed",
                   "details": {
                     "amendment_count": 1,
-                    "observation_id": "obs_01HZY4A1",
+                    "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
                     "status": "locked"
                   },
                   "hint": "This observation's event is in review or later, so the observer can no longer change its files. Contact a coordinator if a correction is needed.",
@@ -4115,7 +4747,7 @@
                         "stored": "1234567890123456789"
                       }
                     ],
-                    "observation_id": "obs_01HZY4A1",
+                    "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
                     "status": "submitted"
                   },
                   "hint": "The replacement report describes a different observation (see 'details.changed'). Fix the report so it describes this observation; a different observation is a new submission.",
@@ -4180,11 +4812,11 @@
               "application/json": {
                 "example": {
                   "fields": {
-                    "key": "staging/obs_01HZY4A1/report/report.xlsx",
+                    "key": "staging/3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17/report_upload_1773562200.418265_4f1a9c2e.xlsx",
                     "policy": "eyJleHBpcmF0aW9uIjoi...",
                     "x-amz-signature": "1a2b3c..."
                   },
-                  "file_key": "staging/obs_01HZY4A1/report/report.xlsx",
+                  "file_key": "staging/3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17/report_upload_1773562200.418265_4f1a9c2e.xlsx",
                   "filename": "report.xlsx",
                   "slot": "report",
                   "upload_url": "https://prod-iota-hub-storage.s3.amazonaws.com/"
@@ -4215,7 +4847,7 @@
                   "code": "already_processed",
                   "details": {
                     "amendment_count": 1,
-                    "observation_id": "obs_01HZY4A1",
+                    "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
                     "status": "locked"
                   },
                   "hint": "This observation's event is in review or later, so the observer can no longer change its files. Contact a coordinator if a correction is needed.",
@@ -4291,7 +4923,7 @@
                     "dismissed_findings": 0,
                     "findings": [],
                     "open_findings": 0,
-                    "run_id": "vrun_01HZY5B2",
+                    "run_id": "5c9d2e7a-1b84-4f06-8a3c-e2f19b6d4a70",
                     "skipped": [],
                     "status": "running"
                   },
@@ -4320,26 +4952,57 @@
                   "next_actions": [
                     "poll"
                   ],
-                  "observation_id": "obs_01HZY4A1",
-                  "observer_user_id": "usr_observer_1",
+                  "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
+                  "observer_user_id": "a4c81e2f-9b37-4d60-8e15-c3f7b2a09d48",
                   "owc": {},
                   "readiness": {
                     "checks_current": false,
                     "dismissed_findings": 0,
                     "event_files_blocked": false,
-                    "latest_run_id": "vrun_01HZY5B2",
+                    "latest_run_id": "5c9d2e7a-1b84-4f06-8a3c-e2f19b6d4a70",
                     "missing_required": [],
                     "open_findings": 0,
                     "state": "checking"
                   },
+                  "report_details": {
+                    "aperture": "8 in",
+                    "clouds": "Clear",
+                    "d_err_68": 0.024,
+                    "d_err_95": 0.06,
+                    "d_err_9973": 0.159,
+                    "d_uncorrected": "04:12:07.245000",
+                    "detector_model": "Watec 910HX",
+                    "f_ratio": "10",
+                    "integration": "2x",
+                    "ote_used": "PYOTE",
+                    "r_err_68": 0.024,
+                    "r_err_95": 0.06,
+                    "r_err_9973": 0.159,
+                    "r_uncorrected": "04:12:09.805000",
+                    "stability": "Steady",
+                    "started_observing": "04:10:00",
+                    "stopped_observing": "04:15:00",
+                    "telescope_type": "SCT including Cass and Mak",
+                    "timing_device": "IOTA-VTI",
+                    "timing_method": "Video with frame analysis",
+                    "timing_source": "GPS - time inserted",
+                    "video_format": "NTSC/EIA"
+                  },
                   "report_parse": {
                     "status": "parsed"
+                  },
+                  "report_site": {
+                    "datum": "WGS84",
+                    "elevation": "780 m",
+                    "latitude": "32 13 18.1 N",
+                    "longitude": "110 56 41.2 W",
+                    "observing_location": "Near Tucson, AZ"
                   },
                   "status": "draft",
                   "submission_status": "draft",
                   "updated_at": "2026-03-15T08:11:00Z",
                   "version": 6,
-                  "web_url": "https://iota-hub.com/new-observation?draft=obs_01HZY4A1"
+                  "web_url": "https://iota-hub.com/new-observation?draft=3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/PublicObservation"
@@ -4366,7 +5029,7 @@
                 "example": {
                   "code": "upload_missing",
                   "details": {
-                    "file_key": "staging/obs_01HZY4A1/lightcurve/lc.csv",
+                    "file_key": "staging/3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17/lightcurve_upload_1773562214.902113_b83e07d5.csv",
                     "slot": "lightcurve"
                   },
                   "hint": "A file declared at create was never uploaded. POST its presigned target (see 'details.slot'), then call finalize again.",
@@ -4386,7 +5049,7 @@
                     "filename": "lightcurve.pymovie",
                     "slot": "aperture_record"
                   },
-                  "hint": "A body field or query parameter is invalid. 'message' says what is wrong, and 'details', when present, has the specifics.",
+                  "hint": "A body field or query parameter is invalid. For a schema error, 'details.errors' lists each problem: 'loc' names the field and 'msg' says what is wrong. Otherwise 'message' says what is wrong.",
                   "message": "The .pymovie file is not a PyMovie aperture record: it does not start with the PYMOVIE file signature."
                 },
                 "schema": {
@@ -4410,7 +5073,7 @@
     },
     "/public/v1/observations/{observation_id}/submit": {
       "post": {
-        "description": "Submit a draft and attach it to a matching or newly created event. Optionally send `version` to ensure the draft has not changed since you read it. An outdated version returns `409 stale_version`; omitting it submits the current version.\n\nIf the observation is already submitted, the request returns `200` with its current state.\n\nSubmission can fail with `422 missing_required`, `409 open_findings`, `409 checks_stale`, `409 stale_version`, `409 event_files_conflict` or `422 owc_link_mismatch`. The response's `details` identify missing items, open findings or OWC differences where applicable. Errors caused by the observation's state include `status`, `observation_id` and `amendment_count` in `details`.\n\nAn unresolved OWC link does not prevent submission. Check 11 is skipped when no link is available.\n\nAnother user's submitted observation returns `403 forbidden`; another user's draft returns `404 not_found`.",
+        "description": "Submit a draft and attach it to a matching or newly created event. Optionally send `version` to ensure the draft has not changed since you read it. An outdated version returns `409 stale_version`; omitting it submits the current version.\n\nIf the observation is already submitted, the request returns `200` with its current state.\n\nSubmission can fail with `422 missing_required`, `409 open_findings`, `409 checks_stale`, `409 stale_version`, `409 event_files_conflict` or `422 owc_link_mismatch`. The response's `details` identify missing items, open findings or OWC differences where applicable. Errors caused by the observation's state include `status`, `observation_id` and `amendment_count` in `details`.\n\nAn unresolved OWC link does not prevent submission. Check 12 is skipped when no link is available.\n\nAnother user's submitted observation returns `403 forbidden`; another user's draft returns `404 not_found`.",
         "operationId": "public_submit_draft",
         "parameters": [
           {
@@ -4466,7 +5129,7 @@
                   "amendment_count": 0,
                   "created_at": "2026-03-15T08:02:00Z",
                   "created_via": "api",
-                  "event_id": "evt_01HZY3K9",
+                  "event_id": "b71e9a04-2c58-4d3f-9e61-0a8f47c2d9b5",
                   "files": {
                     "report": {
                       "filename": "report.xlsx",
@@ -4488,15 +5151,46 @@
                     "star_id": "1234567890123456789"
                   },
                   "next_actions": [],
-                  "observation_id": "obs_01HZY4A1",
-                  "observer_user_id": "usr_observer_1",
+                  "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
+                  "observer_user_id": "a4c81e2f-9b37-4d60-8e15-c3f7b2a09d48",
                   "owc": {},
+                  "report_details": {
+                    "aperture": "8 in",
+                    "clouds": "Clear",
+                    "d_err_68": 0.024,
+                    "d_err_95": 0.06,
+                    "d_err_9973": 0.159,
+                    "d_uncorrected": "04:12:07.245000",
+                    "detector_model": "Watec 910HX",
+                    "f_ratio": "10",
+                    "integration": "2x",
+                    "ote_used": "PYOTE",
+                    "r_err_68": 0.024,
+                    "r_err_95": 0.06,
+                    "r_err_9973": 0.159,
+                    "r_uncorrected": "04:12:09.805000",
+                    "stability": "Steady",
+                    "started_observing": "04:10:00",
+                    "stopped_observing": "04:15:00",
+                    "telescope_type": "SCT including Cass and Mak",
+                    "timing_device": "IOTA-VTI",
+                    "timing_method": "Video with frame analysis",
+                    "timing_source": "GPS - time inserted",
+                    "video_format": "NTSC/EIA"
+                  },
+                  "report_site": {
+                    "datum": "WGS84",
+                    "elevation": "780 m",
+                    "latitude": "32 13 18.1 N",
+                    "longitude": "110 56 41.2 W",
+                    "observing_location": "Near Tucson, AZ"
+                  },
                   "status": "submitted",
                   "submission_status": "submitted",
                   "submitted_at": "2026-03-15T08:30:00Z",
                   "updated_at": "2026-03-15T08:30:00Z",
                   "version": 8,
-                  "web_url": "https://iota-hub.com/observations/obs_01HZY4A1"
+                  "web_url": "https://iota-hub.com/observations/3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                 },
                 "schema": {
                   "$ref": "#/components/schemas/PublicObservation"
@@ -4536,7 +5230,7 @@
                   "code": "open_findings",
                   "details": {
                     "amendment_count": 0,
-                    "observation_id": "obs_01HZY4A1",
+                    "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
                     "open_findings": 1,
                     "status": "draft"
                   },
@@ -4557,7 +5251,7 @@
                       "lightcurve",
                       "log"
                     ],
-                    "observation_id": "obs_01HZY4A1"
+                    "observation_id": "3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                   },
                   "hint": "Supply every item listed in 'details.missing_required', then submit again.",
                   "message": "Draft is missing required items"
@@ -4614,33 +5308,33 @@
                   "dismissed_findings": 0,
                   "findings": [
                     {
-                      "check_number": 5,
-                      "code": "observation_identity",
-                      "doc_url": "https://iota-hub.com/developers/checks#check-5",
+                      "check_number": 12,
+                      "code": "observation_predicted_time",
+                      "doc_url": "https://iota-hub.com/developers/checks#check-12",
                       "evidence": [
                         {
-                          "actual": "1234567890123456780",
-                          "actual_label": "Light curve",
-                          "expected": "1234567890123456789",
-                          "expected_label": "Report",
-                          "field": "star_id",
-                          "file_ref": "lightcurve",
+                          "actual": "04:12:07.40",
+                          "actual_label": "Mid-event",
+                          "expected": "04:11:31.25",
+                          "expected_label": "Predicted",
+                          "field": "predicted_time",
+                          "file_ref": "report:3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
                           "mismatch": true,
-                          "source": "lightcurve.csv"
+                          "source": "report:3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                         }
                       ],
-                      "fingerprint": "f3a91c4e7b20",
-                      "how_to_fix": "The asteroid, star or date differs between your files and this observation. Correct whichever file is wrong, the report or the light curve, and upload it again.",
-                      "message": "The light curve names a different star than the report.",
-                      "name": "Identity matches your files",
-                      "severity": "fail"
+                      "fingerprint": "9c1e4b7a02d35f68",
+                      "how_to_fix": "The mid-event time is far from the predicted time. Check the recording's time source and the event you are reporting; if the timing is correct, dismiss with a note.",
+                      "message": "Mid-event 04:12:07.40 \u00b7 OWC at your station 04:11:31.25 \u00b7 36 s apart.",
+                      "name": "Near predicted time",
+                      "severity": "warning"
                     }
                   ],
                   "open_findings": 1,
-                  "run_id": "vrun_01HZY5B2",
+                  "run_id": "5c9d2e7a-1b84-4f06-8a3c-e2f19b6d4a70",
                   "skipped": [
                     {
-                      "check_number": 11,
+                      "check_number": 12,
                       "code": "observation_predicted_time",
                       "name": "Near predicted time",
                       "reason": "No OWC match: 2 candidates \u2014 pick one.",
@@ -4731,39 +5425,39 @@
                   "dismissed_findings": 1,
                   "findings": [
                     {
-                      "check_number": 5,
-                      "code": "observation_identity",
+                      "check_number": 12,
+                      "code": "observation_predicted_time",
                       "dismissal": {
                         "dismissed_at": "2026-03-15T08:20:00Z",
                         "dismissed_by": "A. Observer",
-                        "note": "Star id typo in the light curve header; timings are correct.",
+                        "note": "GPS-timed recording; the OWC orbit is out of date for this asteroid.",
                         "via": "api"
                       },
-                      "doc_url": "https://iota-hub.com/developers/checks#check-5",
+                      "doc_url": "https://iota-hub.com/developers/checks#check-12",
                       "evidence": [
                         {
-                          "actual": "1234567890123456780",
-                          "actual_label": "Light curve",
-                          "expected": "1234567890123456789",
-                          "expected_label": "Report",
-                          "field": "star_id",
-                          "file_ref": "lightcurve",
+                          "actual": "04:12:07.40",
+                          "actual_label": "Mid-event",
+                          "expected": "04:11:31.25",
+                          "expected_label": "Predicted",
+                          "field": "predicted_time",
+                          "file_ref": "report:3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17",
                           "mismatch": true,
-                          "source": "lightcurve.csv"
+                          "source": "report:3f2b8c1e-6d4a-4f9b-a7e2-91c0d5b84e17"
                         }
                       ],
-                      "fingerprint": "f3a91c4e7b20",
-                      "how_to_fix": "The asteroid, star or date differs between your files and this observation. Correct whichever file is wrong, the report or the light curve, and upload it again.",
-                      "message": "The light curve names a different star than the report.",
-                      "name": "Identity matches your files",
-                      "severity": "fail"
+                      "fingerprint": "9c1e4b7a02d35f68",
+                      "how_to_fix": "The mid-event time is far from the predicted time. Check the recording's time source and the event you are reporting; if the timing is correct, dismiss with a note.",
+                      "message": "Mid-event 04:12:07.40 \u00b7 OWC at your station 04:11:31.25 \u00b7 36 s apart.",
+                      "name": "Near predicted time",
+                      "severity": "warning"
                     }
                   ],
                   "open_findings": 0,
-                  "run_id": "vrun_01HZY5B2",
+                  "run_id": "5c9d2e7a-1b84-4f06-8a3c-e2f19b6d4a70",
                   "skipped": [
                     {
-                      "check_number": 11,
+                      "check_number": 12,
                       "code": "observation_predicted_time",
                       "name": "Near predicted time",
                       "reason": "No OWC match: 2 candidates \u2014 pick one.",
@@ -4842,7 +5536,7 @@
                   "dismissed_findings": 0,
                   "findings": [],
                   "open_findings": 0,
-                  "run_id": "vrun_01HZY5B2",
+                  "run_id": "5c9d2e7a-1b84-4f06-8a3c-e2f19b6d4a70",
                   "skipped": [],
                   "status": "running"
                 },
