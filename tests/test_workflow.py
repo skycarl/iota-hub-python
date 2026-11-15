@@ -617,6 +617,49 @@ def test_a_second_upload_failure_raises_and_leaves_the_draft(client, mock_api):
     assert requests_to(mock_api, GET) == []
 
 
+def test_the_retry_after_an_expired_target_sends_the_whole_file_again(client, mock_api):
+    script_expired_lightcurve(mock_api)
+    script_upload(mock_api, httpx.Response(204), path=SECOND_BUCKET)
+    mock_api.json("POST", FINALIZE_LIGHTCURVE, observation())
+    mock_api.json("POST", FINALIZE, observation())
+
+    client.submit_files(FILES, wait=False)
+
+    expired = requests_to(mock_api, BUCKET)[1]
+    (retried,) = requests_to(mock_api, SECOND_BUCKET)
+    for request in (expired, retried):
+        assert LIGHTCURVE.read_bytes() in request.content
+        assert form_field_names(request)[-1] == "file"
+
+
+def test_a_file_that_vanishes_mid_submit_is_missing_files_with_the_draft_id(
+    client, mock_api, tmp_path
+):
+    files = {slot: tmp_path / path.name for slot, path in FILES.items()}
+    for slot, path in files.items():
+        path.write_bytes(FILES[slot].read_bytes())
+    script_create(mock_api)
+    script_upload(mock_api)
+
+    def delete_the_lightcurve(on_progress_line: str) -> None:
+        if on_progress_line.startswith("Uploading lightcurve"):
+            files["lightcurve"].unlink()
+
+    with pytest.raises(IotaHubError) as excinfo:
+        client.submit_files(files, on_progress=delete_the_lightcurve)
+
+    error = excinfo.value
+    assert error.code == "missing_files"
+    assert error.details["slot"] == "lightcurve"
+    assert error.details["filename"] == LIGHTCURVE.name
+    assert error.details["observation_id"] == OBS_ID
+    # Only the report reached S3; an unreadable file is not retried on a new
+    # target, and nothing after it was sent.
+    assert len(requests_to(mock_api, BUCKET)) == 1
+    assert requests_to(mock_api, INIT_LIGHTCURVE) == []
+    assert requests_to(mock_api, FINALIZE) == []
+
+
 # -- the fix loop -----------------------------------------------------------
 
 
