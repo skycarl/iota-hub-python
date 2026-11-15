@@ -97,14 +97,13 @@ there, and deployment requires maintainer approval. Pin Actions to commit SHAs,
 with the tag in a trailing comment. To update an Action, resolve the new tag's
 SHA; do not replace a SHA with a tag or branch.
 
-The PyPI project is registered, but the public API's production release is
-pending. Until then, the default base URL (`https://api.iota-hub.com`) does not
-serve `/public/v1`.
+The public API is in production: the default base URL
+(`https://api.iota-hub.com`) serves `/public/v1`, and observers install the
+package from PyPI. A release reaches them directly.
 
-Use semantic versioning and remain at `0.x` until the API reaches production.
-Removing a command or flag, or changing a `--json` output structure, requires a
-major version bump. New commands, optional flags and JSON fields are additive
-changes.
+Use semantic versioning. Removing a command or flag, or changing a `--json`
+output structure, requires a major version bump. New commands, optional flags
+and JSON fields are additive changes.
 
 ## Code changes
 

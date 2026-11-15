@@ -179,11 +179,12 @@ Logging out of the default profile does not select a replacement. If profiles
 remain, the CLI lists them. Commands without a profile selection then use a
 profile named `default`, or report that no key is configured.
 
-Profiles save the key and its API address together:
+A profile saves the key and its API address together. The address is IOTA
+Hub's unless you give another with `--base-url`:
 
 ```bash
-iota-hub auth login --profile dev --base-url <dev-base-url>
-iota-hub submit --profile dev
+iota-hub auth login --profile <name> --base-url <API base URL>
+iota-hub submit --profile <name>
 ```
 
 Settings use flags first, then environment variables, saved settings and
@@ -345,19 +346,22 @@ examples. It is also published at
 
 ## Environments
 
-The default API address is `https://api.iota-hub.com`. The public API's
-production release is pending. Until then, use the development deployment and
-create a key there. Its `/developers` page lists the development API address;
-paste it into `--base-url` as shown.
+The default API address is `https://api.iota-hub.com`, the production IOTA
+Hub. A key from the [API keys page](https://iota-hub.com/developers/keys)
+works there without further settings.
+
+To use another deployment, create a key on that deployment and save it in its
+own profile. The deployment's `/developers` page lists its API address:
 
 ```bash
-iota-hub auth login --profile dev --base-url <dev-base-url>
-iota-hub observations list --profile dev
+iota-hub auth login --profile <name> --base-url <API base URL>
+iota-hub observations list --profile <name>
 ```
 
 `--base-url` and `IOTA_HUB_BASE_URL` take the API base address, with or
-without a trailing `/public/v1`; the client adds that path when it is missing. For a local API checkout, use
-`--base-url http://localhost:8000`. The package has no built-in development URL.
+without a trailing `/public/v1`; the client adds that path when it is missing.
+For a local API checkout, use `--base-url http://localhost:8000`. The package
+has no built-in development URL.
 
 ## HTTP API and other clients
 
@@ -378,10 +382,9 @@ Python 3.10 or newer on Windows, macOS or Linux. Runtime dependencies are
 
 ## Versioning
 
-The package uses semantic versioning and remains at `0.x` until the public API
-reaches production. Removing a command or flag, or changing a `--json` output
-structure, requires a major version bump. New commands, optional flags and
-JSON fields are additive changes.
+The package uses semantic versioning. Removing a command or flag, or changing
+a `--json` output structure, requires a major version bump. New commands,
+optional flags and JSON fields are additive changes.
 
 ## Contributing
 
