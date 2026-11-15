@@ -378,7 +378,7 @@ define configuration, retries, polling, file selection, exit codes and output.
 ## Requirements
 
 Python 3.10 or newer on Windows, macOS or Linux. Runtime dependencies are
-`httpx`, `pydantic`, `typer` and `platformdirs`, plus `tomli` on Python 3.10.
+`httpx`, `pydantic`, `typer`, `rich` and `platformdirs`, plus `tomli` on Python 3.10.
 
 ## Versioning
 

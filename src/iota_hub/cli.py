@@ -770,7 +770,10 @@ BaseUrlOption = Annotated[
     typer.Option(
         "--base-url",
         metavar="URL",
-        help="The API base to talk to. Beats IOTA_HUB_BASE_URL and the profile.",
+        help=(
+            "The API base to talk to. Beats IOTA_HUB_BASE_URL; with a profile's "
+            "key it must be the address saved in that profile."
+        ),
     ),
 ]
 ProfileOption = Annotated[
@@ -853,7 +856,7 @@ def root(
     The key is never a command-line argument: set IOTA_HUB_API_KEY, or store
     one with `iota-hub auth login`.
 
-    The three options below are also accepted after the subcommand:
+    --base-url, --profile and --json are also accepted after the subcommand:
     `iota-hub submit DIR --json` is the same run as `iota-hub --json submit DIR`.
 
     \b

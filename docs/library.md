@@ -349,7 +349,8 @@ Check for an existing observation before starting again.
 ## Call individual API operations
 
 For more control over submission, use methods such as `create_draft`,
-`init_file_upload`, `finalize_draft` and `submit_draft`. The
+`init_file_upload`, `finalize_draft` and `submit_draft`. Send each file to the
+upload target those calls return with `client.upload_to_s3(target, path)`. The
 [HTTP API guide](https://iota-hub.com/developers/api) explains the sequence.
 Pass an `idempotency_key` when creating or finalizing a draft, and reuse that
 key when retrying the same operation to avoid repeating it.

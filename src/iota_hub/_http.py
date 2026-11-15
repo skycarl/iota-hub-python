@@ -54,7 +54,7 @@ class Transport:
         user_agent: str | None = None,
         sleep: Callable[[float], None] = _default_sleep,
     ) -> None:
-        self.api_key = api_key
+        self.api_key = clean_api_key(api_key)
         self.base_url = normalize_base_url(base_url)
         check_base_url(self.base_url)
         self.api_root = f"{self.base_url}{API_PREFIX}"
@@ -187,6 +187,25 @@ def normalize_base_url(base_url: str) -> str:
     if url.endswith(API_PREFIX):
         url = url[: -len(API_PREFIX)].rstrip("/")
     return url
+
+
+def clean_api_key(api_key: str) -> str:
+    """The key without surrounding whitespace, refused if it cannot be a header.
+
+    A key read from a file or a CI secret often ends in a newline. Sent as it
+    is, the HTTP layer rejects the header and names the whole value in its
+    error, so the key is checked here and never quoted.
+    """
+    key = api_key.strip()
+    if all("!" <= character <= "~" for character in key):
+        return key
+    raise IotaHubError(
+        "invalid_config",
+        "The API key contains a space, a control character or a non-ASCII "
+        "character, so it cannot be sent.",
+        hint="Copy the key again from the API keys page, as one line.",
+        details={"field": "api_key"},
+    )
 
 
 def check_base_url(base_url: str) -> None:

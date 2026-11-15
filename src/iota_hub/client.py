@@ -11,6 +11,7 @@ layer's job (design D15), and that layer is built on this one.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from time import sleep as _default_sleep
 from typing import Any, TypeVar
 from urllib.parse import quote
@@ -78,6 +79,15 @@ class Client(WorkflowMixin):
 
     def close(self) -> None:
         self.http.close()
+
+    def upload_to_s3(
+        self, target: PublicUploadTarget, path_or_bytes: str | Path | bytes
+    ) -> None:
+        """POST one file to the upload target an init or create call returned.
+
+        The API key is not sent: the target's form fields are the credential.
+        """
+        self.http.upload_to_s3(target, path_or_bytes)
 
     def __enter__(self) -> Client:
         return self

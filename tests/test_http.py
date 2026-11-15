@@ -427,3 +427,27 @@ def test_a_base_url_that_would_leak_the_key_is_refused(base_url):
 )
 def test_plain_http_is_allowed_to_the_local_machine(base_url):
     Transport(API_KEY, base_url).close()
+
+
+# -- the key as a header ----------------------------------------------------
+
+
+def test_whitespace_around_the_key_is_stripped(mock_api, sleeps):
+    mock_api.json("GET", "/public/v1/events", {"items": []})
+    http = Transport(
+        f"  {API_KEY}\r\n", BASE_URL, transport=mock_api.transport, sleep=sleeps.append
+    )
+    http.request("GET", "/events")
+    assert mock_api.last_request.headers["X-API-Key"] == API_KEY
+
+
+@pytest.mark.parametrize(
+    "key", ["iotahub_abc_SEC\nRET", "iotahub_abc_SEC RET", "iotahub_abc_SECR\u00c9T"]
+)
+def test_a_key_that_cannot_be_a_header_is_refused_without_quoting_it(key):
+    with pytest.raises(IotaHubError) as excinfo:
+        Transport(key, BASE_URL)
+    error = excinfo.value
+    assert error.code == "invalid_config"
+    assert error.details == {"field": "api_key"}
+    assert "SEC" not in str(error) + repr(error.details) + (error.hint or "")
