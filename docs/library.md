@@ -164,8 +164,8 @@ equivalent is `update_draft` (see below).
 
 `result.uploads` contains the selected filenames by file type.
 `result.attachments` lists attachment filenames, `result.ignored` lists
-files not uploaded (excluded by `attachments=False`, or other candidates for a
-slot you chose a file for), and `result.symlinks` lists symbolic links found
+the filenames not uploaded (excluded by `attachments=False`, or other candidates for a
+slot you chose a file for), and `result.symlinks` lists the names of symbolic links found
 in the folder, which are never uploaded.
 
 ## Fix and resubmit

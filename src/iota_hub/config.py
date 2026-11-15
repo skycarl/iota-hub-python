@@ -44,8 +44,8 @@ class Settings:
     # must never spell the secret. :func:`key_prefix` is what to show instead.
     api_key: str = field(repr=False)
     base_url: str
-    profile_name: str | None
-    source_of_key: str
+    profile: str | None
+    key_source: str
     is_default_target: bool
 
 
@@ -197,8 +197,8 @@ def resolve(
     return Settings(
         api_key=key,
         base_url=target,
-        profile_name=name,
-        source_of_key=source,
+        profile=name,
+        key_source=source,
         is_default_target=target == DEFAULT_BASE_URL,
     )
 

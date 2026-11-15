@@ -44,7 +44,7 @@ These method names are part of the contract:
 - `add_attachment(observation_id, path)`: upload one attachment (§ 11a).
   Use the transport's `delete_attachment(observation_id, attachment_id)` to
   remove one.
-- `download_files("observation" | "event", id, dest, …)`: list files and
+- `download_files("observation" | "event", resource_id, dest, …)`: list files and
   download them to `dest`. An optional `slot` filter accepts any slot returned
   by the API, including event files such as `damit`, `ground_track` and
   `attachment`.

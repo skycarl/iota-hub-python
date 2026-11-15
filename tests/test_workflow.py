@@ -327,7 +327,7 @@ def test_submit_folder_reports_what_it_did_not_upload(client, mock_api, tmp_path
     result = client.submit_folder(folder, attachments=False)
 
     assert result.outcome == "submitted"
-    assert [path.name for path in result.ignored] == ["_notes.txt"]
+    assert result.ignored == ["_notes.txt"]
     assert result.attachments == []
     declared = body_of(requests_to(mock_api, DRAFTS)[0])["files"]
     assert [item["slot"] for item in declared] == ["report", "lightcurve", "log"]
