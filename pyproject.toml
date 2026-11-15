@@ -31,7 +31,6 @@ dependencies = [
     "typer>=0.12",
     # Imported directly for styled output; typer also depends on it.
     "rich>=13",
-    "platformdirs>=4",
     # tomllib is stdlib from 3.11; 3.10 needs the backport to read config.toml.
     "tomli>=2; python_version < '3.11'",
 ]

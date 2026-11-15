@@ -43,6 +43,15 @@ Changes since 0.2.2:
   matching `auth status --json`. `SubmitResult.ignored` and
   `SubmitResult.symlinks` hold filenames, like `uploads` and `attachments`.
   The second argument of `download_files` is named `resource_id`.
+- The config file's location no longer depends on the installed
+  `platformdirs` version, and the package no longer depends on `platformdirs`.
+  On macOS, an absolute `XDG_CONFIG_HOME` places the file at
+  `$XDG_CONFIG_HOME/iota-hub/config.toml`, as `platformdirs` 4.6 and later
+  already did. With an older `platformdirs` and `XDG_CONFIG_HOME` set, 0.2.x
+  read `~/Library/Application Support/iota-hub/config.toml` instead; move the
+  file, or unset `XDG_CONFIG_HOME`, to keep using it. Windows reads
+  `%LOCALAPPDATA%` and no longer honours `platformdirs`' `WIN_PD_OVERRIDE_*`
+  variables.
 - The package declares `rich` as a dependency and ships `py.typed`.
 - Python 3.14 is supported.
 

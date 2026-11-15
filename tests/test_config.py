@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -377,6 +379,57 @@ def test_the_default_path_is_under_the_platform_config_dir():
 
     assert path.name == "config.toml"
     assert path.parent.name == "iota-hub"
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    """A fake home directory and a clean slate of the variables that move the file."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    for name in ("XDG_CONFIG_HOME", "LOCALAPPDATA"):
+        monkeypatch.delenv(name, raising=False)
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("platform", "parts"),
+    [
+        ("linux", (".config",)),
+        ("darwin", ("Library", "Application Support")),
+        ("win32", ("AppData", "Local")),
+    ],
+)
+def test_the_default_path_per_platform(home, monkeypatch, platform, parts):
+    monkeypatch.setattr(sys, "platform", platform)
+
+    assert config_file_path() == home.joinpath(*parts, "iota-hub", "config.toml")
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_xdg_config_home_moves_the_file_on_linux_and_macos(home, monkeypatch, platform):
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setenv("XDG_CONFIG_HOME", "/xdg")
+
+    assert config_file_path() == Path("/xdg", "iota-hub", "config.toml")
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+@pytest.mark.parametrize("value", ["", "relative/dir"])
+def test_an_empty_or_relative_xdg_config_home_is_ignored(
+    home, monkeypatch, platform, value
+):
+    monkeypatch.setattr(sys, "platform", platform)
+    default = config_file_path()
+    monkeypatch.setenv("XDG_CONFIG_HOME", value)
+
+    assert config_file_path() == default
+
+
+def test_windows_uses_localappdata_and_ignores_xdg(home, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(home / "Local"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", "/xdg")
+
+    assert config_file_path() == home / "Local" / "iota-hub" / "config.toml"
 
 
 @posix_only

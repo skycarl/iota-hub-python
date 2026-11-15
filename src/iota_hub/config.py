@@ -11,12 +11,12 @@ from __future__ import annotations
 import contextlib
 import errno
 import os
+import posixpath
 import secrets
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-
-from platformdirs import user_config_dir
 
 from ._http import DEFAULT_BASE_URL, normalize_base_url
 from .errors import AuthError, IotaHubError
@@ -221,12 +221,30 @@ def key_prefix(key: str) -> str:
 
 
 def config_file_path(config_path: str | Path | None = None) -> Path:
-    """Where the config lives: the platform config dir, or an explicit path."""
+    """Where the config lives: an explicit path, or the platform's default.
+
+    Windows: ``%LOCALAPPDATA%\\iota-hub``, or ``~\\AppData\\Local\\iota-hub`` when
+    that variable is unset. Elsewhere: ``$XDG_CONFIG_HOME/iota-hub`` when it is
+    an absolute path (the XDG spec ignores a relative one), else
+    ``~/Library/Application Support/iota-hub`` on macOS and
+    ``~/.config/iota-hub`` on Linux and other POSIX systems.
+
+    Computed here rather than by ``platformdirs``, whose macOS answer changed
+    in 4.6 (it began honouring ``XDG_CONFIG_HOME``): the file holds API keys,
+    so its location must not move when a dependency is upgraded.
+    """
     if config_path is not None:
         return Path(config_path)
-    # ``appauthor=False`` keeps Windows at %LOCALAPPDATA%\iota-hub rather than
-    # %LOCALAPPDATA%\iota-hub\iota-hub, which is what the docs promise.
-    return Path(user_config_dir("iota-hub", appauthor=False)) / CONFIG_FILENAME
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        base = Path(local) if local else Path.home() / "AppData" / "Local"
+    elif posixpath.isabs(xdg := os.environ.get("XDG_CONFIG_HOME", "")):
+        base = Path(xdg)
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path.home() / ".config"
+    return base / "iota-hub" / CONFIG_FILENAME
 
 
 def load_config(config_path: str | Path | None = None) -> dict:

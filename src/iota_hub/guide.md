@@ -351,6 +351,9 @@ Settings are stored in:
     macOS     ~/Library/Application Support/iota-hub/config.toml
     Windows   %LOCALAPPDATA%\iota-hub\config.toml
 
+On Linux and macOS, an absolute XDG_CONFIG_HOME moves the file to
+$XDG_CONFIG_HOME/iota-hub/config.toml. Windows ignores XDG_CONFIG_HOME.
+
 ## Related documentation
 
 - [Data submission requirements](https://iota-hub.com/data-submission)
