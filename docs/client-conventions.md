@@ -292,6 +292,11 @@ Every API request includes:
 
 Send the key only to the IOTA Hub API, never to storage upload or download URLs.
 
+Strip whitespace from both ends of a key before using it; a key read from a
+file or a CI secret often ends in a newline. Raise `invalid_config` before
+sending a request if the key then contains a space, a control character or a
+non-ASCII character. Do not include the key in that error.
+
 ## 6. Retries
 
 Apply retries to these API failures:

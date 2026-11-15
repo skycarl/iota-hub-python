@@ -224,7 +224,11 @@ class WorkflowMixin:
         aperture_record: str | Path | None = None,
         attachments: bool = True,
         attach: Sequence[str | Path] = (),
-        **kwargs: object,
+        auto_submit_when_clean: bool = False,
+        wait: bool = True,
+        submit: bool = True,
+        timeout: float = POLL_TIMEOUT,
+        on_progress: Progress | None = None,
     ) -> SubmitResult:
         """Map one directory to slots and attachments (``iota_hub.files``), submit.
 
@@ -247,7 +251,11 @@ class WorkflowMixin:
         result = self.submit_files(
             mapping.slots,  # type: ignore[arg-type]
             attachments=mapping.attachments,
-            **kwargs,  # type: ignore[arg-type]
+            auto_submit_when_clean=auto_submit_when_clean,
+            wait=wait,
+            submit=submit,
+            timeout=timeout,
+            on_progress=on_progress,
         )
         result.ignored = mapping.ignored
         result.symlinks = mapping.symlinks

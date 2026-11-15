@@ -22,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.10", "3.13"]
+        python-version: ["3.10", "3.14"]
     runs-on: ${{ matrix.os }}
     # A hung test should fail quickly, not hold the job for six hours.
     timeout-minutes: 15
@@ -40,11 +40,11 @@ jobs:
       # Lint once is enough; running it on every OS/Python combo is pure
       # duplication of the same check.
       - name: Lint (ruff check)
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14'
         run: uv run ruff check .
 
       - name: Format check (ruff format)
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14'
         run: uv run ruff format --check .
 
       - name: Test

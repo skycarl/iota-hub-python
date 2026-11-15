@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "iota-hub"
-version = "0.2.2"
+version = "1.0.0"
 description = "Client library and CLI for the IOTA Hub public API (occultation observation submission)"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -21,12 +21,16 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Astronomy",
+    "Typing :: Typed",
 ]
 dependencies = [
     "httpx>=0.27",
     "pydantic>=2.6",
     "typer>=0.12",
+    # Imported directly for styled output; typer also depends on it.
+    "rich>=13",
     "platformdirs>=4",
     # tomllib is stdlib from 3.11; 3.10 needs the backport to read config.toml.
     "tomli>=2; python_version < '3.11'",

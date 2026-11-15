@@ -32,7 +32,14 @@ from .errors import (
     TransportError,
 )
 from .files import SLOTS, FolderMapping, MappingError, map_folder
-from .workflow import SubmitResult, next_actions_commands
+from .workflow import (
+    SubmitResult,
+    check_warnings,
+    next_actions_commands,
+    owc_commands,
+    owc_unresolved,
+    skipped_checks,
+)
 
 __all__ = [
     "DEFAULT_BASE_URL",
@@ -51,13 +58,17 @@ __all__ = [
     "Transport",
     "TransportError",
     "__version__",
+    "check_warnings",
     "config_file_path",
     "delete_profile",
     "key_prefix",
     "load_config",
     "map_folder",
     "next_actions_commands",
+    "owc_commands",
+    "owc_unresolved",
     "resolve",
     "save_profile",
     "sha256_base64",
+    "skipped_checks",
 ]

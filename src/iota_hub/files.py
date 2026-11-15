@@ -83,7 +83,8 @@ class MappingError(IotaHubError):
 @dataclass
 class FolderMapping:
     """What a directory maps to: the slots filled, the attachments, what was
-    left alone (only with ``attachments=False``) and the symlinks skipped."""
+    left alone (everything else with ``attachments=False``, and a chosen slot's
+    other candidates) and the symlinks skipped."""
 
     directory: Path
     slots: dict[str, Path] = field(default_factory=dict)
