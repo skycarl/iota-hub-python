@@ -7,9 +7,11 @@ IOTA Hub. Run `iota-hub guide` to read this guide in your terminal.
 
 Requires Python 3.10 or newer on Windows, macOS or Linux.
 
-Install with either uv or pipx:
+Install with uv:
 
     uv tool install iota-hub
+
+Or with pipx:
 
     pipx install iota-hub
 
@@ -17,11 +19,18 @@ To run a command without installing the tool, use `uvx iota-hub`, for example:
 
     uvx iota-hub --version
 
-To upgrade to the latest release:
+To upgrade to the latest release with uv:
 
     uv tool upgrade iota-hub
+
+With pipx:
+
     pipx upgrade iota-hub
-    uvx iota-hub@latest --version   # uvx can otherwise reuse a cached older version
+
+With uvx, ask for the latest release, since uvx can otherwise reuse a cached
+older version:
+
+    uvx iota-hub@latest --version
 
 ## Authenticate
 
