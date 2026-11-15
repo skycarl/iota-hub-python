@@ -133,13 +133,20 @@ must never be accepted as a CLI flag.
 | `IOTA_HUB_BASE_URL` | API base address (§ 4). |
 | `IOTA_HUB_PROFILE` | Stored profile to select. |
 
-Use the platform configuration directory reported by `platformdirs`:
+Store the file at a fixed path for each platform. Compute it directly rather
+than through a platform-directories library, whose answer can change between
+versions:
 
 | Platform | Path |
 | -------- | ---- |
-| Linux | `~/.config/iota-hub/config.toml` |
-| macOS | `~/Library/Application Support/iota-hub/config.toml` |
-| Windows | `%LOCALAPPDATA%\iota-hub\config.toml` |
+| Linux and other POSIX | `$XDG_CONFIG_HOME/iota-hub/config.toml`, else `~/.config/iota-hub/config.toml` |
+| macOS | `$XDG_CONFIG_HOME/iota-hub/config.toml`, else `~/Library/Application Support/iota-hub/config.toml` |
+| Windows | `%LOCALAPPDATA%\iota-hub\config.toml`, else `~\AppData\Local\iota-hub\config.toml` |
+
+Use `XDG_CONFIG_HOME` only when it is set to an absolute path; ignore an empty
+or relative value, as the XDG specification requires. Windows ignores
+`XDG_CONFIG_HOME`. Use the `~\AppData\Local` fallback only when `LOCALAPPDATA`
+is unset.
 
 Store each profile's key and base URL together in TOML:
 
