@@ -325,6 +325,54 @@ class PublicReportParse(_Public):
     message: str | None = None
 
 
+class PublicReportDetails(_Public):
+    """The report's equipment, conditions and timing, as the observer entered it.
+
+    Times are ISO 8601 times of day (UTC); errors are in seconds.
+    """
+
+    telescope_type: str | None = None
+    aperture: str | None = None
+    f_ratio: str | None = None
+    detector_model: str | None = None
+    integration: str | None = None
+    video_format: str | None = None
+    timing_method: str | None = None
+    timing_device: str | None = None
+    timing_source: str | None = None
+    ote_used: str | None = None
+    clouds: str | None = None
+    stability: str | None = None
+    started_observing: str | None = None
+    stopped_observing: str | None = None
+    d_uncorrected: str | None = None
+    d_corrected: str | None = None
+    r_uncorrected: str | None = None
+    r_corrected: str | None = None
+    d_err: float | None = None
+    d_err_68: float | None = None
+    d_err_95: float | None = None
+    d_err_9973: float | None = None
+    r_err: float | None = None
+    r_err_68: float | None = None
+    r_err_95: float | None = None
+    r_err_9973: float | None = None
+
+
+class PublicReportSite(_Public):
+    """Where the observer stood, as the report records it.
+
+    ``None`` on an observation unless the key's owner made it or may view
+    observers' personal details.
+    """
+
+    observing_location: str | None = None
+    latitude: str | None = None
+    longitude: str | None = None
+    elevation: str | None = None
+    datum: str | None = None
+
+
 class PublicObservation(_Public):
     """An observation (draft or submitted), self-describing for a poller.
 
@@ -354,6 +402,8 @@ class PublicObservation(_Public):
     checks: PublicChecks | None = None
     next_actions: list[str] = Field(default_factory=list)
     report_parse: PublicReportParse | None = None
+    report_details: PublicReportDetails | None = None
+    report_site: PublicReportSite | None = None
     owc: PublicOWC | None = None
 
 
