@@ -408,7 +408,7 @@ def _settings(*, api_key: str | None = None, always_announce: bool = False) -> S
     if always_announce or not settings.is_default_target:
         if _term.styled(err=True):
             fallback = "production" if settings.is_default_target else "not production"
-            badge = (settings.profile_name or fallback).upper()
+            badge = (settings.profile or fallback).upper()
             # The same "Target: <url>" fact as plain output, with the badge
             # after it: styling may add emphasis, never drop the label.
             _term.show(
@@ -1038,8 +1038,8 @@ def _render_not_uploaded(ignored: list[str], symlinks: list[str]) -> None:
 
 
 def _emit_submit(result: SubmitResult) -> None:
-    ignored = [path.name for path in result.ignored]
-    symlinks = [path.name for path in result.symlinks]
+    ignored = result.ignored
+    symlinks = result.symlinks
     observation = result.observation
     if _OPTIONS.json:
         _emit(
@@ -1143,8 +1143,8 @@ def auth_login(yes: YesOption = False) -> None:
     settings = Settings(
         api_key=key,
         base_url=target,
-        profile_name=name,
-        source_of_key="flag",
+        profile=name,
+        key_source="flag",
         is_default_target=target == DEFAULT_BASE_URL,
     )
     with _make_client(settings) as client:
@@ -1223,19 +1223,19 @@ def auth_status() -> None:
     if _OPTIONS.json:
         _emit(
             {
-                "profile": settings.profile_name,
+                "profile": settings.profile,
                 "base_url": settings.base_url,
                 "key_prefix": prefix,
-                "key_source": settings.source_of_key,
+                "key_source": settings.key_source,
                 "config_file": str(path),
                 "check": check,
             }
         )
         return
-    _field("Profile", _or_dash(settings.profile_name))
+    _field("Profile", _or_dash(settings.profile))
     _field("Base URL", settings.base_url)
     _field("Key", prefix)
-    _field("Key source", settings.source_of_key)
+    _field("Key source", settings.key_source)
     _field("Config file", _pasteable(path))
     _field("Check", check, status=True)
 

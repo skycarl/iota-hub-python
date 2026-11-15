@@ -31,6 +31,11 @@ Changes since 0.2.2:
   importable from `iota_hub`.
 - `submit_folder` names its `wait`, `submit`, `timeout`, `on_progress` and
   `auto_submit_when_clean` arguments.
+- Library names changed before the 1.0 freeze: `Settings.profile_name` is now
+  `Settings.profile` and `Settings.source_of_key` is `Settings.key_source`,
+  matching `auth status --json`. `SubmitResult.ignored` and
+  `SubmitResult.symlinks` hold filenames, like `uploads` and `attachments`.
+  The second argument of `download_files` is named `resource_id`.
 - The package declares `rich` as a dependency and ships `py.typed`.
 - Python 3.14 is supported.
 

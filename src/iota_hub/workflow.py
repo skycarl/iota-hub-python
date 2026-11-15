@@ -76,9 +76,10 @@ class SubmitResult:
     outcome: str
     uploads: dict[str, str] = field(default_factory=dict)
     attachments: list[str] = field(default_factory=list)
-    ignored: list[Path] = field(default_factory=list)
+    #: Filenames, like ``uploads`` and ``attachments``.
+    ignored: list[str] = field(default_factory=list)
     #: Symbolic links found in the folder and skipped (``submit_folder`` only).
-    symlinks: list[Path] = field(default_factory=list)
+    symlinks: list[str] = field(default_factory=list)
     #: Taken from the draft as the checks left it, before any submit: the
     #: submitted observation no longer carries a draft's check run.
     skipped_checks: list[PublicSkippedCheck] = field(default_factory=list)
@@ -257,8 +258,8 @@ class WorkflowMixin:
             timeout=timeout,
             on_progress=on_progress,
         )
-        result.ignored = mapping.ignored
-        result.symlinks = mapping.symlinks
+        result.ignored = [path.name for path in mapping.ignored]
+        result.symlinks = [path.name for path in mapping.symlinks]
         return result
 
     # -- polling -----------------------------------------------------------
@@ -365,7 +366,7 @@ class WorkflowMixin:
     def download_files(
         self,
         kind: str,
-        id: str,
+        resource_id: str,
         dest: str | Path,
         *,
         slot: str | None = None,
@@ -384,9 +385,9 @@ class WorkflowMixin:
         created only when there is something to put in it.
         """
         if kind == "observation":
-            links = self.list_observation_files(id).files
+            links = self.list_observation_files(resource_id).files
         elif kind == "event":
-            links = self.list_event_files(id).files
+            links = self.list_event_files(resource_id).files
         else:
             raise ValueError(f"kind must be 'observation' or 'event', not {kind!r}")
 

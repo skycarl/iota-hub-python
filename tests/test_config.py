@@ -44,10 +44,10 @@ def test_the_flag_wins_over_the_environment_and_the_profile(config_path):
     )
 
     assert settings.api_key == FLAG_KEY
-    assert settings.source_of_key == "flag"
+    assert settings.key_source == "flag"
     # The profile is still the default target: only the key was overridden.
     assert settings.base_url == DEV_URL
-    assert settings.profile_name == "dev"
+    assert settings.profile == "dev"
 
 
 def test_the_environment_wins_over_the_profile(config_path):
@@ -57,7 +57,7 @@ def test_the_environment_wins_over_the_profile(config_path):
     )
 
     assert settings.api_key == ENV_KEY
-    assert settings.source_of_key == "env"
+    assert settings.key_source == "env"
 
 
 def test_an_environment_key_is_not_sent_to_a_stored_non_production_url(config_path):
@@ -109,7 +109,7 @@ def test_the_profile_supplies_the_key_and_the_base_url_together(config_path):
 
     assert settings.api_key == PROFILE_KEY
     assert settings.base_url == DEV_URL
-    assert settings.source_of_key == "profile"
+    assert settings.key_source == "profile"
     assert settings.is_default_target is False
 
 
@@ -234,7 +234,7 @@ def test_resolve_reads_os_environ_by_default(tmp_path, monkeypatch):
     settings = resolve(config_path=tmp_path / "none.toml")
 
     assert settings.api_key == ENV_KEY
-    assert settings.source_of_key == "env"
+    assert settings.key_source == "env"
 
 
 def test_the_environment_names_the_profile(tmp_path):
@@ -246,7 +246,7 @@ def test_the_environment_names_the_profile(tmp_path):
 
     settings = resolve(env={"IOTA_HUB_PROFILE": "dev"}, config_path=path)
 
-    assert settings.profile_name == "dev"
+    assert settings.profile == "dev"
     assert settings.api_key == PROFILE_KEY
 
 
@@ -257,7 +257,7 @@ def test_without_a_config_the_target_is_production(tmp_path):
 
     assert settings.base_url == DEFAULT_BASE_URL
     assert settings.is_default_target is True
-    assert settings.profile_name is None
+    assert settings.profile is None
 
 
 def test_a_profile_that_was_asked_for_and_is_not_there(config_path):
@@ -337,7 +337,7 @@ def test_deleting_the_default_profile_falls_back_to_one_named_default(config_pat
     delete_profile("dev", config_path=config_path)
 
     settings = resolve(env={}, config_path=config_path)
-    assert settings.profile_name == "default"
+    assert settings.profile == "default"
     assert settings.api_key == "iotahub_d_s"
 
 
@@ -544,7 +544,7 @@ def test_resolve_falls_back_to_a_profile_named_default(tmp_path):
 
     settings = resolve(env={}, config_path=path)
 
-    assert settings.profile_name == "default"
+    assert settings.profile == "default"
     assert settings.api_key == PROFILE_KEY
 
 
@@ -557,7 +557,7 @@ def test_saving_a_profile_does_not_retarget_a_profile_named_default(tmp_path):
 
     save_profile("other", api_key=FLAG_KEY, base_url=DEV_URL, config_path=path)
 
-    assert resolve(env={}, config_path=path).profile_name == "default"
+    assert resolve(env={}, config_path=path).profile == "default"
 
 
 def test_saving_a_profile_replaces_a_stale_default_profile(tmp_path):
