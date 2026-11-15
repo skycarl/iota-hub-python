@@ -208,6 +208,10 @@ The configuration file is stored here:
 | macOS | `~/Library/Application Support/iota-hub/config.toml` |
 | Windows | `%LOCALAPPDATA%\iota-hub\config.toml` |
 
+On Linux and macOS, setting `XDG_CONFIG_HOME` to an absolute path moves the
+file to `$XDG_CONFIG_HOME/iota-hub/config.toml`. Windows ignores
+`XDG_CONFIG_HOME`.
+
 On POSIX, the file has mode `0600`. On Windows, it relies on your user profile
 directory's permissions; the CLI does not set an ACL. There is no OS keyring
 integration.
@@ -378,7 +382,7 @@ define configuration, retries, polling, file selection, exit codes and output.
 ## Requirements
 
 Python 3.10 or newer on Windows, macOS or Linux. Runtime dependencies are
-`httpx`, `pydantic`, `typer`, `rich` and `platformdirs`, plus `tomli` on Python 3.10.
+`httpx`, `pydantic`, `typer` and `rich`, plus `tomli` on Python 3.10.
 
 ## Versioning
 
