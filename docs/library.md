@@ -42,7 +42,7 @@ To use settings saved by the CLI, call `resolve()`:
 ```python
 from iota_hub import Client, resolve
 
-settings = resolve(profile="dev")
+settings = resolve(profile="<name>")
 with Client(settings.api_key, settings.base_url) as client:
     observation = client.get_observation("<observation_id>")
 ```

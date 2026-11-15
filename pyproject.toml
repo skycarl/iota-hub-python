@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 authors = [{ name = "IOTA Hub" }]
 keywords = ["occultation", "astronomy", "iota", "api-client", "cli"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
