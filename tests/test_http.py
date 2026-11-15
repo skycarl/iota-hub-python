@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import httpx
@@ -18,6 +19,7 @@ from iota_hub import (
     Transport,
     TransportError,
     __version__,
+    _http,
     sha256_base64,
 )
 from iota_hub.models import PublicUploadTarget
@@ -345,6 +347,99 @@ def test_upload_accepts_a_path(mock_api, sleeps, tmp_path: Path):
     transport(mock_api, sleeps).upload_to_s3(_target(), path)
 
     assert "1,2" in mock_api.last_request.content.decode()
+
+
+def test_a_path_is_streamed_from_a_handle_that_is_closed_after(
+    mock_api, sleeps, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    path = tmp_path / "aperture.zip"
+    data = bytes(range(256)) * 5000  # Over one httpx chunk, and not text.
+    path.write_bytes(data)
+    handles = []
+
+    def spy_open(*args, **kwargs):
+        handles.append(open(*args, **kwargs))  # noqa: SIM115 - closed by the code under test
+        return handles[-1]
+
+    monkeypatch.setattr(_http, "open", spy_open, raising=False)
+
+    def no_read_bytes(self):
+        raise AssertionError("the file was read into memory whole")
+
+    monkeypatch.setattr(Path, "read_bytes", no_read_bytes)
+    mock_api.add("POST", "/bucket", httpx.Response(204))
+    target = _target(key="k", policy="p")
+    transport(mock_api, sleeps).upload_to_s3(target, path)
+
+    request = mock_api.last_request
+    boundary = request.headers["Content-Type"].split("boundary=", 1)[1].encode()
+    dash = b"--" + boundary
+    disposition = b"\r\nContent-Disposition: form-data; "
+    assert request.content == b"".join(
+        [
+            dash + disposition + b'name="key"\r\n\r\nk\r\n',
+            dash + disposition + b'name="policy"\r\n\r\np\r\n',
+            dash + disposition + b'name="file"; filename="lightcurve.csv"\r\n',
+            b"Content-Type: text/csv\r\n\r\n" + data + b"\r\n",
+            dash + b"--\r\n",
+        ]
+    )
+    assert request.headers["Content-Length"] == str(len(request.content))
+    assert len(handles) == 1
+    assert handles[0].closed
+
+
+def test_each_upload_of_a_path_sends_the_whole_file(mock_api, sleeps, tmp_path: Path):
+    path = tmp_path / "lightcurve.csv"
+    path.write_bytes(b"time,flux\n" * 200_000)
+    mock_api.add("POST", "/bucket", httpx.Response(403), httpx.Response(204))
+    http = transport(mock_api, sleeps)
+    with pytest.raises(IotaHubError):
+        http.upload_to_s3(_target(), path)
+    http.upload_to_s3(_target(), path)
+
+    # A fresh handle each time: the second form is not cut short by the first.
+    for request in mock_api.requests:
+        assert request.content.count(b"time,flux\n") == 200_000
+
+
+def test_an_unreadable_file_is_missing_files_naming_the_slot(
+    mock_api, sleeps, tmp_path: Path
+):
+    path = tmp_path / "gone.csv"
+    with pytest.raises(IotaHubError) as raised:
+        transport(mock_api, sleeps).upload_to_s3(_target(), path)
+
+    assert raised.value.code == "missing_files"
+    assert raised.value.details == {
+        "missing": ["lightcurve"],
+        "slot": "lightcurve",
+        "filename": "lightcurve.csv",
+        "path": str(path),
+    }
+    assert mock_api.requests == []
+
+
+def test_a_read_error_mid_upload_is_missing_files(
+    mock_api, sleeps, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    path = tmp_path / "lightcurve.csv"
+    path.write_bytes(b"time,flux\n")
+
+    class FailingRead(io.BufferedReader):
+        def read(self, *args):
+            raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(
+        _http, "open", lambda *a, **k: FailingRead(io.FileIO(path)), raising=False
+    )
+    mock_api.add("POST", "/bucket", httpx.Response(204))
+    with pytest.raises(IotaHubError) as raised:
+        transport(mock_api, sleeps).upload_to_s3(_target(), path)
+
+    assert raised.value.code == "missing_files"
+    assert raised.value.details["slot"] == "lightcurve"
+    assert "Input/output error" in raised.value.message
 
 
 def test_a_rejected_upload_raises_upload_failed(mock_api, sleeps):

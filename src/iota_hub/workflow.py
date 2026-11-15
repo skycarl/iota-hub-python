@@ -482,7 +482,10 @@ class WorkflowMixin:
         try:
             self.http.upload_to_s3(target, path)
             return
-        except IotaHubError:
+        except IotaHubError as error:
+            # A local file that cannot be read will not read on a fresh target.
+            if error.code == "missing_files":
+                raise
             _say(on_progress, f"Retrying {target.slot} with a fresh upload target...")
 
         if target.slot == ATTACHMENT_SLOT:

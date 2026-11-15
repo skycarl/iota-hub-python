@@ -143,12 +143,39 @@ class Transport:
         credential, and S3 has no business seeing the key. Every entry of
         ``fields`` goes into the form exactly as returned, in order, and the
         file part comes last.
+
+        A path is streamed from a handle opened for this call alone, so an
+        aperture record is never held in memory whole and a second call (the
+        workflow's retry) sends the whole file again. A file that cannot be
+        opened or read is ``missing_files``, naming the slot and filename.
         """
         if isinstance(path_or_bytes, bytes):
-            content: Any = path_or_bytes
-        else:
-            content = Path(path_or_bytes).read_bytes()
+            self._post_to_s3(target, path_or_bytes)
+            return
+        path = Path(path_or_bytes)
+        try:
+            with open(path, "rb") as handle:
+                self._post_to_s3(target, handle)
+        except OSError as exc:
+            # httpx reports network failures as its own errors, which
+            # _post_to_s3 has already turned into TransportError: an OSError
+            # here comes from opening or reading the file.
+            raise IotaHubError(
+                "missing_files",
+                f"Cannot read the {target.slot} file {path}: {exc.strerror or exc}.",
+                hint=(
+                    "The file was moved, deleted or became unreadable during the "
+                    "upload. Restore it and upload it again."
+                ),
+                details={
+                    "missing": [target.slot],
+                    "slot": target.slot,
+                    "filename": target.filename,
+                    "path": str(path),
+                },
+            ) from exc
 
+    def _post_to_s3(self, target: PublicUploadTarget, content: Any) -> None:
         try:
             response = self.client.post(
                 target.upload_url,
