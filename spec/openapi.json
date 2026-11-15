@@ -5614,7 +5614,7 @@
   "servers": [
     {
       "description": "API base URL for this deployment.",
-      "url": "https://d7gigln4gk.execute-api.us-west-2.amazonaws.com/dev/api"
+      "url": "https://api.iota-hub.com"
     }
   ],
   "tags": [

@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """Check the vendored public OpenAPI document against the deployed one.
 
-Fetches the live public-only OpenAPI document (the dev deployment by
-default) and compares it against the vendored copy at spec/openapi.json,
-after dropping the `servers` block (which just names the environment that
-served the document and is expected to differ). If `paths` or
-`components.schemas` differ, this fails so a public-surface change on the
-server is noticed here instead of silently drifting from the client.
+Fetches the live public-only OpenAPI document (the production deployment
+by default, the one released clients talk to) and compares it against the
+vendored copy at spec/openapi.json, after dropping the `servers` block
+(which just names the environment that served the document and is expected
+to differ). If `paths` or `components.schemas` differ, this fails so a
+public-surface change on the server is noticed here instead of silently
+drifting from the client.
 
 Usage:
     check_openapi_drift.py            # compare, exit 1 on drift, 2 on fetch failure
     check_openapi_drift.py --update   # overwrite spec/openapi.json with the fetched doc
 
 Environment:
-    IOTA_HUB_OPENAPI_URL   overrides the URL to fetch (default: the dev deployment)
+    IOTA_HUB_OPENAPI_URL   overrides the URL to fetch (default: production)
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ import sys
 import urllib.error
 import urllib.request
 
-DEFAULT_URL = "https://djf414kfl6u07.cloudfront.net/developers/openapi.json"
+DEFAULT_URL = "https://iota-hub.com/developers/openapi.json"
 SPEC_PATH = pathlib.Path(__file__).resolve().parent.parent / "spec" / "openapi.json"
 COMPARE_KEYS = ("paths", "components")
 
@@ -80,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         "--url",
         default=None,
         help="URL to fetch the deployed OpenAPI document from "
-        "(default: $IOTA_HUB_OPENAPI_URL or the dev deployment)",
+        "(default: $IOTA_HUB_OPENAPI_URL or production)",
     )
     args = parser.parse_args(argv)
 
