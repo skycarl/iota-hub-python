@@ -88,8 +88,13 @@ class Transport:
         json: Any = None,
         params: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        headers: dict[str, str] | None = None,
+        authenticate: bool = True,
     ) -> httpx.Response:
         """Call the API and return the response, or raise an :class:`IotaHubError`.
+
+        ``authenticate=False`` leaves out ``X-API-Key``, for the key-exchange
+        calls that run before there is a Hub key. ``headers`` are added as given.
 
         Retries ``429``, ``5xx`` and transport failures with exponential backoff,
         honouring ``Retry-After`` when the response carries one. Any other
@@ -97,20 +102,19 @@ class Transport:
         the caller's rate-limit budget.
         """
         url = f"{self.api_root}{path}"
-        headers = {
-            "X-API-Key": self.api_key,
-            "User-Agent": self.user_agent,
-            "Accept": "application/json",
-        }
+        sent = {"User-Agent": self.user_agent, "Accept": "application/json"}
+        if authenticate:
+            sent["X-API-Key"] = self.api_key
         if idempotency_key:
-            headers["Idempotency-Key"] = idempotency_key
+            sent["Idempotency-Key"] = idempotency_key
+        sent.update(headers or {})
         query = _clean_params(params)
 
         attempt = 0
         while True:
             try:
                 response = self.client.request(
-                    method, url, json=json, params=query, headers=headers
+                    method, url, json=json, params=query, headers=sent
                 )
             except httpx.HTTPError as exc:
                 if attempt >= self.max_retries:
@@ -216,7 +220,12 @@ def normalize_base_url(base_url: str) -> str:
     return url
 
 
-def clean_api_key(api_key: str) -> str:
+def clean_api_key(
+    api_key: str,
+    *,
+    field: str = "api_key",
+    hint: str = "Copy the key again from the API keys page, as one line.",
+) -> str:
     """The key without surrounding whitespace, refused if it cannot be a header.
 
     A key read from a file or a CI secret often ends in a newline. Sent as it
@@ -230,8 +239,8 @@ def clean_api_key(api_key: str) -> str:
         "invalid_config",
         "The API key contains a space, a control character or a non-ASCII "
         "character, so it cannot be sent.",
-        hint="Copy the key again from the API keys page, as one line.",
-        details={"field": "api_key"},
+        hint=hint,
+        details={"field": field},
     )
 
 

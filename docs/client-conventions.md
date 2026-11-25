@@ -302,6 +302,16 @@ Every API request includes:
 
 Send the key only to the IOTA Hub API, never to storage upload or download URLs.
 
+The three key-exchange operations (`public_key_exchange`,
+`public_key_exchange_sign_in_start` and `public_key_exchange_sign_in_collect`)
+are the exception: they run before the caller has a Hub key, so they send no
+`X-API-Key`. The exchange and the sign-in start send the user's OccultWatcher
+key in `OW-ApiKey`, cleaned and checked like a Hub key (raise `invalid_config`
+with `details.field` `ow_api_key`). The collect call sends neither key. Never
+print or log the OccultWatcher key, the `collect_code` or the returned
+`api_key`, including in a model's string form. These calls follow the normal
+retry rules (§ 6).
+
 Strip whitespace from both ends of a key before using it; a key read from a
 file or a CI secret often ends in a newline. Raise `invalid_config` before
 sending a request if the key then contains a space, a control character or a

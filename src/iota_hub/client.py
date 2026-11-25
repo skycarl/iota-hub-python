@@ -19,12 +19,13 @@ from urllib.parse import quote
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from ._http import DEFAULT_BASE_URL, Transport
+from ._http import DEFAULT_BASE_URL, Transport, clean_api_key
 from .errors import IotaHubError
 from .models import (
     PublicCheckRequest,
     PublicCheckResponse,
     PublicChecks,
+    PublicCollectRequest,
     PublicDeclaredFile,
     PublicDismissRequest,
     PublicDraftCreated,
@@ -37,8 +38,11 @@ from .models import (
     PublicFinalizeAttachmentRequest,
     PublicFinalizeUploadRequest,
     PublicInitUploadRequest,
+    PublicKeyExchangeRequest,
+    PublicKeyExchangeResult,
     PublicObservation,
     PublicObservationList,
+    PublicSignInStarted,
     PublicSubmitRequest,
     PublicUploadTarget,
 )
@@ -438,6 +442,58 @@ class Client(WorkflowMixin):
         )
         return _parse(PublicFileList, response)
 
+    # ---------------------------------------------------------- key exchange
+    #
+    # These calls send no Hub key: they are how an application without one
+    # gets one. The OccultWatcher key goes in ``OW-ApiKey``; the Hub key comes
+    # back in the result, which leaves it and ``collect_code`` out of ``repr``.
+
+    def key_exchange(
+        self, ow_api_key: str, *, client: str | None = None
+    ) -> PublicKeyExchangeResult:
+        """``public_key_exchange`` — trade an OccultWatcher key for a Hub key.
+
+        ``client`` names the application; omitted, the Hub assumes ``tangra``.
+        ``404 no_matching_account`` means start a sign-in instead.
+        """
+        response = self.http.request(
+            "POST",
+            "/key-exchange",
+            json=_body(PublicKeyExchangeRequest(client=client)),
+            headers=_ow_headers(ow_api_key),
+            authenticate=False,
+        )
+        return _parse(PublicKeyExchangeResult, response)
+
+    def key_exchange_sign_in_start(
+        self, ow_api_key: str, *, client: str | None = None
+    ) -> PublicSignInStarted:
+        """``public_key_exchange_sign_in_start`` — start a browser sign-in."""
+        response = self.http.request(
+            "POST",
+            "/key-exchange/sign-in",
+            json=_body(PublicKeyExchangeRequest(client=client)),
+            headers=_ow_headers(ow_api_key),
+            authenticate=False,
+        )
+        return _parse(PublicSignInStarted, response)
+
+    def key_exchange_sign_in_collect(
+        self, request_id: str, *, collect_code: str
+    ) -> PublicKeyExchangeResult:
+        """``public_key_exchange_sign_in_collect`` — collect the key, once.
+
+        ``409 sign_in_pending`` until the user approves in the browser. Sends
+        neither a Hub key nor an OccultWatcher key.
+        """
+        response = self.http.request(
+            "POST",
+            f"/key-exchange/sign-in/{_seg(request_id)}/collect",
+            json=_body(PublicCollectRequest(collect_code=collect_code)),
+            authenticate=False,
+        )
+        return _parse(PublicKeyExchangeResult, response)
+
     # ------------------------------------------------------------ pagination
 
     def iter_events(self, **filters: Any) -> Iterator[PublicEvent]:
@@ -501,6 +557,16 @@ def _parse(model: type[_Model], response: httpx.Response) -> _Model:
 def _seg(value: str) -> str:
     """One path segment, escaped."""
     return quote(str(value), safe="")
+
+
+def _ow_headers(ow_api_key: str) -> dict[str, str]:
+    """The OccultWatcher key as its header, checked like a Hub key."""
+    key = clean_api_key(
+        ow_api_key,
+        field="ow_api_key",
+        hint="Copy the OccultWatcher API key again, as one line.",
+    )
+    return {"OW-ApiKey": key}
 
 
 def _comma(value: str | list[str] | None) -> str | None:

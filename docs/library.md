@@ -384,6 +384,40 @@ upload target those calls return with `client.upload_to_s3(target, path)`. The
 Pass an `idempotency_key` when creating or finalizing a draft, and reuse that
 key when retrying the same operation to avoid repeating it.
 
+### Exchange an OccultWatcher key for a Hub key
+
+An application that holds a user's OccultWatcher API key can get a Hub API key
+without one of its own. These calls send no Hub key:
+
+```python
+import time
+
+from iota_hub import Client, IotaHubError
+
+with Client() as client:
+    try:
+        result = client.key_exchange(ow_api_key, client="tangra")
+    except IotaHubError as error:
+        if error.code != "no_matching_account":
+            raise
+        started = client.key_exchange_sign_in_start(ow_api_key, client="tangra")
+        print("Sign in at", started.verification_url)
+        while True:
+            time.sleep(started.interval)
+            try:
+                result = client.key_exchange_sign_in_collect(
+                    started.request_id, collect_code=started.collect_code
+                )
+                break
+            except IotaHubError as error:
+                if error.code != "sign_in_pending":
+                    raise
+    hub_key = result.api_key  # Store it securely; never print it.
+```
+
+The key expires after 90 days. Exchange again when a call raises
+`expired_api_key` or `unknown_api_key`.
+
 ## Related documentation
 
 - [Data submission requirements](https://iota-hub.com/data-submission)
