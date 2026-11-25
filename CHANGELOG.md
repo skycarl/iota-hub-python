@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 - 2026-11-25
 
 - `report_details.events` lists every event of a Tangra JSON report in report
   order: a double star's second star, or each drop of a double asteroid.
