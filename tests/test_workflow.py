@@ -19,8 +19,8 @@ from iota_hub import (
     next_actions_commands,
     sha256_base64,
 )
-from iota_hub.models import PublicObservation
-from iota_hub.workflow import check_warnings, owc_commands
+from iota_hub.models import PublicChecks, PublicObservation
+from iota_hub.workflow import advisory_findings, check_warnings, owc_commands
 
 OBSERVATION_DIR = FIXTURES / "observation"
 REPORT = OBSERVATION_DIR / "20180305_9721_Doty_Observer_POS.xlsx"
@@ -1093,6 +1093,141 @@ def test_dismiss_or_fix_lists_one_command_per_open_finding():
     # The dismissed finding is not offered again, and fixing is the other way.
     assert len(commands) == 3
     assert "files add" in commands[2]
+
+
+def file_name_finding(fingerprint="f13f13f13f13f13f", **overrides):
+    body = {
+        "check_number": 13,
+        "code": "file_name_consistency",
+        "name": "File names",
+        "severity": "warning",
+        "message": "obs_log.txt has no date, asteroid number or result.",
+        "fingerprint": fingerprint,
+    }
+    body.update(overrides)
+    return body
+
+
+def blocking_finding(fingerprint="a1a1a1a1a1a1a1a1"):
+    return {
+        "check_number": 3,
+        "code": "star_mismatch",
+        "name": "Star mismatch",
+        "severity": "error",
+        "message": "The star id does not match the event.",
+        "fingerprint": fingerprint,
+    }
+
+
+def test_a_file_name_finding_the_server_does_not_count_is_advisory():
+    checks = PublicChecks.model_validate(
+        {
+            "run_id": "r1",
+            "status": "complete",
+            "open_findings": 1,
+            "findings": [blocking_finding(), file_name_finding()],
+        }
+    )
+
+    assert [f.fingerprint for f in advisory_findings(checks)] == ["f13f13f13f13f13f"]
+
+
+def test_a_file_name_finding_the_server_counts_is_open():
+    """A web-created draft, or the API once the check blocks (#1019)."""
+    checks = PublicChecks.model_validate(
+        {
+            "run_id": "r1",
+            "status": "complete",
+            "open_findings": 2,
+            "findings": [blocking_finding(), file_name_finding()],
+        }
+    )
+
+    assert advisory_findings(checks) == []
+
+
+def test_a_gap_the_known_codes_do_not_explain_labels_nothing():
+    checks = PublicChecks.model_validate(
+        {
+            "run_id": "r1",
+            "status": "complete",
+            "open_findings": 0,
+            "findings": [blocking_finding(), file_name_finding()],
+        }
+    )
+
+    assert advisory_findings(checks) == []
+    assert advisory_findings(None) == []
+
+
+def test_a_dismissed_file_name_finding_is_not_advisory():
+    dismissal = {
+        "dismissed_by": "user_1",
+        "dismissed_at": "2026-01-01T00:00:00Z",
+        "note": "named by the camera",
+    }
+    checks = PublicChecks.model_validate(
+        {
+            "run_id": "r1",
+            "status": "complete",
+            "open_findings": 0,
+            "findings": [file_name_finding(dismissal=dismissal)],
+        }
+    )
+
+    assert advisory_findings(checks) == []
+
+
+def test_dismiss_or_fix_leaves_out_advisory_findings():
+    checks = {
+        "run_id": "r1",
+        "status": "complete",
+        "open_findings": 1,
+        "findings": [blocking_finding(), file_name_finding()],
+    }
+
+    commands = next_actions_commands(with_actions("dismiss_or_fix", checks=checks))
+
+    assert commands[0] == (
+        f"iota-hub drafts dismiss {OBS_ID} a1a1a1a1a1a1a1a1 "
+        '--note "why this is expected"'
+    )
+    assert len(commands) == 2
+    assert not any("f13f13f13f13f13f" in command for command in commands)
+
+
+def test_an_advisory_finding_does_not_stop_the_submit_and_is_kept(client, mock_api):
+    script_create(mock_api)
+    script_upload(mock_api)
+    mock_api.json("POST", FINALIZE, observation())
+    mock_api.json(
+        "GET",
+        GET,
+        observation(
+            created_via="api",
+            checks={
+                "run_id": "r1",
+                "status": "complete",
+                "open_findings": 0,
+                "findings": [file_name_finding()],
+            },
+            readiness=readiness(),
+            next_actions=["submit"],
+        ),
+    )
+    mock_api.json(
+        "POST",
+        SUBMIT,
+        observation(submission_status="submitted", version=5, next_actions=[]),
+    )
+
+    result = client.submit_files(FILES)
+
+    assert result.outcome == "submitted"
+    # The submitted observation has no check run; the finding is kept from
+    # the draft, like the skipped checks.
+    assert result.observation.checks is None
+    assert [f.code for f in result.advisory_findings] == ["file_name_consistency"]
 
 
 def test_web_only_verbs_say_so_and_unknown_verbs_point_at_the_guide():

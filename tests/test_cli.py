@@ -469,6 +469,7 @@ def test_submit_json_is_one_document(runner: CliRunner, mock_api: MockAPI) -> No
         "next_commands",
         "skipped_checks",
         "owc_commands",
+        "advisory_findings",
         "web_url",
         "observation",
     }
@@ -645,6 +646,134 @@ def test_submit_needs_attention_json_carries_next_commands(
     payload = json.loads(result.stdout)
     assert payload["outcome"] == "needs_attention"
     assert any("drafts dismiss" in line for line in payload["next_commands"])
+
+
+def file_name_finding(**overrides):
+    body = finding(
+        check_number=13,
+        code="file_name_consistency",
+        name="File names",
+        severity="warning",
+        message=(
+            "20180305_9721_Doty_Observer_POS_pyote_log.txt differs from the "
+            "standard name only in formatting."
+        ),
+        how_to_fix="Rename it to the standard name the finding shows.",
+        doc_url="https://iota-hub.com/developers/checks#check-13",
+        fingerprint="13a13a13a13a13a1",
+    )
+    body.update(overrides)
+    return body
+
+
+def _ready_with_a_file_name_finding() -> dict:
+    """An API draft: listed, not counted, still ready."""
+    return observation(
+        created_via="api",
+        readiness=ready(open_findings=0),
+        checks=checks(open_findings=0, findings=[file_name_finding()]),
+        next_actions=["submit"],
+    )
+
+
+def test_submit_shows_an_advisory_finding_on_a_submitted_draft(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    script_submit(mock_api, _ready_with_a_file_name_finding())
+    mock_api.json(
+        "POST",
+        SUBMIT,
+        observation(submission_status="submitted", status="submitted"),
+    )
+
+    result = run(runner, "submit", str(OBSERVATION_DIR))
+
+    assert result.exit_code == 0
+    assert "Outcome:      submitted" in result.stdout
+    assert (
+        "[13] warning file_name_consistency (does not block submission)"
+        in result.stdout
+    )
+    assert "fingerprint: 13a13a13a13a13a1" in result.stdout
+    assert "drafts dismiss" not in result.stdout
+
+
+def test_submit_draft_counts_an_advisory_finding_apart(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    script_submit(mock_api, _ready_with_a_file_name_finding())
+
+    result = run(runner, "submit", str(OBSERVATION_DIR), "--draft")
+
+    assert result.exit_code == 0
+    assert "Outcome:      ready" in result.stdout
+    assert (
+        "Checks:       complete, 0 open findings, 1 does not block submission"
+        in result.stdout
+    )
+    assert "file_name_consistency (does not block submission)" in result.stdout
+
+
+def test_submit_json_lists_advisory_findings_apart(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    script_submit(mock_api, _ready_with_a_file_name_finding())
+
+    result = run(runner, "--json", "submit", str(OBSERVATION_DIR), "--draft")
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["outcome"] == "ready"
+    assert [f["code"] for f in payload["advisory_findings"]] == [
+        "file_name_consistency"
+    ]
+    assert payload["next_commands"] == [f"iota-hub drafts submit {OBS_ID}"]
+
+
+def test_submit_json_has_no_advisory_findings_when_the_server_counts_them(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    """A web-created draft counts check 13; so will the API once it blocks."""
+    script_submit(
+        mock_api,
+        observation(
+            readiness=ready(state="needs_attention", open_findings=1),
+            checks=checks(open_findings=1, findings=[file_name_finding()]),
+            next_actions=["dismiss_or_fix"],
+        ),
+    )
+
+    result = run(runner, "--json", "submit", str(OBSERVATION_DIR))
+
+    assert result.exit_code == 4
+    payload = json.loads(result.stdout)
+    assert payload["outcome"] == "needs_attention"
+    assert payload["advisory_findings"] == []
+    assert any("13a13a13a13a13a1" in line for line in payload["next_commands"])
+
+
+def test_drafts_show_labels_an_advisory_finding_next_to_an_open_one(
+    runner: CliRunner, mock_api: MockAPI
+) -> None:
+    mock_api.json(
+        "GET",
+        GET,
+        observation(
+            created_via="api",
+            readiness=ready(state="needs_attention", open_findings=1),
+            checks=checks(open_findings=1, findings=[finding(), file_name_finding()]),
+            next_actions=["dismiss_or_fix"],
+        ),
+    )
+
+    result = run(runner, "drafts", "show", OBS_ID)
+
+    assert result.exit_code == 0
+    assert "1 open, 0 dismissed, 1 does not block submission" in result.stdout
+    assert "[7] error lightcurve_time_gap\n" in result.stdout
+    assert "file_name_consistency (does not block submission)" in result.stdout
+    assert f"drafts dismiss {OBS_ID} 9f2a1c4d8e7b6a50" in result.stdout
+    assert f"drafts dismiss {OBS_ID} 13a13a13a13a13a1" not in result.stdout
 
 
 def test_submit_with_two_lightcurves_is_a_usage_error(
@@ -2387,6 +2516,20 @@ def test_styled_findings_say_a_shared_fix_once(
     # Progress went to the stderr terminal, not stdout.
     assert "Creating draft" in streams[True].getvalue()
     assert "Creating draft" not in out
+
+
+def test_styled_findings_label_an_advisory_one(
+    runner: CliRunner, mock_api, terminal
+) -> None:
+    streams = terminal()
+    script_submit(mock_api, _ready_with_a_file_name_finding())
+
+    result = run(runner, "submit", str(OBSERVATION_DIR), "--draft")
+
+    assert result.exit_code == 0
+    out = re.sub(r"\x1b\[[0-9;]*m", "", streams[False].getvalue())
+    assert "file_name_consistency (does not block submission)" in out
+    assert "13a13a13a13a13a1" in out
 
 
 def test_styled_glyphs_need_utf8(runner: CliRunner, mock_api, terminal) -> None:

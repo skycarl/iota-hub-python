@@ -53,6 +53,8 @@ These method names are part of the contract:
 - `skipped_checks(observation)`, `owc_unresolved(observation)`,
   `owc_commands(observation)` and `check_warnings(observation)`: expose the
   warnings described in § 8a.
+- `advisory_findings(checks)`: the findings listed but not counted toward
+  submit (§ 8b).
 
 Command and warning helpers belong in the library so integrations can show the
 same guidance as the CLI.
@@ -88,7 +90,8 @@ until the event is `COMPLETE`.
 
 `submit_folder` and `submit_files` return the last observation read, a
 `submitted` boolean, uploaded `{slot: filename}` pairs, attachment filenames,
-ignored files, skipped symlinks, skipped checks, OWC commands and an `outcome`:
+ignored files, skipped symlinks, skipped checks, OWC commands, advisory
+findings (§ 8b) and an `outcome`:
 
 | `outcome` | Meaning |
 | --------- | ------- |
@@ -97,8 +100,8 @@ ignored files, skipped symlinks, skipped checks, OWC commands and an `outcome`:
 | `needs_attention` | Open findings, missing requirements or a failed check run. |
 | `draft` | Uploaded and finalized with `wait=False`; the client did not wait for checks. |
 
-Capture skipped checks and OWC commands before submission. A submitted
-observation no longer includes the draft's check run.
+Capture skipped checks, OWC commands and advisory findings before submission.
+A submitted observation no longer includes the draft's check run.
 
 `wait=False` returns after finalization. `submit=False` returns after checks
 without submitting. Never submit a draft that is not `ready`.
@@ -449,6 +452,45 @@ Read the observation first, then send its `version` with the fields needed for
 the chosen action. Report `409 stale_version` without retrying; the caller must
 read the changed draft before deciding how to proceed.
 
+## 8b. Advisory findings
+
+On a draft created through `/public/v1`, the server lists an **advisory**
+check's findings in `checks.findings` but leaves them out of
+`checks.open_findings` and `readiness.open_findings`. They do not cause
+`409 open_findings`, change `next_actions` or stop `auto_submit_when_clean`, so
+a `ready` or submitted draft can have them. Today the only advisory check is
+observer check 13, "File names" (`file_name_consistency`): a slotted file
+whose name is not the standard one (§ 11). The server never renames a file
+uploaded through the API, and the API has no rename call yet. On a draft
+created in the web app the same check is counted like any other.
+
+The API marks no individual finding as advisory, so a client derives it:
+
+- Known advisory codes: `file_name_consistency`.
+- Among the findings without a `dismissal`, the advisory ones are those with a
+  known advisory code, **only if** `checks.open_findings` is lower than the
+  number of undismissed findings by exactly the number of undismissed findings
+  with such a code.
+- Otherwise there are none: every undismissed finding is open. This covers a
+  web-created draft, a server release that makes the check count, and any
+  difference the known codes do not explain. A client therefore stops
+  labelling findings advisory as soon as the server counts them, without a
+  client release.
+
+Rules:
+
+- Decide readiness, `needs_attention`, `open_findings` refusals and exit codes
+  from `readiness` and `checks.open_findings` only, never by counting
+  `findings`.
+- Show advisory findings wherever findings are shown, labelled
+  `does not block submission`, and add `, <n> does not block submission` to a
+  finding count. After polling, show them even when the outcome is `ready` or
+  `submitted`.
+- `dismiss_or_fix` commands (§ 13) are for the open findings only.
+- `submit --json` carries them as `advisory_findings`, a list of findings.
+  Other commands print the API's model unchanged; use `advisory_findings` on
+  its `checks` to tell them apart.
+
 ## 9. Idempotency
 
 An `Idempotency-Key` prevents duplicate writes when a request is retried.
@@ -625,11 +667,35 @@ checks the `.pymovie` signature; the client checks its extension.
   Do not add a path twice if it is already mapped to a slot or included as an
   attachment. An attached path is never also reported as `ignored`.
 - Support one observation per directory. Folders containing several stations
-  (`_POS-1`, `_POS-2`) are not supported; multiple reports cause a selection
-  error. Use a separate folder for each station.
+  (`_Observer_1_POS`, `_Observer_2_POS`) are not supported; multiple reports
+  cause a selection error. Use a separate folder for each station.
+
+### Standard file names
 
 The [observer naming convention](https://iota-hub.com/data-submission) describes
-how to name observation folders and files.
+how to name observation folders and files. The standard file name is
+`YYYYMMDD_<number>_<Name>_<LastName>[_<N>]_<POS|NEG|UNS>` plus the slot's
+suffix:
+
+| Slot | Suffix |
+| ---- | ------ |
+| `report` | `.xlsx` or `.xls` |
+| `lightcurve` | `.csv` |
+| `log` | `.pyote_log.txt` (PyOTE logs) |
+| `aperture_record` | `.pymovie` or `.lc` |
+
+A provisional designation is written with an underscore (`1999_RM158`), an
+unsure result is `UNS`, and the station number goes after the surname
+(`…_Dunham_1_POS.xlsx`), not after the result. The selection rules above do
+not depend on these names, and standard names satisfy them: a
+`.pyote_log.txt` log contains `log`, and a station number does not change a
+file's extension. Do not rename files: the server reports a non-standard name
+as observer check 13, File names, which does not block a draft created through
+the API (§ 8b). The server skips the check for a Tangra JSON report.
+
+The server reads a spreadsheet report's `metadata.station` from its file name,
+in either form (`…_<Surname>_2_POS.xlsx` or `…_POS-2.xlsx`), so a station
+lookup (§ 11b) for that observation must pass the same station.
 
 ## 11a. Attachments
 
@@ -686,7 +752,10 @@ iota-hub observations check --asteroid-name <name> --star-id <star> --date YYYY-
 
 Never return another observer's observation. Without `asteroid_id`, skip event
 lookup because events are keyed by asteroid number. An absent, null or empty
-`station` refers to the same station.
+`station` refers to the same station. The station is part of the identity
+compared: an observation whose report is named `…_<Surname>_2_POS.xlsx` or
+`…_POS-2.xlsx` is stored with station `2` and is found only with
+`station="2"` (`--station 2`).
 
 A successful lookup exits `0` for all three results. If it finds a draft, print
 `iota-hub drafts show <id>` as the next command.
@@ -863,7 +932,7 @@ Use the library's `next_actions_commands` to display commands for API actions:
 | `run_checks` | `iota-hub drafts check <id>` |
 | `poll` | `iota-hub drafts show <id>` |
 | `submit` | `iota-hub drafts submit <id>` |
-| `dismiss_or_fix` | One `iota-hub drafts dismiss <id> <fingerprint> --note "..."` per open finding, followed by the `files add` command as an alternative. |
+| `dismiss_or_fix` | One `iota-hub drafts dismiss <id> <fingerprint> --note "..."` per open finding (not per advisory finding, § 8b), followed by the `files add` command as an alternative. |
 | `confirm_asteroid_id` | `iota-hub drafts confirm-asteroid <id>` (§ 8a). |
 | `resolve_event_files_conflict` | Instructions to finish in the web app; the public API has no operation for resolving this conflict. |
 | Unknown verb | `<verb>: see iota-hub guide`. Display it without attempting an action. |
@@ -897,7 +966,7 @@ requires a major version bump.
 
 | Command | Document |
 |---|---|
-| `submit` | `{observation_id, outcome, submitted, uploads: {slot: filename}, attachments: [filename], ignored: [filename], symlinks: [filename], next_commands: [...], skipped_checks: [{check_number, code, name, status, reason}], owc_commands: [...], web_url, observation: {...}}`. Attachment IDs are in `observation.attachments[]`. Capture `skipped_checks` and `owc_commands` before submission (§ 8a). |
+| `submit` | `{observation_id, outcome, submitted, uploads: {slot: filename}, attachments: [filename], ignored: [filename], symlinks: [filename], next_commands: [...], skipped_checks: [{check_number, code, name, status, reason}], owc_commands: [...], advisory_findings: [PublicFinding], web_url, observation: {...}}`. Attachment IDs are in `observation.attachments[]`. Capture `skipped_checks`, `owc_commands` and `advisory_findings` before submission (§ 8a, § 8b). |
 | `submit --dry-run` | `{target, directory, uploads: [{slot, filename, path, size}], attachments: [{filename, path, size}], ignored: [filename], symlinks: [filename]}`. No requests or key required. Attachment validation still applies. |
 | `drafts show`, `drafts check`, `drafts files add`, `drafts files rm`, `drafts owc`, `drafts confirm-asteroid`, `drafts comment`, `drafts submit`, `observations show` | `PublicObservation` |
 | `drafts dismiss` | `PublicChecks` returned by the dismissal |
@@ -960,16 +1029,33 @@ The JSON `found` values remain unchanged.
 
 It tests selection of the three files required for a positive observation,
 including the `log` filename rule, without a VizieR or aperture record file.
-Development smoke tests upload it with `submit --draft` and then delete the
-draft; a submitted observation cannot be deleted. Ship the same fixture in every
-client repository so tests use the same input.
+The log keeps its older, non-standard name on purpose: the `log` rule matches
+any `.txt` with `log` in its name. The Hub therefore lists one File names
+finding (check 13) for it, with the standard name
+`20180305_9721_Doty_Observer_POS.pyote_log.txt`. On a draft created through the
+API that finding does not count toward `open_findings` (§ 8b); the report and
+light curve names are standard. Development smoke tests upload it with
+`submit --draft` and then delete the draft; a submitted observation cannot be
+deleted. Ship the same fixture in every client repository so tests use the same
+input.
 
 `tests/fixtures/clean-observation/` contains the corresponding valid submission
-fixture: `20260926_33777_1999RM158_Observer_POS.{xlsx,csv}` and
-`_pyote_log.txt`. Its PyMovie light curve, PyOTE log and report describe the
-real event (33777) 1999 RM158 / UCAC4 326-152286 on 2026-09-26. The expected OWC
+fixture, with standard names:
+
+```text
+20260926_33777_1999_RM158_Observer_POS.xlsx            report
+20260926_33777_1999_RM158_Observer_POS.csv             lightcurve
+20260926_33777_1999_RM158_Observer_POS.pyote_log.txt   log
+```
+
+Its PyMovie light curve, PyOTE log and report describe the
+real event (33777) 1999 RM158 / UCAC4 326-152286 on 2026-09-26. The report's
+observer is "Test Observer" and its result is positive, which is what the names
+say. The PyOTE log still records the light curve's earlier name in its
+`filename:` line; no check reads it. The expected OWC
 match is `2094-33777-995661-234407-U152286`. Against development, the expected
-`submit --draft` result is `ready`, with no open findings or skipped checks.
+`submit --draft` result is `ready`, with no findings (File names included) or
+skipped checks.
 
 Check 12 uses the station prediction from the light curve's Astrid
 `#OCCULTATION-PREDICTED-CENTER-TIME` key. The report's coordinates are fictional

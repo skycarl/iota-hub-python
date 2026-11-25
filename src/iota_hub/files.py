@@ -1,7 +1,9 @@
 """Folder → slot mapping: deterministic rules, never a guess.
 
-One observation lives in one directory, named to the observer convention
-(``YYYYMMDD_<number>_<name>_<lastname>_POS|NEG[-X]``). The rules below are
+One observation lives in one directory, its files named to the standard
+``YYYYMMDD_<number>_<Name>_<LastName>[_<N>]_<POS|NEG|UNS>`` (station number
+``N`` after the surname) plus ``.xlsx``, ``.csv``, ``.pyote_log.txt`` or
+``.pymovie``/``.lc``. The rules below do not depend on that name: they are
 ``docs/client-conventions.md`` § 11,
 and nothing else: no content sniffing, no classification. When a rule does not
 pick exactly one file, that is an error naming the candidates and the flag that
@@ -383,8 +385,9 @@ def _ambiguous(slot: str, candidates: list[Path]) -> MappingError:
     hint = f"Pass the one you mean: {FLAGS[slot]} PATH."
     if slot == "report":
         hint = (
-            f"{hint} A folder holding several stations (_POS-1, _POS-2) is not "
-            "supported yet: submit one observation per folder."
+            f"{hint} A folder holding several stations (_Surname_1_POS, "
+            "_Surname_2_POS) is not supported yet: submit one observation per "
+            "folder."
         )
     return MappingError(
         "ambiguous_files",

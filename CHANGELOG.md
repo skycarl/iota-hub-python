@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+For the Hub's File names check (observer check 13), which lists a file whose
+name is not the standard
+`YYYYMMDD_<number>_<Name>_<LastName>[_<N>]_<POS|NEG|UNS>` plus its suffix.
+On a draft created through the API this finding does not block submission.
+
+- Findings the Hub lists but does not count toward submission are labelled
+  `does not block submission` in `submit`, `drafts show`, `drafts check`,
+  `drafts dismiss` and the other commands that print findings, and in the
+  finding counts. `submit` shows them even when the outcome is `ready` or
+  `submitted`. They get no `drafts dismiss` command under `Next:`. Readiness,
+  outcomes and exit codes still follow the Hub's `readiness` and
+  `checks.open_findings`.
+- `submit --json` adds `advisory_findings`, a list of those findings.
+  `SubmitResult.advisory_findings` and `iota_hub.advisory_findings(checks)`
+  give the same list in the library.
+- The README, `iota-hub guide`, SKILL.md and the library guide describe the
+  standard file names and say that a report named `..._<Surname>_2_POS.xlsx` or
+  `..._POS-2.xlsx` needs `--station 2` (`station="2"`) in `observations check`.
+- The multi-station hint of `ambiguous_files` names the standard station form
+  (`_Surname_1_POS`).
+
 ## 1.0.0
 
 The first release for the production IOTA Hub public API. The default API

@@ -34,6 +34,7 @@ from .errors import (
 from .files import SLOTS, FolderMapping, MappingError, map_folder
 from .workflow import (
     SubmitResult,
+    advisory_findings,
     check_warnings,
     next_actions_commands,
     owc_commands,
@@ -58,6 +59,7 @@ __all__ = [
     "Transport",
     "TransportError",
     "__version__",
+    "advisory_findings",
     "check_warnings",
     "config_file_path",
     "delete_profile",

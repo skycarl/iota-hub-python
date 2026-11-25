@@ -134,6 +134,24 @@ and files in subfolders are excluded from automatic selection.
 
 To preview file selection without uploading, call `iota_hub.map_folder(directory)`.
 
+### File names
+
+The Hub expects each file to be named
+`YYYYMMDD_<number>_<Name>_<LastName>[_<N>]_<POS|NEG|UNS>` plus its suffix:
+`.xlsx`/`.xls` (report), `.csv` (light curve), `.pyote_log.txt` (PyOTE log)
+and `.pymovie`/`.lc` (aperture record), for example
+`20260926_33777_1999_RM158_Observer_POS.xlsx`. A provisional designation is
+written with an underscore (`1999_RM158`), an unsure result is `UNS`, and a
+station number goes after the last name (`..._Observer_2_POS.xlsx`), not after
+the result.
+
+File selection does not depend on these names. The Hub reports a non-standard
+name as a "File names" finding (check 13) and never renames files uploaded
+through the API. On a draft created through the API, the finding does not
+block submission (`result.advisory_findings`). To fix it, rename the file and
+upload it again with `replace_file`, or dismiss the finding. A Tangra JSON
+report skips the check.
+
 ## Read the result
 
 `result.outcome` tells you how the submission ended:
@@ -161,6 +179,15 @@ submission. Check 12 ("Near predicted time"), for example, needs an Occult
 Watcher Cloud (OWC) event. If the Hub could not select one,
 `result.owc_commands` lists CLI commands for linking one. The library
 equivalent is `update_draft` (see below).
+
+`result.advisory_findings` lists findings the Hub reports but does not count
+toward submission, so a `ready` or `submitted` result can have them. Today the
+only one is check 13, "File names" (`file_name_consistency`), on a draft
+created through the API: a file whose name is not the standard one (see
+[File names](#file-names)). For any `PublicChecks`,
+`iota_hub.advisory_findings(checks)` returns the same list. Decide readiness
+from `readiness.state` and `checks.open_findings`, never by counting
+`checks.findings`, which also lists these.
 
 `result.uploads` contains the selected filenames by file type.
 `result.attachments` lists attachment filenames, `result.ignored` lists
@@ -265,7 +292,9 @@ whose star is `TYC 123456`. All arguments are keyword-only strings:
 - `asteroid_name` and `star_id` must match the report as it spells them; case
   and repeated spaces are ignored. Write `"1999 RM158"`, not `"1999RM158"`.
 - Include `station` and `star_catalog` when needed to identify the
-  observation.
+  observation. If the report's file name carries a station number
+  (`..._Observer_2_POS.xlsx` or `..._POS-2.xlsx`), the Hub stores it: pass
+  `station="2"`, or the lookup does not match.
 - The event is looked up only when you pass `asteroid_id`. Without it, `none`
   only means you have no matching draft or observation.
 

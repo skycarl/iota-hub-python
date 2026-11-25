@@ -97,6 +97,31 @@ missing its light curve or log, you get a draft that lists what it still needs.
 Submit each station's observation from a separate folder. The CLI cannot split
 a folder containing files for multiple stations.
 
+### File names
+
+The Hub expects each file to be named
+`YYYYMMDD_<number>_<Name>_<LastName>[_<N>]_<POS|NEG|UNS>` plus its suffix:
+`.xlsx` or `.xls` for the report, `.csv` for the light curve,
+`.pyote_log.txt` for a PyOTE log, and `.pymovie` or `.lc` for the aperture
+record. For example:
+
+    20260926_33777_1999_RM158_Observer_POS.xlsx
+    20260926_33777_1999_RM158_Observer_POS.csv
+    20260926_33777_1999_RM158_Observer_POS.pyote_log.txt
+
+Write a provisional designation with an underscore (`1999_RM158`) and use
+`UNS` for an unsure result. If you observed from several stations, put the
+station number after your last name, not after the result:
+`20260926_33777_1999_RM158_Observer_2_POS.xlsx`.
+
+The CLI selects files whatever their names. The Hub reports a name that
+differs from the standard as a "File names" finding (check 13), showing the
+standard name. Files uploaded through the CLI are never renamed by the Hub.
+On a draft created by the CLI, this finding does not block submission: it is
+shown labelled `does not block submission`, and the draft can still be ready
+and submitted. To fix it, rename the file and upload it again with
+`drafts files add`, or dismiss the finding.
+
 Other files in the folder are uploaded as attachments. You can include up to
 25 attachments, each up to 50 MB. Executables and scripts are not allowed.
 Use `--no-attachments` to exclude these extra files, or `--attach PATH` to add
@@ -187,7 +212,9 @@ whose star is `TYC 123456`:
 - `--asteroid-name` and `--star-id` must match the report as it spells them;
   case and repeated spaces are ignored. Write `1999 RM158`, not `1999RM158`.
 - Add `--star-catalog TYC` or `--station 2` when needed to identify the
-  observation.
+  observation. If the report's file name carries a station number
+  (`..._Observer_2_POS.xlsx` or `..._POS-2.xlsx`), the Hub stores it: pass
+  `--station 2`, or the lookup does not match.
 - The Hub looks up the event only when you give `--asteroid-id`. Without it,
   a `none` result only means you have no matching draft or observation.
 
