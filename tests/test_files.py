@@ -34,6 +34,51 @@ def test_maps_the_shared_fixture_folder():
     assert mapping.missing_required() == []
 
 
+def test_maps_the_clean_fixture_folder_with_standard_names():
+    mapping = map_folder(FIXTURES / "clean-observation")
+
+    assert {slot: path.name for slot, path in mapping.slots.items()} == {
+        "report": "20260926_33777_1999_RM158_Observer_POS.xlsx",
+        "lightcurve": "20260926_33777_1999_RM158_Observer_POS.csv",
+        "log": "20260926_33777_1999_RM158_Observer_POS.pyote_log.txt",
+    }
+    assert mapping.attachments == []
+    assert mapping.ignored == []
+
+
+def test_standard_names_with_a_station_number_map_to_their_slots(tmp_path):
+    """``…_<Surname>_<N>_<POS|NEG|UNS>`` plus each slot's standard suffix."""
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    stem = "20180305_9721_Doty_Observer_2_UNS"
+    for suffix in (".xlsx", ".csv", ".pyote_log.txt", ".pymovie", ".dat"):
+        (folder / f"{stem}{suffix}").write_bytes(b"x")
+    (folder / f"{stem}_plot.png").write_bytes(b"\x89PNG")
+
+    mapping = map_folder(folder)
+
+    assert {slot: path.name for slot, path in mapping.slots.items()} == {
+        "report": f"{stem}.xlsx",
+        "lightcurve": f"{stem}.csv",
+        "log": f"{stem}.pyote_log.txt",
+        "vizier": f"{stem}.dat",
+        "aperture_record": f"{stem}.pymovie",
+    }
+    assert [path.name for path in mapping.attachments] == [f"{stem}_plot.png"]
+
+
+def test_a_standard_tangra_aperture_record_maps(tmp_path):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    (folder / "20180305_9721_Doty_Observer_NEG.xls").write_bytes(b"x")
+    (folder / "20180305_9721_Doty_Observer_NEG.lc").write_bytes(b"x")
+
+    mapping = map_folder(folder)
+
+    assert mapping.slots["report"].name == "20180305_9721_Doty_Observer_NEG.xls"
+    assert mapping.slots["aperture_record"].name == "20180305_9721_Doty_Observer_NEG.lc"
+
+
 def test_vizier_is_optional_and_mapped_when_present(tmp_path):
     folder = copy_observation(tmp_path / "obs")
     (folder / "20180305_9721.dat").write_text("vizier\n")
@@ -169,6 +214,24 @@ def test_two_reports_point_at_the_multi_station_limitation(tmp_path):
     assert error.details["slot"] == "report"
     assert "--report" in error.hint
     assert "not supported yet" in error.hint
+
+
+def test_two_standard_station_reports_are_ambiguous(tmp_path):
+    folder = tmp_path / "obs"
+    folder.mkdir()
+    for station in ("1", "2"):
+        (folder / f"20180305_9721_Doty_Observer_{station}_POS.xlsx").write_bytes(b"x")
+
+    with pytest.raises(MappingError) as excinfo:
+        map_folder(folder)
+
+    error = excinfo.value
+    assert error.code == "ambiguous_files"
+    assert error.details["candidates"] == [
+        "20180305_9721_Doty_Observer_1_POS.xlsx",
+        "20180305_9721_Doty_Observer_2_POS.xlsx",
+    ]
+    assert "_Surname_1_POS" in error.hint
 
 
 def test_a_folder_with_only_a_report_maps(tmp_path):

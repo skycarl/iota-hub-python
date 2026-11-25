@@ -47,6 +47,9 @@ Take the values from the report, spelled as the report spells them
 (`1999 RM158`, not `1999RM158`), with the UTC date. Without `--asteroid-id`
 there is no event lookup, so `none` then only means no matching draft or
 observation of this observer's. With several matches, the newest is returned.
+If the report's file name carries a station number (`..._Observer_2_POS.xlsx` or
+`..._POS-2.xlsx`), pass `--station 2`: the Hub stores it, and a lookup without
+it does not match.
 
 If `found` is `observation`, use the returned ID to continue working on the
 observer's draft or submission. `event` means the event exists but no matching
@@ -70,6 +73,16 @@ parsed from the report. Supply missing requirements; they cannot be dismissed.
 Always report skipped checks and their reasons, even when the outcome is
 `submitted` or `ready`. They appear in `skipped_checks` on the submission result
 and `checks.skipped[]` on the draft. Skipped checks do not block submission.
+
+Also report `advisory_findings` from the submission result, even when the
+outcome is `submitted` or `ready`. These are findings the Hub lists but does not
+count in `readiness.open_findings`. Today the only one is check 13, "File
+names" (`file_name_consistency`), on a draft created through the API: a file is
+not named `YYYYMMDD_<number>_<Name>_<LastName>[_<N>]_<POS|NEG|UNS>` with its
+suffix. The finding's evidence gives the standard name. Tell the observer and
+let them decide whether to rename the file and upload it again with
+`drafts files add`. Do not rename their files yourself. Decide whether a draft
+is ready from `readiness.state`, never by counting `findings[]`.
 
 If `owc_commands` is not empty, the Occult Watcher Cloud (OWC) link needs a
 choice. Show the observer `observation.owc.resolution.candidates` and ask them
@@ -181,7 +194,9 @@ same as `130`.
 - Reports are NA spreadsheets (`.xlsx`/`.xls`) or Tangra JSON (`.json`). Tangra
   `.lc` and PyMovie `.pymovie` files use the optional `aperture_record` slot.
   `--log PATH` accepts any `.txt` file; automatic selection requires `log`
-  in its name. Multiple stations must use separate folders.
+  in its name (the standard PyOTE log name ends in `.pyote_log.txt`). Multiple
+  stations must use separate folders, with the station number after the last
+  name (`..._Observer_2_POS.xlsx`).
 - Other files are attachments: up to 25, up to 50 MB each, with no executables
   or scripts. For `blocked_attachment`, `attachment_too_large` or
   `too_many_attachments` (exit `2`), show the affected files. Ask whether the

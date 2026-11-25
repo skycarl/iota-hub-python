@@ -55,10 +55,14 @@ from .models import (
 from .workflow import (
     POLL_TIMEOUT,
     SubmitResult,
+    advisory_findings,
     candidate_line,
     check_warnings,
     next_actions_commands,
 )
+
+#: How a finding the server does not count toward submit is labelled.
+ADVISORY_LABEL = "does not block submission"
 
 #: Printed by ``guide`` when the bundled guide is not in the install (D18).
 GUIDE_FALLBACK = (
@@ -557,14 +561,29 @@ def _render_identity(metadata: PublicObservationMetadata) -> None:
 
 
 def _render_findings(checks: PublicChecks) -> None:
-    if not checks.findings:
+    advisory = {finding.fingerprint for finding in advisory_findings(checks)}
+    _render_finding_list(checks.findings, advisory)
+
+
+def _finding_state(finding: PublicFinding, advisory: set[str]) -> str:
+    """`` (dismissed)``, `` (does not block submission)`` or nothing."""
+    if finding.dismissal is not None:
+        return " (dismissed)"
+    if finding.fingerprint in advisory:
+        return f" ({ADVISORY_LABEL})"
+    return ""
+
+
+def _render_finding_list(findings: list[PublicFinding], advisory: set[str]) -> None:
+    """``findings``, labelling those whose fingerprint is in ``advisory``."""
+    if not findings:
         return
     if _term.styled():
-        _render_findings_styled(checks.findings)
+        _render_findings_styled(findings, advisory)
         return
     _out("Findings:")
-    for finding in checks.findings:
-        state = " (dismissed)" if finding.dismissal else ""
+    for finding in findings:
+        state = _finding_state(finding, advisory)
         _out(f"  [{finding.check_number}] {finding.severity} {finding.code}{state}")
         _out(f"      {finding.message}")
         if finding.how_to_fix:
@@ -574,21 +593,23 @@ def _render_findings(checks: PublicChecks) -> None:
         _out(f"      fingerprint: {finding.fingerprint}")
 
 
-def _finding_group(finding: PublicFinding) -> tuple[Any, ...]:
+def _finding_group(finding: PublicFinding, advisory: set[str]) -> tuple[Any, ...]:
     return (
         finding.check_number,
         finding.code,
         finding.how_to_fix,
         finding.doc_url,
-        finding.dismissal is None,
+        _finding_state(finding, advisory),
     )
 
 
-def _render_findings_styled(findings: list[PublicFinding]) -> None:
+def _render_findings_styled(findings: list[PublicFinding], advisory: set[str]) -> None:
     """Findings on a terminal: one block per check, the fix said once."""
     groups: list[list[PublicFinding]] = []
     for finding in findings:
-        if groups and _finding_group(groups[-1][0]) == _finding_group(finding):
+        if groups and _finding_group(groups[-1][0], advisory) == _finding_group(
+            finding, advisory
+        ):
             groups[-1].append(finding)
         else:
             groups.append([finding])
@@ -596,7 +617,10 @@ def _render_findings_styled(findings: list[PublicFinding]) -> None:
     _heading("Findings")
     for index, group in enumerate(groups):
         first = group[0]
-        dismissed = first.dismissal is not None
+        state = _finding_state(first, advisory)
+        # A dismissed finding and an advisory one are both dimmed: neither
+        # holds the draft back.
+        quiet = bool(state)
         count = f" ({len(group)})" if len(group) > 1 else ""
         if index:
             _out()
@@ -605,11 +629,11 @@ def _render_findings_styled(findings: list[PublicFinding]) -> None:
                 (f"[{first.check_number}] ", "dim"),
                 (
                     first.severity,
-                    "dim" if dismissed else _SEVERITY_STYLE.get(first.severity, ""),
+                    "dim" if quiet else _SEVERITY_STYLE.get(first.severity, ""),
                 ),
                 "  ",
-                (first.code + count, "dim" if dismissed else "bold"),
-                (" (dismissed)" if dismissed else "", "dim"),
+                (first.code + count, "dim" if quiet else "bold"),
+                (state, "dim"),
             ),
             indent=2,
         )
@@ -633,10 +657,11 @@ def _render_findings_styled(findings: list[PublicFinding]) -> None:
 def _render_checks(checks: PublicChecks) -> None:
     _field("Run", checks.run_id)
     _field("Status", checks.status, status=True)
-    _field(
-        "Findings",
-        f"{checks.open_findings} open, {checks.dismissed_findings} dismissed",
-    )
+    summary = f"{checks.open_findings} open, {checks.dismissed_findings} dismissed"
+    advisory = advisory_findings(checks)
+    if advisory:
+        summary += f", {len(advisory)} {ADVISORY_LABEL}"
+    _field("Findings", summary)
     _render_findings(checks)
     if checks.skipped:
         _heading("Skipped (did not run)")
@@ -1082,6 +1107,10 @@ def _emit_submit(result: SubmitResult) -> None:
                     check.model_dump(mode="json") for check in result.skipped_checks
                 ],
                 "owc_commands": result.owc_commands,
+                "advisory_findings": [
+                    finding.model_dump(mode="json")
+                    for finding in result.advisory_findings
+                ],
                 "web_url": observation.web_url,
                 "observation": observation.model_dump(mode="json"),
             }
@@ -1098,6 +1127,8 @@ def _emit_submit(result: SubmitResult) -> None:
         summary = f"{checks.status}, {checks.open_findings} open {noun}"
         if checks.dismissed_findings:
             summary += f", {checks.dismissed_findings} dismissed"
+        if result.advisory_findings:
+            summary += f", {len(result.advisory_findings)} {ADVISORY_LABEL}"
         _field("Checks", summary)
     if result.outcome != "submitted" and observation.web_url:
         # The hand-off to the browser: finish the draft there if you prefer.
@@ -1113,6 +1144,13 @@ def _emit_submit(result: SubmitResult) -> None:
         _render_readiness(observation, unless=result.outcome)
         if observation.checks is not None:
             _render_findings(observation.checks)
+    elif result.advisory_findings:
+        # A ready or submitted draft can still have findings the server does
+        # not count; the observer should still hear about them.
+        _render_finding_list(
+            result.advisory_findings,
+            {finding.fingerprint for finding in result.advisory_findings},
+        )
     _render_next(observation)
 
 
@@ -1876,7 +1914,11 @@ def observations_check(
     station: Annotated[
         str | None,
         typer.Option(
-            "--station", help="The station number, for one of several stations."
+            "--station",
+            help=(
+                "The station number, for one of several stations: the 2 of a "
+                "report named ..._Surname_2_POS.xlsx or ..._POS-2.xlsx."
+            ),
         ),
     ] = None,
 ) -> None:
@@ -1890,7 +1932,8 @@ def observations_check(
     The values come from the report, spelled as it spells them ("1999 RM158",
     not "1999RM158"); --date is the UTC date. Without --asteroid-id there is
     no event lookup, so "none" then only means no draft or observation of
-    yours. With several matches, the newest is returned.
+    yours. With several matches, the newest is returned. The Hub stores the
+    station a report's file name carries, so give --station for one.
 
     \b
     Example:

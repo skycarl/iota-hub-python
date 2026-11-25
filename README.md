@@ -65,7 +65,10 @@ iota-hub observations check --asteroid-id 9721 --asteroid-name Doty --star-id 12
 Take the values from the report (the Doty example report's star is
 `TYC 123456`), spelled as the report spells them, with the UTC date. This
 finds your newest matching draft or submission, or reports whether the event
-exists. The event is looked up only with `--asteroid-id`.
+exists. The event is looked up only with `--asteroid-id`. If the report's
+name carries a station number (`..._Observer_2_POS.xlsx` or `..._POS-2.xlsx`),
+add `--station 2`: the Hub stores that station with the observation, and a
+lookup without it does not match.
 A new `submit` command creates a new draft. To submit an existing draft, use
 `iota-hub drafts submit <id>`. That command also succeeds if the observation
 has already been submitted.
@@ -89,9 +92,35 @@ light curve or log, it remains a draft and lists the missing files.
 
 The CLI skips subfolders, dotfiles and symbolic links, and says which links it
 skipped. Extensions and the `log` filename match
-are case-insensitive. Keep each observation in its own folder, following the
-[submission naming convention](https://iota-hub.com/data-submission). Folders
-containing multiple stations (`_POS-1`, `_POS-2`) are not supported.
+are case-insensitive. Keep each observation in its own folder. Folders
+containing multiple stations (`_Observer_1_POS`, `_Observer_2_POS`) are not
+supported.
+
+### File names
+
+The Hub expects each file to be named
+`YYYYMMDD_<number>_<Name>_<LastName>[_<N>]_<POS|NEG|UNS>`, followed by the
+file's suffix:
+
+| File | Standard name |
+| ---- | ------------- |
+| `report` | `20180305_9721_Doty_Observer_POS.xlsx` (or `.xls`) |
+| `lightcurve` | `20180305_9721_Doty_Observer_POS.csv` |
+| `log` (PyOTE) | `20180305_9721_Doty_Observer_POS.pyote_log.txt` |
+| `aperture_record` | `20180305_9721_Doty_Observer_POS.pymovie` (or `.lc`) |
+
+Write a provisional designation with an underscore (`1999_RM158`) and `UNS`
+for an unsure result. If you observed from several stations, put the station
+number after your last name, not after the result: `..._Observer_2_POS.xlsx`.
+See the [submission naming convention](https://iota-hub.com/data-submission).
+
+The CLI selects files by the rules above whatever their names. The Hub reports
+a name that differs from the standard as a "File names" finding (check 13).
+The Hub does not rename files uploaded through the API. On a draft created
+through the API, this finding does not block submission: the CLI shows it,
+labelled `does not block submission`, and the draft can still be `ready` and
+submitted. Rename the file and upload it again with
+`iota-hub drafts files add <id> <slot> <path>`, or dismiss the finding.
 
 If more than one file matches, specify which one to use:
 
@@ -263,8 +292,10 @@ moments of startup kills the process by signal instead (a shell still reports
 `130`; Python's `subprocess` reports `-2`), so treat that the same way.
 
 `submit --json` includes `next_commands` for available actions, `skipped_checks`
-with their reasons and `owc_commands` for an unresolved OWC link. Skipped checks
-and an unresolved link do not change the exit code. Its `uploads` is
+with their reasons, `owc_commands` for an unresolved OWC link and
+`advisory_findings`, the findings the Hub lists but does not count toward
+submission (such as a File names finding). Skipped checks, an unresolved link
+and advisory findings do not change the exit code. Its `uploads` is
 `{slot: filename}`; `submit --dry-run --json` lists `uploads` as
 `[{slot, filename, path, size}]` instead.
 

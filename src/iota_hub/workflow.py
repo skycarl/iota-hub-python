@@ -32,6 +32,7 @@ from .files import (
     map_folder,
 )
 from .models import (
+    PublicChecks,
     PublicDeclaredFile,
     PublicEventFileLink,
     PublicFileLink,
@@ -84,6 +85,9 @@ class SubmitResult:
     #: submitted observation no longer carries a draft's check run.
     skipped_checks: list[PublicSkippedCheck] = field(default_factory=list)
     owc_commands: list[str] = field(default_factory=list)
+    #: Findings listed but not counted toward submit (:func:`advisory_findings`),
+    #: taken from the draft like ``skipped_checks``.
+    advisory_findings: list[PublicFinding] = field(default_factory=list)
 
     @property
     def observation_id(self) -> str:
@@ -176,6 +180,9 @@ class WorkflowMixin:
                     attached,
                     skipped_checks=skipped_checks(checked) if checked else [],
                     owc_commands=owc_commands(checked) if checked else [],
+                    advisory_findings=(
+                        advisory_findings(checked.checks) if checked else []
+                    ),
                 )
 
             if not wait:
@@ -753,10 +760,47 @@ def candidate_line(candidate: PublicOWCCandidate) -> str:
     return "  ".join(part for part in parts if part)
 
 
-def _open_findings(observation: PublicObservation) -> list[PublicFinding]:
-    if observation.checks is None:
+# --------------------------------------------------------------------------
+# Advisory findings: listed, not counted
+# --------------------------------------------------------------------------
+
+#: Checks whose findings the server lists on a draft created through the API
+#: without counting them toward submit (conventions section 8b). Today only
+#: observer check 13, File names: such a draft has no rename call yet.
+ADVISORY_CHECK_CODES = frozenset({"file_name_consistency"})
+
+
+def advisory_findings(checks: PublicChecks | None) -> list[PublicFinding]:
+    """The undismissed findings the server lists but does not count as open.
+
+    The API marks no finding as advisory; it leaves advisory findings out of
+    ``checks.open_findings``. So a finding is advisory here only when its check
+    is in :data:`ADVISORY_CHECK_CODES` *and* the server's open count is short
+    of the undismissed findings by exactly that many. Anything else -- the
+    check counted (a draft created in the web app, or once the API makes it
+    blocking), or a gap this client cannot explain -- is ``[]``, and every
+    undismissed finding is open, as the server's count then says.
+    """
+    if checks is None:
         return []
-    return [f for f in observation.checks.findings if f.dismissal is None]
+    undismissed = [f for f in checks.findings if f.dismissal is None]
+    advisory = [f for f in undismissed if f.code in ADVISORY_CHECK_CODES]
+    if advisory and len(undismissed) - checks.open_findings == len(advisory):
+        return advisory
+    return []
+
+
+def _open_findings(observation: PublicObservation) -> list[PublicFinding]:
+    """Undismissed findings that hold the draft back (advisory ones do not)."""
+    checks = observation.checks
+    if checks is None:
+        return []
+    advisory = {f.fingerprint for f in advisory_findings(checks)}
+    return [
+        f
+        for f in checks.findings
+        if f.dismissal is None and f.fingerprint not in advisory
+    ]
 
 
 # --------------------------------------------------------------------------
