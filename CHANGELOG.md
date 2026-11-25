@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 - 2026-11-25
 
 For the Hub's File names check (observer check 13), which lists a file whose
 name is not the standard
