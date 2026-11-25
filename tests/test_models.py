@@ -176,3 +176,65 @@ def test_the_check_request_and_every_answer_parse():
     )
     assert found.observation.status == "draft"
     assert found.observation.web_url.endswith("draft=obs_1")
+
+
+def test_report_details_carry_every_event_of_a_tangra_report():
+    details = models.PublicReportDetails.model_validate(
+        {
+            "d_corrected": "09:11:04.247000",
+            "r_corrected": "09:11:08.200000",
+            "events": [
+                {
+                    "d_corrected": "09:11:04.247000",
+                    "r_corrected": "09:11:08.200000",
+                    "d_err": 0.082,
+                    "r_err": 0.117,
+                    "snr": 2.04,
+                    "second_star": False,
+                },
+                {"d_corrected": "09:11:05.100000", "second_star": True},
+            ],
+            "double_stars": [{"event_a": 1, "event_b": 2, "star_b": {"p_value": 0.01}}],
+        }
+    )
+    first, second = details.events
+    assert first.d_corrected == details.d_corrected
+    assert first.snr == 2.04 and first.second_star is False
+    assert second.second_star is True and second.r_corrected is None
+    assert details.double_stars[0].star_b.p_value == 0.01
+
+    # Spreadsheet reports, misses and older observations have none.
+    assert models.PublicReportDetails.model_validate({}).events is None
+    # An event without the flag is not of the second star.
+    assert models.PublicReportEvent.model_validate({}).second_star is False
+
+
+def test_exchanged_keys_and_collect_codes_stay_out_of_repr():
+    result = models.PublicKeyExchangeResult.model_validate(
+        {
+            "api_key": "iotahub_k1_secret",
+            "key_id": "k1",
+            "expires_at": "2027-02-22T00:00:00Z",
+            "scopes": ["observations:write", "read"],
+            "account": {"email": "observer@example.test"},
+            "client": "tangra",
+        }
+    )
+    assert "secret" not in repr(result)
+    assert result.api_key == "iotahub_k1_secret"
+
+    started = models.PublicSignInStarted.model_validate(
+        {
+            "request_id": "req_1",
+            "collect_code": "code_secret",
+            "verification_url": "https://iota-hub.example.test/sign-in/req_1",
+            "expires_at": "2026-11-24T00:15:00Z",
+            "expires_in": 900,
+            "interval": 5,
+            "client": "tangra",
+        }
+    )
+    assert "code_secret" not in repr(started)
+    assert "code_secret" not in repr(
+        models.PublicCollectRequest(collect_code="code_secret")
+    )

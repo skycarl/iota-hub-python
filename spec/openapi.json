@@ -162,7 +162,7 @@
                 "type": "null"
               }
             ],
-            "description": "Station number for a multi-station observer ('2' for '\u2026_POS-2.xlsx'); omit for a single station",
+            "description": "Station number for a multi-station observer ('2' for '\u2026_POS-2.xlsx' or '\u2026_Dunham_2_POS.xlsx'); omit for a single station",
             "title": "Station"
           }
         },
@@ -266,6 +266,24 @@
           "status"
         ],
         "title": "PublicChecks",
+        "type": "object"
+      },
+      "PublicCollectRequest": {
+        "additionalProperties": false,
+        "description": "Body of the collect call.",
+        "properties": {
+          "collect_code": {
+            "description": "The `collect_code` from the sign-in start response",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Collect Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "collect_code"
+        ],
+        "title": "PublicCollectRequest",
         "type": "object"
       },
       "PublicDeclaredFile": {
@@ -1201,6 +1219,102 @@
         "title": "PublicInitUploadRequest",
         "type": "object"
       },
+      "PublicKeyExchangeAccount": {
+        "description": "The Hub account an exchanged key belongs to.",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The Hub account's display name, when set",
+            "title": "Display Name"
+          },
+          "email": {
+            "description": "The Hub account's email address",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "PublicKeyExchangeAccount",
+        "type": "object"
+      },
+      "PublicKeyExchangeRequest": {
+        "additionalProperties": false,
+        "description": "Optional body of the exchange and of the sign-in start.\n\nName the application making the call. Without a body, or without\n`client`, the call is for `tangra`. An id the Hub does not know is\n`422 unknown_client`.",
+        "properties": {
+          "client": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The application making the call, as an id the Hub knows (today only `tangra`), matched exactly. Defaults to `tangra`.",
+            "examples": [
+              "tangra"
+            ],
+            "title": "Client"
+          }
+        },
+        "title": "PublicKeyExchangeRequest",
+        "type": "object"
+      },
+      "PublicKeyExchangeResult": {
+        "description": "A Hub API key issued for an OccultWatcher identity.\n\nThe key is shown only in this response. It replaces any key issued to the\nsame Hub account for the same application by an earlier exchange, expires\nafter 90 days, and is limited to observer actions.",
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/PublicKeyExchangeAccount"
+          },
+          "api_key": {
+            "description": "Send this in the `X-API-Key` header on every other call",
+            "title": "Api Key",
+            "type": "string"
+          },
+          "client": {
+            "description": "The application the key was issued to (e.g. `tangra`)",
+            "title": "Client",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "ISO 8601 UTC expiry",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "key_id": {
+            "description": "The key's id, shown on /developers/keys",
+            "title": "Key Id",
+            "type": "string"
+          },
+          "scopes": {
+            "description": "Always `observations:write` and `read`",
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "api_key",
+          "key_id",
+          "expires_at",
+          "scopes",
+          "account",
+          "client"
+        ],
+        "title": "PublicKeyExchangeResult",
+        "type": "object"
+      },
       "PublicOWC": {
         "description": "The observation's link to an Occult Watcher Cloud event.",
         "properties": {
@@ -1213,7 +1327,7 @@
                 "type": "null"
               }
             ],
-            "description": "'matched' (the server's auto-match, or a confirmed match), 'picked' (a candidate chosen), 'pasted' (a link supplied), 'proceed_unlinked' (deliberately no link), or null (unresolved).",
+            "description": "'matched' (the server's auto-match, or a confirmed match), 'picked' (a candidate chosen), 'pasted' (a link supplied), 'report' (the OWC event the Tangra JSON report named \u2014 see `resolution.report_check`), 'proceed_unlinked' (deliberately no link), or null (unresolved).",
             "title": "Choice"
           },
           "owc_event_id": {
@@ -1405,6 +1519,30 @@
             ],
             "description": "Explanation",
             "title": "Reason"
+          },
+          "report_check": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What OWC said about `report_owc_event_id`: 'verified' (it is the link), 'not_found' or 'mismatch' (dropped: OWC has no such event, or it is for another asteroid or star; the rest of this resolution is the Hub's own match), or 'unverified' (OWC could not be reached; it is the link, and the next check run tries again). Null when the report named no event.",
+            "title": "Report Check"
+          },
+          "report_owc_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The OWC event the Tangra JSON report named (`report_details.prediction.owc_event_id`), when this resolution checked it. Null otherwise.",
+            "title": "Report Owc Event Id"
           },
           "resolved_at": {
             "anyOf": [
@@ -1807,7 +1945,7 @@
                 "type": "null"
               }
             ],
-            "description": "Report-derived: the station, for an observer who ran several \u2014 a Tangra JSON report's submission station, or the '-N' suffix of an NA report filename ('..._POS-2.xlsx'). Null otherwise.",
+            "description": "Report-derived: the station, for an observer who ran several \u2014 a Tangra JSON report's submission station, or the number in an NA report filename, after the result ('..._POS-2.xlsx') or after the surname ('..._Dunham_2_POS.xlsx'). Null otherwise.",
             "title": "Station"
           }
         },
@@ -1865,6 +2003,12 @@
             "description": "'in_progress' (required items missing or event files blocking), 'checking' (checks absent, running or stale), 'needs_attention' (open findings), or 'ready'.",
             "title": "State",
             "type": "string"
+          },
+          "submit_in_progress": {
+            "default": false,
+            "description": "A submit of this draft is under way, for example the automatic submit requested with auto_submit_when_clean. Poll this observation and follow next_actions: if the submit fails the draft stays a draft and next_actions offers 'submit' again.",
+            "title": "Submit In Progress",
+            "type": "boolean"
           }
         },
         "required": [
@@ -1876,6 +2020,21 @@
       "PublicReportDetails": {
         "description": "The report's equipment, conditions and timing (not PII).",
         "properties": {
+          "acknowledged_messages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: the warnings the observer confirmed in Tangra before submitting (optionalData.analysis.acknowledgedMessages), verbatim as plain text",
+            "title": "Acknowledged Messages"
+          },
           "aperture": {
             "anyOf": [
               {
@@ -1887,6 +2046,30 @@
             ],
             "description": "Telescope aperture with its unit, e.g. '8 in'",
             "title": "Aperture"
+          },
+          "archive_comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: the observation comment the report carries for the archive (reportData.comments), as plain text with its line breaks (LF). Not the observation's own comments, which are the reviewer note",
+            "title": "Archive Comment"
+          },
+          "camera_model_for_delays": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: the camera model whose instrumental delays were used (optionalData.equipment.cameraModelForDelays)",
+            "title": "Camera Model For Delays"
           },
           "clouds": {
             "anyOf": [
@@ -1921,7 +2104,7 @@
                 "type": "null"
               }
             ],
-            "description": "Tangra JSON reports only: the single disappearance error (\u00b1), seconds, at no stated confidence level",
+            "description": "Tangra JSON reports only: the single disappearance error (\u00b1), seconds, a 1-sigma (68 % confidence) half-width",
             "title": "D Err"
           },
           "d_err_68": {
@@ -1984,6 +2167,36 @@
             "description": "Camera model/type",
             "title": "Detector Model"
           },
+          "double_stars": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PublicReportDoubleStar"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: Tangra's double-star analysis (optionalData.analysis.doubleStars), one entry per pair of events",
+            "title": "Double Stars"
+          },
+          "events": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PublicReportEvent"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: every event of the report (reportData.events), in report order, the first included. Several for a double star or an asteroid's satellite. Null for a spreadsheet, a miss, or a report stored before events were read",
+            "title": "Events"
+          },
           "f_ratio": {
             "anyOf": [
               {
@@ -2008,6 +2221,29 @@
             "description": "Exposure/integration",
             "title": "Integration"
           },
+          "light_curve": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicReportLightCurve"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: the light curve sent"
+          },
+          "observers_more_than_listed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: reportData.observers.moreThanListed (more observers than the names listed, 'et al.')",
+            "title": "Observers More Than Listed"
+          },
           "ote_used": {
             "anyOf": [
               {
@@ -2019,6 +2255,17 @@
             ],
             "description": "Occultation timing extractor (analysis program)",
             "title": "Ote Used"
+          },
+          "prediction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicReportPrediction"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: where the event was identified from"
           },
           "r_corrected": {
             "anyOf": [
@@ -2041,7 +2288,7 @@
                 "type": "null"
               }
             ],
-            "description": "Tangra JSON reports only: the single reappearance error (\u00b1), seconds, at no stated confidence level",
+            "description": "Tangra JSON reports only: the single reappearance error (\u00b1), seconds, a 1-sigma (68 % confidence) half-width",
             "title": "R Err"
           },
           "r_err_68": {
@@ -2092,6 +2339,17 @@
             "description": "Reappearance time as the observer entered it; ISO 8601 time of day (UTC), e.g. '04:12:07.245000'",
             "title": "R Uncorrected"
           },
+          "recording": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicReportRecording"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: the recording's span"
+          },
           "stability": {
             "anyOf": [
               {
@@ -2128,6 +2386,17 @@
             "description": "Stopped Observing time; ISO 8601 time of day (UTC), e.g. '04:12:07.245000'",
             "title": "Stopped Observing"
           },
+          "submission": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicReportSubmission"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: the region and station number"
+          },
           "telescope_type": {
             "anyOf": [
               {
@@ -2139,6 +2408,17 @@
             ],
             "description": "Telescope type",
             "title": "Telescope Type"
+          },
+          "timing_detail": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicReportTimingDetail"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: delays and time-base values"
           },
           "timing_device": {
             "anyOf": [
@@ -2192,6 +2472,344 @@
         "title": "PublicReportDetails",
         "type": "object"
       },
+      "PublicReportDoubleStar": {
+        "description": "One entry of a Tangra JSON report's ``optionalData.analysis.doubleStars``:\nthe two events of a double star and how the light splits between them.",
+        "properties": {
+          "arrangement": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Order of the D and R steps, as written ('ABAB')",
+            "title": "Arrangement"
+          },
+          "delta_magnitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Magnitude difference B - A",
+            "title": "Delta Magnitude"
+          },
+          "drop_a": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Star A's drop (0-1)",
+            "title": "Drop A"
+          },
+          "drop_b": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Star B's drop (0-1)",
+            "title": "Drop B"
+          },
+          "edges": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Edge model, as written",
+            "title": "Edges"
+          },
+          "event_a": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Star A's event: a 1-based index into reportData.events",
+            "title": "Event A"
+          },
+          "event_b": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Star B's event: a 1-based index into reportData.events",
+            "title": "Event B"
+          },
+          "found_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What found the double star, as written",
+            "title": "Found By"
+          },
+          "light_a": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Star A's share of the combined light (0-1)",
+            "title": "Light A"
+          },
+          "light_b": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Star B's share of the combined light (0-1)",
+            "title": "Light B"
+          },
+          "light_b_at_d": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Star B's share measured at D (0-1)",
+            "title": "Light B At D"
+          },
+          "light_b_at_r": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Star B's share measured at R (0-1)",
+            "title": "Light B At R"
+          },
+          "measured_drop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Measured total drop (0-1)",
+            "title": "Measured Drop"
+          },
+          "ordering_ambiguous": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which star is A and which is B is ambiguous",
+            "title": "Ordering Ambiguous"
+          },
+          "predicted_drop": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Predicted total drop (0-1)",
+            "title": "Predicted Drop"
+          },
+          "star_b": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublicReportStarB"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra's test of star B"
+          }
+        },
+        "title": "PublicReportDoubleStar",
+        "type": "object"
+      },
+      "PublicReportEvent": {
+        "description": "One event (a disappearance/reappearance pair) of a Tangra JSON report.\n\nA double star or an asteroid's satellite gives one report several events;\nthe first is also the report's top-level ``d_corrected`` / ``r_corrected``\n/ ``d_err`` / ``r_err``.",
+        "properties": {
+          "d_corrected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Disappearance time (already corrected by Tangra); ISO 8601 time of day (UTC), e.g. '04:12:07.245000'",
+            "title": "D Corrected"
+          },
+          "d_err": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The disappearance error (\u00b1, 1-sigma), seconds",
+            "title": "D Err"
+          },
+          "r_corrected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reappearance time (already corrected by Tangra); ISO 8601 time of day (UTC), e.g. '04:12:07.245000'",
+            "title": "R Corrected"
+          },
+          "r_err": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The reappearance error (\u00b1, 1-sigma), seconds",
+            "title": "R Err"
+          },
+          "second_star": {
+            "default": false,
+            "description": "The event is of the second star of a double star",
+            "title": "Second Star",
+            "type": "boolean"
+          },
+          "snr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Signal-to-noise ratio",
+            "title": "Snr"
+          }
+        },
+        "title": "PublicReportEvent",
+        "type": "object"
+      },
+      "PublicReportLightCurve": {
+        "description": "A Tangra JSON report's ``optionalData.lightCurve``: the light curve\nfile sent with the report.",
+        "properties": {
+          "comparison_stars": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Comparison stars measured",
+            "title": "Comparison Stars"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The light curve's file name",
+            "title": "File"
+          },
+          "frames_from": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "First frame it was cut to; null when it is the whole curve",
+            "title": "Frames From"
+          },
+          "frames_to": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last frame it was cut to; null when it is the whole curve",
+            "title": "Frames To"
+          },
+          "points": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Data points in it",
+            "title": "Points"
+          }
+        },
+        "title": "PublicReportLightCurve",
+        "type": "object"
+      },
       "PublicReportParse": {
         "description": "Whether the Hub read the uploaded report successfully.",
         "properties": {
@@ -2229,6 +2847,68 @@
           "status"
         ],
         "title": "PublicReportParse",
+        "type": "object"
+      },
+      "PublicReportPrediction": {
+        "description": "A Tangra JSON report's ``optionalData.prediction``: where the event\nwas identified from.",
+        "properties": {
+          "owc_event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The OccultWatcher Cloud event id the report names, as written. It becomes the observation's OWC link on each upload of the report, kept when OWC confirms it and dropped (the Hub's own match runs instead) when OWC has no such event or it is for another asteroid or star; owc.resolution.report_check says which",
+            "title": "Owc Event Id"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the event came from, as Tangra writes it: OccultWatcherCloudMyEvents, OccultWatcherCloudSearch, OccultLocal, Pasted",
+            "title": "Source"
+          }
+        },
+        "title": "PublicReportPrediction",
+        "type": "object"
+      },
+      "PublicReportRecording": {
+        "description": "A Tangra JSON report's ``optionalData.recording``: when the recording\nthe light curve came from starts and ends.",
+        "properties": {
+          "end_utc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Recording end, ISO 8601 UTC ('...Z')",
+            "title": "End Utc"
+          },
+          "start_utc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Recording start, ISO 8601 UTC ('...Z')",
+            "title": "Start Utc"
+          }
+        },
+        "title": "PublicReportRecording",
         "type": "object"
       },
       "PublicReportSite": {
@@ -2293,9 +2973,417 @@
             ],
             "description": "The observing location's name",
             "title": "Observing Location"
+          },
+          "station_altitude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: the station's altitude as announced in OccultWatcher Cloud, with its unit, e.g. '780 m'",
+            "title": "Station Altitude"
+          },
+          "station_latitude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: the station's latitude as announced in OccultWatcher Cloud, signed decimal degrees",
+            "title": "Station Latitude"
+          },
+          "station_longitude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra JSON reports only: the station's longitude as announced in OccultWatcher Cloud, signed decimal degrees",
+            "title": "Station Longitude"
           }
         },
         "title": "PublicReportSite",
+        "type": "object"
+      },
+      "PublicReportStarB": {
+        "description": "Tangra's test of whether the second star of a double star is real.",
+        "properties": {
+          "d_elsewhere": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Similar D steps found elsewhere",
+            "title": "D Elsewhere"
+          },
+          "d_spread_points": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Spread of the D step, data points",
+            "title": "D Spread Points"
+          },
+          "doubtful": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra flags it doubtful",
+            "title": "Doubtful"
+          },
+          "full_disappearance_p_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "p-value of a full disappearance",
+            "title": "Full Disappearance P Value"
+          },
+          "lifted_by_full_disappearance": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The verdict was lifted by a full disappearance",
+            "title": "Lifted By Full Disappearance"
+          },
+          "p_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The test's p-value",
+            "title": "P Value"
+          },
+          "p_value_is_bound": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The p-value is an upper bound",
+            "title": "P Value Is Bound"
+          },
+          "r_elsewhere": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Similar R steps found elsewhere",
+            "title": "R Elsewhere"
+          },
+          "r_spread_points": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Spread of the R step, data points",
+            "title": "R Spread Points"
+          },
+          "slow_edge_fits_as_well": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A slow (diffraction) edge fits as well",
+            "title": "Slow Edge Fits As Well"
+          },
+          "step_elsewhere": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A similar step was found elsewhere",
+            "title": "Step Elsewhere"
+          },
+          "trials": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trials run",
+            "title": "Trials"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tangra's verdict, as written (e.g. 'Probable')",
+            "title": "Verdict"
+          }
+        },
+        "title": "PublicReportStarB",
+        "type": "object"
+      },
+      "PublicReportSubmission": {
+        "description": "A Tangra JSON report's ``optionalData.submission`` region and station\nnumber (the announced station position is in the PII ``report_site``).",
+        "properties": {
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The region reported to, as Tangra writes it: Australasia, Europe, NorthAmerica, Other",
+            "title": "Region"
+          },
+          "station_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The station's number on the OccultWatcher Cloud event (1-based)",
+            "title": "Station Number"
+          }
+        },
+        "title": "PublicReportSubmission",
+        "type": "object"
+      },
+      "PublicReportTimingDetail": {
+        "description": "A Tangra JSON report's ``optionalData.timing`` beyond the video values:\nhow the camera's delays were handled and how good the time base is.",
+        "properties": {
+          "acquisition_delay_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Acquisition delay, milliseconds",
+            "title": "Acquisition Delay Ms"
+          },
+          "delays_entered_at_report": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The delays were entered when reporting",
+            "title": "Delays Entered At Report"
+          },
+          "embedded_timestamps": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The frames carry timestamps of their own (not OCR'd)",
+            "title": "Embedded Timestamps"
+          },
+          "fitted_in_time": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The fit was done in time rather than in frames",
+            "title": "Fitted In Time"
+          },
+          "instrumental_delays": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the camera's instrumental delays were dealt with, as Tangra writes it: AppliedByTangra, AppliedToLightCurve, AcquisitionDelayApplied, NotRequired, NotApplied (more may follow)",
+            "title": "Instrumental Delays"
+          },
+          "reference_time_to_utc_offset_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reference time to UTC offset, milliseconds",
+            "title": "Reference Time To Utc Offset Ms"
+          },
+          "reliable_time_base": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The recording's time base is reliable",
+            "title": "Reliable Time Base"
+          },
+          "timestamp_jitter_3sigma_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Timestamp jitter (3 sigma), milliseconds",
+            "title": "Timestamp Jitter 3Sigma Ms"
+          },
+          "timestamp_jitter_frames": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Timestamp jitter, frames",
+            "title": "Timestamp Jitter Frames"
+          },
+          "windows_clock_timestamps": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The timestamps come from the Windows clock",
+            "title": "Windows Clock Timestamps"
+          }
+        },
+        "title": "PublicReportTimingDetail",
+        "type": "object"
+      },
+      "PublicSignInStarted": {
+        "description": "A browser sign-in, started because no Hub account matched automatically.\n\nOpen `verification_url` in the user's browser, then poll\n`POST /public/v1/key-exchange/sign-in/{request_id}/collect` with\n`collect_code` every `interval` seconds until it answers `200`.",
+        "properties": {
+          "client": {
+            "description": "The application the sign-in is for (e.g. `tangra`); the approval page names it",
+            "title": "Client",
+            "type": "string"
+          },
+          "collect_code": {
+            "description": "Secret for the collect call. Keep it out of URLs and logs; the browser page never sees it.",
+            "title": "Collect Code",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "ISO 8601 UTC; void after this",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "expires_in": {
+            "description": "Seconds until `expires_at`",
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "interval": {
+            "description": "Seconds to wait between collect calls",
+            "title": "Interval",
+            "type": "integer"
+          },
+          "request_id": {
+            "description": "Identifies the sign-in",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "verification_url": {
+            "description": "Hub page where the user signs in and approves",
+            "title": "Verification Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "collect_code",
+          "verification_url",
+          "expires_at",
+          "expires_in",
+          "interval",
+          "client"
+        ],
+        "title": "PublicSignInStarted",
         "type": "object"
       },
       "PublicSkippedCheck": {
@@ -2882,6 +3970,344 @@
         "summary": "Download links for an event's files",
         "tags": [
           "Public API v1"
+        ]
+      }
+    },
+    "/public/v1/key-exchange": {
+      "post": {
+        "description": "Send the user's OccultWatcher API key in the `OW-ApiKey` header and the body `{\"client\": \"<id>\"}` naming the application (no Hub key). Without a body, or without `client`, the call is for `tangra`; an id the Hub does not know is `422 unknown_client`. The Hub asks OccultWatcher who the key belongs to and looks for that user's Hub account, first by an earlier link, then by email address (ignoring the case of ASCII letters; an address with other characters never matches).\n\nOn a match it returns a new Hub API key. The key replaces any key an earlier exchange issued to the same account for the same `client`, expires after 90 days, has the scopes `observations:write` and `read`, and is limited to observer actions. Store it and send it in `X-API-Key`; exchange again when a call answers `401 expired_api_key` or `401 unknown_api_key`.\n\n`404 no_matching_account` means no account could be matched: start a sign-in. `403 account_not_active` means the account exists but cannot be used yet. Never repeat the exchange after `401 invalid_owc_key`; `503 owc_unavailable` may be retried after `Retry-After` seconds. Limited to 20 calls per hour per IP address.",
+        "operationId": "public_key_exchange",
+        "parameters": [
+          {
+            "description": "The user's OccultWatcher API key",
+            "in": "header",
+            "name": "OW-ApiKey",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PublicKeyExchangeRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicKeyExchangeResult"
+                }
+              }
+            },
+            "description": "A new Hub key (shown only in this response)"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "invalid_owc_key",
+                  "hint": "OccultWatcher did not accept this key. Ask the user to check their OccultWatcher API key; do not repeat the exchange with the same key.",
+                  "message": "OccultWatcher did not accept this API key"
+                }
+              }
+            },
+            "description": "`missing_owc_key` or `invalid_owc_key`"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "account_not_active",
+                  "details": {
+                    "account_status": "pending"
+                  },
+                  "hint": "The Hub account is not active ('details.account_status' says why). Show this to the user; a sign-in will not help until a coordinator activates the account or the email address is verified.",
+                  "message": "The Hub account is not active"
+                }
+              }
+            },
+            "description": "`account_not_active`"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "no_matching_account",
+                  "hint": "No Hub account could be matched to this OccultWatcher account. Start a sign-in (POST /public/v1/key-exchange/sign-in) so the user can connect their Hub account in the browser.",
+                  "message": "No Hub account matches this OccultWatcher account"
+                }
+              }
+            },
+            "description": "`no_matching_account` \u2014 start a sign-in"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "unknown_client",
+                  "hint": "The 'client' in the body is not an application the Hub knows. Send the id the Hub gave your application (lower case, e.g. 'tangra'), or no body.",
+                  "message": "The Hub does not know this client application"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "`unknown_client`, or `validation_error` for a malformed body"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "rate_limited",
+                  "hint": "Wait for the number of seconds in the Retry-After header, then retry.",
+                  "message": "Rate limit exceeded for key_exchange operations. Please try again later."
+                }
+              }
+            },
+            "description": "`rate_limited`, with `Retry-After`"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "owc_unavailable",
+                  "hint": "Occult Watcher Cloud could not be reached. Retry after the number of seconds in the Retry-After header; for an OWC link you may instead proceed without one.",
+                  "message": "OccultWatcher could not be reached to identify the key"
+                }
+              }
+            },
+            "description": "`owc_unavailable`, with `Retry-After`"
+          }
+        },
+        "security": [],
+        "summary": "Exchange an OccultWatcher key for a Hub key",
+        "tags": [
+          "Key exchange (applications)"
+        ]
+      }
+    },
+    "/public/v1/key-exchange/sign-in": {
+      "post": {
+        "description": "Send the user's OccultWatcher API key in the `OW-ApiKey` header and the body `{\"client\": \"<id>\"}` naming the application, as on the exchange (no body means `tangra`; an unknown id is `422 unknown_client`). The approval page names that application. Use it after `404 no_matching_account`, or to connect a different Hub account. Open `verification_url` in the user's browser: they sign in to the Hub and approve. Then call collect with `collect_code` every `interval` seconds until it answers `200`; collect issues the key for the `client` named here.\n\nThe sign-in expires after `expires_in` seconds (15 minutes). Keep `collect_code` out of URLs and logs. Approval links the OccultWatcher account to the Hub account, replacing any other OccultWatcher account linked to it, so later exchanges succeed without a browser. The link is shared by every application using that OccultWatcher account: revoking any key an exchange issued, on the Hub's API keys page, removes the link and every exchanged key. Limited to 20 calls per hour per IP address, shared with the exchange.",
+        "operationId": "public_key_exchange_sign_in_start",
+        "parameters": [
+          {
+            "description": "The user's OccultWatcher API key",
+            "in": "header",
+            "name": "OW-ApiKey",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PublicKeyExchangeRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicSignInStarted"
+                }
+              }
+            },
+            "description": "Sign-in started"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "invalid_owc_key",
+                  "hint": "OccultWatcher did not accept this key. Ask the user to check their OccultWatcher API key; do not repeat the exchange with the same key.",
+                  "message": "OccultWatcher did not accept this API key"
+                }
+              }
+            },
+            "description": "`missing_owc_key` or `invalid_owc_key`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "unknown_client",
+                  "hint": "The 'client' in the body is not an application the Hub knows. Send the id the Hub gave your application (lower case, e.g. 'tangra'), or no body.",
+                  "message": "The Hub does not know this client application"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "`unknown_client`, or `validation_error` for a malformed body"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "rate_limited",
+                  "hint": "Wait for the number of seconds in the Retry-After header, then retry.",
+                  "message": "Rate limit exceeded for key_exchange operations. Please try again later."
+                }
+              }
+            },
+            "description": "`rate_limited`, with `Retry-After`"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "owc_unavailable",
+                  "hint": "Occult Watcher Cloud could not be reached. Retry after the number of seconds in the Retry-After header; for an OWC link you may instead proceed without one.",
+                  "message": "OccultWatcher could not be reached to identify the key"
+                }
+              }
+            },
+            "description": "`owc_unavailable`, with `Retry-After`"
+          }
+        },
+        "security": [],
+        "summary": "Start a browser sign-in",
+        "tags": [
+          "Key exchange (applications)"
+        ]
+      }
+    },
+    "/public/v1/key-exchange/sign-in/{request_id}/collect": {
+      "post": {
+        "description": "Send the `collect_code` from the sign-in start; no Hub key and no OccultWatcher key. Answers `409 sign_in_pending` until the user approves, then `200` with a Hub key, exactly once. `410 sign_in_expired` means the sign-in expired, was already collected, or the code is wrong: start a new sign-in. `403 account_not_active` means the approving account can no longer be used.",
+        "operationId": "public_key_exchange_sign_in_collect",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicCollectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicKeyExchangeResult"
+                }
+              }
+            },
+            "description": "A new Hub key (shown only in this response)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "account_not_active",
+                  "details": {
+                    "account_status": "disabled"
+                  },
+                  "hint": "The Hub account is not active ('details.account_status' says why). Show this to the user; a sign-in will not help until a coordinator activates the account or the email address is verified.",
+                  "message": "The Hub account is not active"
+                }
+              }
+            },
+            "description": "`account_not_active`"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "sign_in_pending",
+                  "hint": "The user has not approved the sign-in yet. Wait 'interval' seconds and call collect again.",
+                  "message": "The sign-in has not been approved yet"
+                }
+              }
+            },
+            "description": "`sign_in_pending` \u2014 wait `interval` seconds and retry"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "sign_in_expired",
+                  "hint": "This sign-in is no longer valid: it expired, was already collected, or the collect code is wrong. Start a new sign-in.",
+                  "message": "This sign-in is no longer valid"
+                }
+              }
+            },
+            "description": "`sign_in_expired` \u2014 start a new sign-in"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicError"
+                }
+              }
+            },
+            "description": "Problem details with a stable `code`"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "code": "rate_limited",
+                  "hint": "Wait for the number of seconds in the Retry-After header, then retry.",
+                  "message": "Too many authentication failures. Please try again later."
+                }
+              }
+            },
+            "description": "`rate_limited`, with `Retry-After`"
+          }
+        },
+        "security": [],
+        "summary": "Collect the Hub key after sign-in",
+        "tags": [
+          "Key exchange (applications)"
         ]
       }
     },
@@ -3493,7 +4919,7 @@
               "application/json": {
                 "example": {
                   "code": "forbidden",
-                  "hint": "Your account cannot perform this action. An API key has exactly the privileges you have in the web app.",
+                  "hint": "Your account cannot perform this action. An API key has the privileges you have in the web app; a key issued by the OWC key exchange is limited to observer actions.",
                   "message": "This observation belongs to another user."
                 }
               }
@@ -3666,7 +5092,7 @@
         ]
       },
       "patch": {
-        "description": "Update a draft's OWC link, asteroid confirmation, comments or required-file exemption. Fields omitted from the request stay unchanged. Changes start a new check run. Include the latest `version`; an outdated version returns `409 stale_version`.\n\nThe Hub tries to match an Occult Watcher Cloud (OWC) event after reading the report. Read `owc.resolution` for the result. To select an event yourself, set `owc_link_choice`:\n\n- `picked`: set `owc_event` to an ID from `owc.resolution.candidates`.\n- `pasted`: set `owc_event` to an OWC ID or URL. The Hub verifies it against OWC and the report.\n- `proceed_unlinked`: continue without an OWC link.\n\nReport fields cannot be edited here (`422 report_derived_fields`, with `details.fields`). OWC errors include `422 owc_not_a_candidate`, `422 owc_link_unparseable`, `422 owc_link_not_found`, `422 owc_link_mismatch` (with `details.violations`) and `503 owc_unavailable`.",
+        "description": "Update a draft's OWC link, asteroid confirmation, comments or required-file exemption. Fields omitted from the request stay unchanged. Changes start a new check run. Include the latest `version`; an outdated version returns `409 stale_version`.\n\nThe Hub tries to match an Occult Watcher Cloud (OWC) event after reading the report; a Tangra JSON report's `optionalData.prediction.owcEventId` is used as the link instead (`owc.choice` `report`), checked against OWC and dropped for the Hub's own match if OWC has no such event or it disagrees with the report. Every upload of a report that names an event sets it again, replacing a choice made here. Read `owc.resolution` for the result. To select an event yourself, set `owc_link_choice`:\n\n- `picked`: set `owc_event` to an ID from `owc.resolution.candidates`.\n- `pasted`: set `owc_event` to an OWC ID or URL. The Hub verifies it against OWC and the report.\n- `proceed_unlinked`: continue without an OWC link.\n\nReport fields cannot be edited here (`422 report_derived_fields`, with `details.fields`). OWC errors include `422 owc_not_a_candidate`, `422 owc_link_unparseable`, `422 owc_link_not_found`, `422 owc_link_mismatch` (with `details.violations`) and `503 owc_unavailable`.",
         "operationId": "public_update_draft",
         "parameters": [
           {
@@ -3871,7 +5297,7 @@
               "application/json": {
                 "example": {
                   "code": "owc_unavailable",
-                  "hint": "Occult Watcher Cloud could not be reached to validate the link. Retry shortly, or proceed without an OWC link.",
+                  "hint": "Occult Watcher Cloud could not be reached. Retry after the number of seconds in the Retry-After header; for an OWC link you may instead proceed without one.",
                   "message": "OWC could not be reached to validate the link."
                 }
               }
@@ -3892,7 +5318,7 @@
     },
     "/public/v1/observations/{observation_id}/attachments/upload/finalize": {
       "post": {
-        "description": "Save an uploaded attachment to the observation. The Hub records its actual uploaded size. Attachments are not used by observer checks, so adding one does not require new checks.",
+        "description": "Save an uploaded attachment to the observation. The Hub records its actual uploaded size. A filename exactly matching an existing attachment (case-sensitive) replaces it, unless the owner is uploading over a reviewer's or coordinator's file, which is kept and the upload added. Attachments are not used by observer checks, so adding one does not require new checks.",
         "operationId": "public_finalize_attachment_upload",
         "parameters": [
           {
@@ -4077,7 +5503,7 @@
     },
     "/public/v1/observations/{observation_id}/attachments/upload/init": {
       "post": {
-        "description": "Get an upload URL and form fields for an attachment. Save the returned `attachment_id` for finalization or removal.\n\nAn observation can have up to 25 attachments, each up to 50 MB. Exceeding the count returns `422 validation_error` with `details.max_allowed`. Executables and scripts return `422 validation_error` with `details.blocked_extension`. S3 enforces the upload size limit.",
+        "description": "Get an upload URL and form fields for an attachment. Save the returned `attachment_id` for finalization or removal.\n\nAn observation can have up to 25 attachments, each up to 50 MB; an attachment this upload replaces (same filename) does not count. Exceeding the count returns `422 validation_error` with `details.max_allowed`. Executables and scripts return `422 validation_error` with `details.blocked_extension`. S3 enforces the upload size limit.",
         "operationId": "public_init_attachment_upload",
         "parameters": [
           {
@@ -5073,7 +6499,7 @@
     },
     "/public/v1/observations/{observation_id}/submit": {
       "post": {
-        "description": "Submit a draft and attach it to a matching or newly created event. Optionally send `version` to ensure the draft has not changed since you read it. An outdated version returns `409 stale_version`; omitting it submits the current version.\n\nIf the observation is already submitted, the request returns `200` with its current state.\n\nSubmission can fail with `422 missing_required`, `409 open_findings`, `409 checks_stale`, `409 stale_version`, `409 event_files_conflict` or `422 owc_link_mismatch`. The response's `details` identify missing items, open findings or OWC differences where applicable. Errors caused by the observation's state include `status`, `observation_id` and `amendment_count` in `details`.\n\nAn unresolved OWC link does not prevent submission. Check 12 is skipped when no link is available.\n\nAnother user's submitted observation returns `403 forbidden`; another user's draft returns `404 not_found`.",
+        "description": "Submit a draft and attach it to a matching or newly created event. Optionally send `version` to ensure the draft has not changed since you read it. An outdated version returns `409 stale_version`; omitting it submits the current version.\n\nIf the observation is already submitted, the request returns `200` with its current state. If another submit of the draft is under way, such as the automatic submit requested with `auto_submit_when_clean`, the request waits up to about 20 seconds for it and returns `200` with the submitted observation. If that submit is still running, the response is `409 submit_in_progress`, which is not a failure by itself: read the observation, and if it is a draft again with `submit` in `next_actions`, call submit again.\n\nSubmission can fail with `422 missing_required`, `409 open_findings`, `409 checks_stale`, `409 stale_version`, `409 event_files_conflict` or `422 owc_link_mismatch`. The response's `details` identify missing items, open findings or OWC differences where applicable. Errors caused by the observation's state include `status`, `observation_id` and `amendment_count` in `details`.\n\nAn unresolved OWC link does not prevent submission. Check 12 is skipped when no link is available.\n\nAnother user's submitted observation returns `403 forbidden`; another user's draft returns `404 not_found`.",
         "operationId": "public_submit_draft",
         "parameters": [
           {
@@ -5204,7 +6630,7 @@
               "application/json": {
                 "example": {
                   "code": "forbidden",
-                  "hint": "Your account cannot perform this action. An API key has exactly the privileges you have in the web app.",
+                  "hint": "Your account cannot perform this action. An API key has the privileges you have in the web app; a key issued by the OWC key exchange is limited to observer actions.",
                   "message": "This observation belongs to another user."
                 }
               }
@@ -5239,7 +6665,7 @@
                 }
               }
             },
-            "description": "`open_findings`, `checks_stale`, `stale_version` or `event_files_conflict`"
+            "description": "`open_findings`, `checks_stale`, `stale_version`, `event_files_conflict` or `submit_in_progress`"
           },
           "422": {
             "content": {
@@ -5621,6 +7047,10 @@
     {
       "description": "Submit observations and retrieve events, observations and files through `/public/v1`. Send an API key in the `X-API-Key` header. Access is limited by your account permissions and the key scopes: `read` for reads and `observations:write` for writes. Use the API from scripts or servers; browser requests are not supported. To submit, create a draft, upload each file, finalize, wait for checks and submit. Within v1, existing response fields remain compatible and new fields may be added. API errors include `code`, `message`, `hint` and `details`. Use `code` in error-handling logic. Rate-limit responses include `Retry-After`.",
       "name": "Public API v1"
+    },
+    {
+      "description": "For an application that already holds a user's OccultWatcher (OWC) API key, such as Tangra: obtain a Hub API key for that user without the user creating one at /developers/keys. A script that uses its own key does not need these calls. They take no `X-API-Key`: the exchange and the sign-in start take the user's OWC key in the `OW-ApiKey` header and a body `{\"client\": \"<id>\"}` naming the application (an id the Hub knows, today only `tangra`; without it the call is for `tangra`, and an unknown id is `422 unknown_client`), and collect takes the sign-in's `collect_code` in its body. The issued key is limited to observer actions, has the scopes `observations:write` and `read`, and expires after 90 days; each exchange replaces the key the previous one issued to the same `client`. The exchange and the sign-in start share a limit of 20 calls per hour per IP address. Branch on the error `code`: `404 no_matching_account` means no Hub account was matched, so start the browser sign-in.",
+      "name": "Key exchange (applications)"
     }
   ]
 }

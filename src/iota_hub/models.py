@@ -125,6 +125,21 @@ class PublicDraftUpdateRequest(_Public):
     bypass_required_files: bool | None = None
 
 
+class PublicKeyExchangeRequest(_Public):
+    """Optional body of ``POST /key-exchange`` and of the sign-in start.
+
+    ``client`` names the application; omitted, the Hub assumes ``tangra``.
+    """
+
+    client: str | None = None
+
+
+class PublicCollectRequest(_Public):
+    """Body of ``POST /key-exchange/sign-in/{request_id}/collect``."""
+
+    collect_code: str = Field(repr=False)
+
+
 # --------------------------------------------------------------------------
 # Shared pieces
 # --------------------------------------------------------------------------
@@ -272,6 +287,8 @@ class PublicOWCResolution(_Public):
     candidates: list[PublicOWCCandidate] = Field(default_factory=list)
     mismatches: list[PublicOWCMismatch] = Field(default_factory=list)
     resolved_at: str | None = None
+    report_check: str | None = None
+    report_owc_event_id: str | None = None
 
 
 class PublicOWC(_Public):
@@ -298,6 +315,7 @@ class PublicReadiness(_Public):
     checks_current: bool = False
     event_files_blocked: bool = False
     latest_run_id: str | None = None
+    submit_in_progress: bool = False
 
 
 class PublicObservationMetadata(_Public):
@@ -325,10 +343,114 @@ class PublicReportParse(_Public):
     message: str | None = None
 
 
+class PublicReportEvent(_Public):
+    """One disappearance/reappearance pair of a Tangra JSON report.
+
+    ``report_details.events[0]`` is the same event as the top-level
+    ``d_corrected`` / ``r_corrected`` / ``d_err`` / ``r_err``.
+    """
+
+    d_corrected: str | None = None
+    r_corrected: str | None = None
+    d_err: float | None = None
+    r_err: float | None = None
+    snr: float | None = None
+    second_star: bool = False
+
+
+class PublicReportStarB(_Public):
+    """Tangra's test of whether the second star of a double star is real."""
+
+    verdict: str | None = None
+    doubtful: bool | None = None
+    p_value: float | None = None
+    p_value_is_bound: bool | None = None
+    trials: int | None = None
+    step_elsewhere: bool | None = None
+    d_elsewhere: float | None = None
+    r_elsewhere: float | None = None
+    d_spread_points: float | None = None
+    r_spread_points: float | None = None
+    slow_edge_fits_as_well: bool | None = None
+    full_disappearance_p_value: float | None = None
+    lifted_by_full_disappearance: bool | None = None
+
+
+class PublicReportDoubleStar(_Public):
+    """One double star of a Tangra JSON report: its two events and their light.
+
+    ``event_a`` and ``event_b`` are 1-based indexes into ``events``.
+    """
+
+    event_a: int | None = None
+    event_b: int | None = None
+    arrangement: str | None = None
+    edges: str | None = None
+    found_by: str | None = None
+    ordering_ambiguous: bool | None = None
+    delta_magnitude: float | None = None
+    drop_a: float | None = None
+    drop_b: float | None = None
+    light_a: float | None = None
+    light_b: float | None = None
+    light_b_at_d: float | None = None
+    light_b_at_r: float | None = None
+    measured_drop: float | None = None
+    predicted_drop: float | None = None
+    star_b: PublicReportStarB | None = None
+
+
+class PublicReportLightCurve(_Public):
+    """The light curve sent with a Tangra JSON report."""
+
+    file: str | None = None
+    points: int | None = None
+    comparison_stars: int | None = None
+    frames_from: int | None = None
+    frames_to: int | None = None
+
+
+class PublicReportPrediction(_Public):
+    """Where a Tangra JSON report's event was identified from."""
+
+    source: str | None = None
+    owc_event_id: str | None = None
+
+
+class PublicReportRecording(_Public):
+    """When the recording behind a Tangra JSON report starts and ends (UTC)."""
+
+    start_utc: str | None = None
+    end_utc: str | None = None
+
+
+class PublicReportSubmission(_Public):
+    """A Tangra JSON report's region and station number."""
+
+    region: str | None = None
+    station_number: int | None = None
+
+
+class PublicReportTimingDetail(_Public):
+    """A Tangra JSON report's camera delays and time-base quality."""
+
+    instrumental_delays: str | None = None
+    acquisition_delay_ms: float | None = None
+    reference_time_to_utc_offset_ms: float | None = None
+    delays_entered_at_report: bool | None = None
+    embedded_timestamps: bool | None = None
+    windows_clock_timestamps: bool | None = None
+    fitted_in_time: bool | None = None
+    reliable_time_base: bool | None = None
+    timestamp_jitter_3sigma_ms: float | None = None
+    timestamp_jitter_frames: float | None = None
+
+
 class PublicReportDetails(_Public):
     """The report's equipment, conditions and timing, as the observer entered it.
 
-    Times are ISO 8601 times of day (UTC); errors are in seconds.
+    Times are ISO 8601 times of day (UTC); errors are in seconds. The fields
+    from ``acknowledged_messages`` on are set for Tangra JSON reports only.
     """
 
     telescope_type: str | None = None
@@ -357,6 +479,17 @@ class PublicReportDetails(_Public):
     r_err_68: float | None = None
     r_err_95: float | None = None
     r_err_9973: float | None = None
+    events: list[PublicReportEvent] | None = None
+    double_stars: list[PublicReportDoubleStar] | None = None
+    light_curve: PublicReportLightCurve | None = None
+    prediction: PublicReportPrediction | None = None
+    recording: PublicReportRecording | None = None
+    submission: PublicReportSubmission | None = None
+    timing_detail: PublicReportTimingDetail | None = None
+    camera_model_for_delays: str | None = None
+    acknowledged_messages: list[str] | None = None
+    archive_comment: str | None = None
+    observers_more_than_listed: bool | None = None
 
 
 class PublicReportSite(_Public):
@@ -371,6 +504,9 @@ class PublicReportSite(_Public):
     longitude: str | None = None
     elevation: str | None = None
     datum: str | None = None
+    station_latitude: str | None = None
+    station_longitude: str | None = None
+    station_altitude: str | None = None
 
 
 class PublicObservation(_Public):
@@ -517,3 +653,45 @@ class PublicEventFileList(_Public):
     event_id: str
     files: list[PublicEventFileLink] = Field(default_factory=list)
     expires_in: int
+
+
+# --------------------------------------------------------------------------
+# Key exchange
+# --------------------------------------------------------------------------
+
+
+class PublicKeyExchangeAccount(_Public):
+    """The Hub account an exchanged key belongs to."""
+
+    email: str
+    display_name: str | None = None
+
+
+class PublicKeyExchangeResult(_Public):
+    """A Hub API key issued for an OccultWatcher identity.
+
+    ``api_key`` is shown only in this response and is left out of ``repr``.
+    """
+
+    api_key: str = Field(repr=False)
+    key_id: str
+    expires_at: str
+    scopes: list[str]
+    account: PublicKeyExchangeAccount
+    client: str
+
+
+class PublicSignInStarted(_Public):
+    """A browser sign-in, started because no Hub account matched.
+
+    Open ``verification_url``, then collect with ``collect_code`` every
+    ``interval`` seconds. ``collect_code`` is a secret, left out of ``repr``.
+    """
+
+    request_id: str
+    collect_code: str = Field(repr=False)
+    verification_url: str
+    expires_at: str
+    expires_in: int
+    interval: int
+    client: str

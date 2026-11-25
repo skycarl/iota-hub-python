@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- `report_details.events` lists every event of a Tangra JSON report in report
+  order: a double star's second star, or each drop of a double asteroid.
+  `events[0]` is the same event as the top-level `d_corrected` /
+  `r_corrected` / `d_err` / `r_err`. Each has `d_corrected`, `r_corrected`,
+  `d_err`, `r_err`, `snr` and `second_star`. It is `null` for spreadsheet
+  reports, misses and older observations.
+- `report_details` also carries the rest of a Tangra JSON report:
+  `double_stars`, `light_curve`, `prediction`, `recording`, `submission`,
+  `timing_detail`, `camera_model_for_delays`, `acknowledged_messages`,
+  `archive_comment` and `observers_more_than_listed`. `report_site` adds
+  `station_latitude`, `station_longitude` and `station_altitude`.
+  `readiness.submit_in_progress`, `owc.resolution.report_check` and
+  `owc.resolution.report_owc_event_id` are new too. All of these appear in
+  `--json` output and as library model fields.
+- `Client.key_exchange`, `Client.key_exchange_sign_in_start` and
+  `Client.key_exchange_sign_in_collect` let an application trade a user's
+  OccultWatcher API key for a Hub API key. They send no Hub key. The CLI
+  does not expose them yet.
+- `spec/openapi.json` is re-vendored from production.
+
 ## 1.1.0 - 2026-11-25
 
 For the Hub's File names check (observer check 13), which lists a file whose

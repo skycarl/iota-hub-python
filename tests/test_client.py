@@ -412,6 +412,83 @@ def test_the_client_is_a_context_manager_over_one_transport(client, mock_api):
     assert client.http.api_root == "https://api.example.test/public/v1"
 
 
+# -- key exchange -------------------------------------------------------------
+
+KEY_RESULT = {
+    "api_key": "iotahub_k1_secret",
+    "key_id": "k1",
+    "expires_at": "2027-02-22T00:00:00Z",
+    "scopes": ["observations:write", "read"],
+    "account": {"email": "observer@example.test", "display_name": "Observer"},
+    "client": "tangra",
+}
+
+
+def test_key_exchange_sends_the_ow_key_and_no_hub_key(client, mock_api):
+    mock_api.json("POST", "/public/v1/key-exchange", KEY_RESULT)
+
+    result = client.key_exchange(" ow_key_1\n", client="tangra")
+
+    request = sent(mock_api)
+    assert request.headers["OW-ApiKey"] == "ow_key_1"
+    assert "X-API-Key" not in request.headers
+    assert body_of(request) == {"client": "tangra"}
+    assert isinstance(result, models.PublicKeyExchangeResult)
+    assert result.account.email == "observer@example.test"
+
+
+def test_key_exchange_without_a_client_sends_null(client, mock_api):
+    mock_api.json("POST", "/public/v1/key-exchange", KEY_RESULT)
+    client.key_exchange("ow_key_1")
+    assert body_of(sent(mock_api)) == {"client": None}
+
+
+def test_an_unsendable_ow_key_is_refused_without_quoting_it(client, mock_api):
+    with pytest.raises(IotaHubError) as caught:
+        client.key_exchange("ow key secret")
+    assert caught.value.code == "invalid_config"
+    assert caught.value.details == {"field": "ow_api_key"}
+    assert "secret" not in str(caught.value)
+    assert mock_api.requests == []
+
+
+def test_key_exchange_sign_in_start(client, mock_api):
+    mock_api.json(
+        "POST",
+        "/public/v1/key-exchange/sign-in",
+        {
+            "request_id": "req_1",
+            "collect_code": "code_1",
+            "verification_url": "https://iota-hub.example.test/sign-in/req_1",
+            "expires_at": "2026-11-24T00:15:00Z",
+            "expires_in": 900,
+            "interval": 5,
+            "client": "tangra",
+        },
+        status=201,
+    )
+
+    started = client.key_exchange_sign_in_start("ow_key_1")
+
+    request = sent(mock_api)
+    assert request.headers["OW-ApiKey"] == "ow_key_1"
+    assert "X-API-Key" not in request.headers
+    assert isinstance(started, models.PublicSignInStarted)
+    assert started.interval == 5
+
+
+def test_key_exchange_sign_in_collect_sends_no_key(client, mock_api):
+    mock_api.json("POST", "/public/v1/key-exchange/sign-in/req_1/collect", KEY_RESULT)
+
+    result = client.key_exchange_sign_in_collect("req_1", collect_code="code_1")
+
+    request = sent(mock_api)
+    assert "X-API-Key" not in request.headers
+    assert "OW-ApiKey" not in request.headers
+    assert body_of(request) == {"collect_code": "code_1"}
+    assert result.key_id == "k1"
+
+
 def test_every_operation_id_has_a_method():
     """The transport layer is one method per ``operation_id`` (design D15)."""
     document = json.loads(SPEC_PATH.read_text())
@@ -420,7 +497,7 @@ def test_every_operation_id_has_a_method():
         for path in document["paths"].values()
         for operation in path.values()
     ]
-    assert len(operations) == 21
+    assert len(operations) == 24
     for operation_id in operations:
         assert operation_id.startswith("public_")
         name = operation_id[len("public_") :]
